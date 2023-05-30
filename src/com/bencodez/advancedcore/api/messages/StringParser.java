@@ -455,31 +455,7 @@ public class StringParser {
 		for (int i = 0; i < string.length(); i++) {
 			char c = string.charAt(i);
 			if (c == '&') {
-				if (string.charAt(i + 1) == '#') {
-					String hexColor = "";
-					for (int j = i + 2; j < i + 2 + 6; j++) {
-						hexColor += string.charAt(j);
-					}
-					AdvancedCorePlugin.getInstance().debug(hexColor);
-					if (string.charAt(i + 8) == '#') {
-						i += 8;
-						previousLetter = false;
-
-						TextComponent newTC = new TextComponent(currentstring);
-						if (currentColor != null) {
-							newTC.setColor(currentColor);
-						}
-						currentstring = "";
-						newTC.setBold(bold);
-						newTC.setItalic(italic);
-						newTC.setUnderlined(underline);
-						newTC.setStrikethrough(strike);
-						newTC.setObfuscated(magic);
-						base.addExtra(newTC);
-						currentColor = ChatColor.of("#" + hexColor);
-
-					}
-				} else if (string.charAt(i + 1) == 'l') {
+				if (string.charAt(i + 1) == 'l') {
 					if (previousLetter) {
 						TextComponent newTC = new TextComponent(currentstring);
 						if (currentColor != null) {

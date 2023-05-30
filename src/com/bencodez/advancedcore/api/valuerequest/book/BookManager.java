@@ -1,17 +1,6 @@
 package com.bencodez.advancedcore.api.valuerequest.book;
 
-import org.bukkit.Bukkit;
-import org.bukkit.Material;
-import org.bukkit.entity.Player;
-import org.bukkit.event.EventHandler;
-import org.bukkit.event.HandlerList;
 import org.bukkit.event.Listener;
-import org.bukkit.event.player.PlayerEditBookEvent;
-import org.bukkit.inventory.ItemStack;
-
-import com.bencodez.advancedcore.AdvancedCorePlugin;
-import com.bencodez.advancedcore.api.misc.PlayerUtils;
-import com.bencodez.advancedcore.api.user.AdvancedCoreUser;
 
 /**
  * The Class BookManager.
@@ -28,7 +17,7 @@ public class BookManager implements Listener {
 	 * @param start    the start
 	 * @param listener the listener
 	 */
-	public BookManager(Player player, String start, BookSign listener) {
+	/*public BookManager(Player player, String start, BookSign listener) {
 		AdvancedCoreUser user = AdvancedCorePlugin.getInstance().getUserManager().getUser(player);
 		ItemStack item = new ItemStack(Material.WRITABLE_BOOK);
 		PlayerUtils.getInstance().setPlayerMeta(player, "BookManager", listener);
@@ -73,7 +62,7 @@ public class BookManager implements Listener {
 	/**
 	 * Destroy.
 	 */
-	public void destroy() {
+	/*public void destroy() {
 		HandlerList.unregisterAll(listener);
-	}
+	}*/
 }

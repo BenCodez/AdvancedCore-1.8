@@ -14,7 +14,6 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
-import org.bukkit.event.entity.FireworkExplodeEvent;
 import org.bukkit.inventory.meta.FireworkMeta;
 
 import com.bencodez.advancedcore.AdvancedCorePlugin;
@@ -114,7 +113,7 @@ public class FireworkHandler implements Listener {
 		}
 	}
 
-	@EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+	/*@EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
 	public void onFireworkExplode(FireworkExplodeEvent event) {
 		if (event.getEntity() instanceof Firework) {
 			Firework fw = event.getEntity();
@@ -128,5 +127,5 @@ public class FireworkHandler implements Listener {
 				}, 10l);
 			}
 		}
-	}
+	}*/
 }

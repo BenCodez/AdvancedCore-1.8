@@ -1,7 +1,13 @@
 package com.bencodez.advancedcore.api.skull;
 
-import com.mojang.authlib.GameProfile;
-import com.mojang.authlib.properties.Property;
+import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Method;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.Base64;
+import java.util.UUID;
+
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.SkullType;
@@ -10,13 +16,8 @@ import org.bukkit.block.Skull;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.SkullMeta;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.net.URI;
-import java.net.URISyntaxException;
-import java.util.Base64;
-import java.util.UUID;
+import com.mojang.authlib.GameProfile;
+import com.mojang.authlib.properties.Property;
 
 /**
  * A library for the Bukkit API to create player skulls from names, base64
@@ -26,7 +27,6 @@ import java.util.UUID;
  *
  * @author Dean B on 12/28/2016.
  */
-@SuppressWarnings("deprecation")
 public class SkullCreator {
 
 	private SkullCreator() {
@@ -127,7 +127,7 @@ public class SkullCreator {
 		notNull(id, "id");
 
 		SkullMeta meta = (SkullMeta) item.getItemMeta();
-		meta.setOwningPlayer(Bukkit.getOfflinePlayer(id));
+		meta.setOwner(Bukkit.getOfflinePlayer(id).getName());
 		item.setItemMeta(meta);
 
 		return item;
@@ -181,7 +181,7 @@ public class SkullCreator {
 		notNull(name, "name");
 
 		Skull state = (Skull) block.getState();
-		state.setOwningPlayer(Bukkit.getOfflinePlayer(name));
+		state.setOwner(Bukkit.getOfflinePlayer(name).getName());
 		state.update(false, false);
 	}
 
@@ -197,7 +197,7 @@ public class SkullCreator {
 
 		setToSkull(block);
 		Skull state = (Skull) block.getState();
-		state.setOwningPlayer(Bukkit.getOfflinePlayer(id));
+		state.setOwner(Bukkit.getOfflinePlayer(id).getName());
 		state.update(false, false);
 	}
 

@@ -130,7 +130,6 @@ public abstract class RewardEditItems extends RewardEdit {
 		inv.openInventory(player);
 	}
 
-	@SuppressWarnings("deprecation")
 	public void openAdd(Player player, RewardEditData reward) {
 		EditGUI inv = new EditGUI("Edit Item Add: " + reward.getName());
 		inv.addData("Reward", reward);

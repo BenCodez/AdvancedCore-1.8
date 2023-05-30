@@ -63,9 +63,9 @@ public class RewardEditData {
 
 	public boolean hasPath(String path) {
 		if (reward != null) {
-			return reward.getConfig().getConfigData().contains(path, false);
+			return reward.getConfig().getConfigData().contains(path);
 		} else {
-			return directlyDefinedReward.getFileData().contains(directlyDefinedReward.getPath() + "." + path, false);
+			return directlyDefinedReward.getFileData().contains(directlyDefinedReward.getPath() + "." + path);
 		}
 	}
 

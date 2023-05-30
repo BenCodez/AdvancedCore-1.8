@@ -451,7 +451,6 @@ public class Reward {
 		return this;
 	}
 
-	@SuppressWarnings("deprecation")
 	private void setRewardFile() {
 		Reward reward = plugin.getRewardHandler().getRewardDirectlyDefined(name);
 		ConfigurationSection section = getConfig().getConfigData();

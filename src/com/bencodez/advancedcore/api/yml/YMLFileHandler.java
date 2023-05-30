@@ -21,7 +21,6 @@ public class YMLFileHandler extends YMLFile {
 		}
 	}
 
-	@SuppressWarnings("deprecation")
 	public void header(String string) {
 		getData().options().header(string);
 	}

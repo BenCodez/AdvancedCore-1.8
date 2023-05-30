@@ -604,7 +604,7 @@ public class BInventory {
 				prevItem = new ItemBuilder(AdvancedCorePlugin.getInstance().getOptions().getPrevItem())
 						.addPlaceholder(getPlaceholders()).toItemStack(player);
 			} else {
-				prevItem = new ItemBuilder(Material.BLACK_STAINED_GLASS_PANE, 1).setName("&aPrevious Page")
+				prevItem = new ItemBuilder(Material.STAINED_GLASS_PANE, 1).setName("&aPrevious Page")
 						.addPlaceholder(getPlaceholders()).toItemStack(player);
 			}
 		}
@@ -613,7 +613,7 @@ public class BInventory {
 				nextItem = new ItemBuilder(AdvancedCorePlugin.getInstance().getOptions().getNextItem())
 						.addPlaceholder(getPlaceholders()).toItemStack(player);
 			} else {
-				nextItem = new ItemBuilder(Material.BLACK_STAINED_GLASS_PANE, 1).setName("&aNext Page")
+				nextItem = new ItemBuilder(Material.STAINED_GLASS_PANE, 1).setName("&aNext Page")
 						.addPlaceholder(getPlaceholders()).toItemStack(player);
 			}
 		}

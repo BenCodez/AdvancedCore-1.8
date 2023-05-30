@@ -20,8 +20,6 @@ import com.bencodez.advancedcore.api.misc.PlayerUtils;
 import com.bencodez.advancedcore.api.user.AdvancedCoreUser;
 import com.bencodez.advancedcore.api.valuerequest.InputMethod;
 import com.bencodez.advancedcore.api.valuerequest.ValueRequest;
-import com.bencodez.advancedcore.api.valuerequest.book.BookManager;
-import com.bencodez.advancedcore.api.valuerequest.book.BookSign;
 import com.bencodez.advancedcore.api.valuerequest.listeners.StringListener;
 import com.bencodez.advancedcore.api.valuerequest.prompt.PromptManager;
 import com.bencodez.advancedcore.api.valuerequest.prompt.PromptReturnString;
@@ -135,16 +133,6 @@ public class StringRequester {
 					}
 				});
 			}
-		} else if (method.equals(InputMethod.BOOK)) {
-
-			new BookManager(player, currentValue, new BookSign() {
-
-				@Override
-				public void onBookSign(Player player, String input) {
-					listener.onInput(player, input);
-
-				}
-			});
 		} else if (method.equals(InputMethod.SIGN)) {
 			AdvancedCorePlugin.getInstance().getSignMenu().open(player.getUniqueId(), new String[] { "", "", "", "" },
 					new InputReceiver() {

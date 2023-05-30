@@ -1,25 +1,12 @@
 package com.bencodez.advancedcore.api.misc.effects;
 
-import java.util.List;
-
-import org.bukkit.Bukkit;
-import org.bukkit.boss.BarColor;
-import org.bukkit.boss.BarFlag;
-import org.bukkit.boss.BarStyle;
-import org.bukkit.entity.Player;
-
-import com.bencodez.advancedcore.AdvancedCorePlugin;
-import com.bencodez.advancedcore.api.messages.StringParser;
-
-import lombok.Getter;
-
 // TODO: Auto-generated Javadoc
 /**
  * The Class BossBar.
  */
 public class BossBar {
 
-	@Getter
+	/*@Getter
 	private org.bukkit.boss.BossBar bossBar;
 
 	/**
@@ -30,7 +17,7 @@ public class BossBar {
 	 * @param barStyle the bar style
 	 * @param progress the progress
 	 */
-	public BossBar(String msg, String barColor, String barStyle, double progress) {
+	/*public BossBar(String msg, String barColor, String barStyle, double progress) {
 		bossBar = Bukkit.createBossBar(StringParser.getInstance().colorize(msg), BarColor.valueOf(barColor),
 				BarStyle.valueOf(barStyle), BarFlag.DARKEN_SKY);
 		bossBar.setProgress(progress);
@@ -104,7 +91,7 @@ public class BossBar {
 	 * @param player the player
 	 * @param delay  the delay
 	 */
-	public void send(Player player, int delay) {
+	/*public void send(Player player, int delay) {
 		bossBar.addPlayer(player);
 		bossBar.setVisible(true);
 		hideInDelay(delay);
@@ -141,5 +128,5 @@ public class BossBar {
 
 	public void setVisible(boolean visible) {
 		bossBar.setVisible(visible);
-	}
+	}*/
 }

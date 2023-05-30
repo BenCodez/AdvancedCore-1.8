@@ -19,8 +19,6 @@ import com.bencodez.advancedcore.api.misc.PlayerUtils;
 import com.bencodez.advancedcore.api.user.AdvancedCoreUser;
 import com.bencodez.advancedcore.api.valuerequest.InputMethod;
 import com.bencodez.advancedcore.api.valuerequest.ValueRequest;
-import com.bencodez.advancedcore.api.valuerequest.book.BookManager;
-import com.bencodez.advancedcore.api.valuerequest.book.BookSign;
 import com.bencodez.advancedcore.api.valuerequest.listeners.NumberListener;
 import com.bencodez.advancedcore.api.valuerequest.prompt.PromptManager;
 import com.bencodez.advancedcore.api.valuerequest.prompt.PromptReturnString;
@@ -109,14 +107,16 @@ public class NumberRequester {
 					String option = num.toString();
 					TextComponent comp = new TextComponent(option);
 					comp.setClickEvent(new net.md_5.bungee.api.chat.ClickEvent(Action.RUN_COMMAND,
-							"/" + AdvancedCorePlugin.getInstance().getName().toLowerCase() + "valuerequestinput Number " + option));
+							"/" + AdvancedCorePlugin.getInstance().getName().toLowerCase() + "valuerequestinput Number "
+									+ option));
 					user.sendJson(comp);
 				}
 				if (allowCustomOption) {
 					String option = "CustomValue";
 					TextComponent comp = new TextComponent(option);
 					comp.setClickEvent(new net.md_5.bungee.api.chat.ClickEvent(Action.RUN_COMMAND,
-							"/" + AdvancedCorePlugin.getInstance().getName().toLowerCase() + "valuerequestinput Number " + option));
+							"/" + AdvancedCorePlugin.getInstance().getName().toLowerCase() + "valuerequestinput Number "
+									+ option));
 					user.sendJson(comp);
 				}
 			} else {
@@ -144,22 +144,6 @@ public class NumberRequester {
 					}
 				});
 			}
-		} else if (method.equals(InputMethod.BOOK)) {
-
-			new BookManager(player, currentValue.toString(), new BookSign() {
-
-				@Override
-				public void onBookSign(Player player, String input) {
-					String num = input;
-					try {
-						Number number = Double.valueOf(num);
-						listener.onInput(player, number);
-					} catch (NumberFormatException ex) {
-						ex.printStackTrace();
-					}
-
-				}
-			});
 		} else {
 			player.sendMessage("Invalid method/disabled method, change your request method");
 		}

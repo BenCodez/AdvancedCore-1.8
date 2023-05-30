@@ -1,7 +1,6 @@
 package com.bencodez.advancedcore.api.item;
 
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -13,10 +12,7 @@ import org.bukkit.ChatColor;
 import org.bukkit.Color;
 import org.bukkit.DyeColor;
 import org.bukkit.Material;
-import org.bukkit.NamespacedKey;
 import org.bukkit.OfflinePlayer;
-import org.bukkit.attribute.Attribute;
-import org.bukkit.attribute.AttributeModifier;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.Player;
@@ -28,8 +24,6 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.meta.LeatherArmorMeta;
 import org.bukkit.inventory.meta.PotionMeta;
 import org.bukkit.inventory.meta.SkullMeta;
-import org.bukkit.persistence.PersistentDataContainer;
-import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
 
@@ -39,7 +33,6 @@ import com.bencodez.advancedcore.api.messages.StringParser;
 import com.bencodez.advancedcore.api.misc.ArrayUtils;
 import com.bencodez.advancedcore.api.skull.SkullCreator;
 import com.bencodez.advancedcore.nms.NMSManager;
-import com.google.common.collect.Multimap;
 
 import lombok.Getter;
 import lombok.Setter;
@@ -161,19 +154,7 @@ public class ItemBuilder {
 
 					try {
 						material = Material.matchMaterial(materialStr.toUpperCase());
-
-						// temp
-						if (material == null) {
-							material = Material.matchMaterial(materialStr, true);
-							if (material != null) {
-								AdvancedCorePlugin.getInstance().getLogger().warning("Found legacy material name: "
-										+ materialStr
-										+ ", please update this to prevent this message and prevent issues, path: "
-										+ data.getCurrentPath());
-								legacy = true;
-							}
-						}
-					} catch (NoSuchMethodError e) {
+					} catch (Exception e) {
 						material = Material.valueOf(materialStr.toUpperCase());
 					}
 
@@ -184,6 +165,8 @@ public class ItemBuilder {
 						validMaterial = false;
 						lore.add("&cInvalid material: " + material);
 					}
+
+					short dataNum = (short) data.getInt("Data");
 
 					int amount = data.getInt("Amount");
 					int minAmount = data.getInt("MinAmount");
@@ -196,7 +179,11 @@ public class ItemBuilder {
 						currentAmount = ThreadLocalRandom.current().nextInt(minAmount, maxAmount + 1);
 					}
 
-					is = new ItemStack(material, currentAmount);
+					if (dataNum != 0) {
+						is = new ItemStack(material, currentAmount, dataNum);
+					} else {
+						is = new ItemStack(material, currentAmount);
+					}
 					int power = data.getInt("Power", -1);
 					if (power > 0) {
 						setFireworkPower(power);
@@ -279,12 +266,12 @@ public class ItemBuilder {
 						}
 					}
 
-					int customModelData = data.getInt("CustomModelData", -1);
-					if (customModelData != -1) {
-						setCustomModelData(customModelData);
-					}
-
-					setUnbreakable(data.getBoolean("Unbreakable", false));
+					/*
+					 * int customModelData = data.getInt("CustomModelData", -1); if (customModelData
+					 * != -1) { setCustomModelData(customModelData); }
+					 * 
+					 * setUnbreakable(data.getBoolean("Unbreakable", false));
+					 */
 
 					slot = data.getInt("Slot", -1);
 
@@ -325,12 +312,10 @@ public class ItemBuilder {
 		this(m, 1);
 	}
 
-	/**
-	 * Create a new ItemBuilder from scratch.
-	 *
-	 * @param material The material of the item.
-	 * @param amount   The amount of the item.
-	 */
+	public ItemBuilder(Material material, int amount, short data) {
+		is = new ItemStack(material, amount, data);
+	}
+
 	public ItemBuilder(Material material, int amount) {
 		is = new ItemStack(material, amount);
 	}
@@ -350,13 +335,6 @@ public class ItemBuilder {
 			this.is = new ItemStack(Material.PAPER);
 			AdvancedCorePlugin.getInstance().debug("Invalid material: " + material);
 		}
-	}
-
-	public ItemBuilder addAttributeModifier(Attribute att, AttributeModifier modifier) {
-		ItemMeta im = is.getItemMeta();
-		im.addAttributeModifier(att, modifier);
-		is.setItemMeta(im);
-		return this;
 	}
 
 	/**
@@ -395,7 +373,7 @@ public class ItemBuilder {
 		for (String enchant : enchants.keySet()) {
 			try {
 				if (!NMSManager.getInstance().isVersion("1.12")) {
-					Enchantment ench = Enchantment.getByKey(NamespacedKey.minecraft(enchant));
+					Enchantment ench = Enchantment.getByName(enchant);
 					if (ench == null) {
 						for (Enchantment en : Enchantment.values()) {
 							if (en.toString().equalsIgnoreCase(enchant)) {
@@ -513,7 +491,7 @@ public class ItemBuilder {
 		PotionMeta meta = (PotionMeta) is.getItemMeta();
 		meta.addCustomEffect(new PotionEffect(type, duration, amplifier), false);
 		if (color != null) {
-			meta.setColor(color);
+			// meta.setColor(color);
 		}
 		is.setItemMeta(meta);
 		return this;
@@ -597,7 +575,7 @@ public class ItemBuilder {
 
 		data.put("ItemFlags", flags);
 
-		data.put("Unbreakable", is.getItemMeta().isUnbreakable());
+		// data.put("Unbreakable", is.getItemMeta().isUnbreakable());
 
 		data.put("Skull", getSkull());
 
@@ -624,14 +602,6 @@ public class ItemBuilder {
 		return is.getAmount();
 	}
 
-	public Multimap<Attribute, AttributeModifier> getAttributeModifiers() {
-		return is.getItemMeta().getAttributeModifiers();
-	}
-
-	public Collection<AttributeModifier> getAttributeModifiers(Attribute att) {
-		return is.getItemMeta().getAttributeModifiers(att);
-	}
-
 	public HashMap<String, Object> getConfiguration() {
 		HashMap<String, Object> map = new HashMap<String, Object>();
 		map.put("Material", is.getType().toString());
@@ -644,7 +614,7 @@ public class ItemBuilder {
 		}
 		ItemMeta im = is.getItemMeta();
 		for (Entry<Enchantment, Integer> entry : im.getEnchants().entrySet()) {
-			map.put("Enchants." + entry.getKey().getKey(), entry.getValue().intValue());
+			map.put("Enchants." + entry.getKey().getName(), entry.getValue().intValue());
 		}
 
 		ArrayList<String> flagList = new ArrayList<String>();
@@ -653,21 +623,7 @@ public class ItemBuilder {
 		}
 		map.put("ItemFlags", flagList);
 
-		if (im.hasCustomModelData()) {
-			map.put("CustomModelData", im.getCustomModelData());
-		}
-
 		return map;
-	}
-
-	public String getCustomData(String key) {
-		NamespacedKey namespace = new NamespacedKey(AdvancedCorePlugin.getInstance(), key);
-		ItemMeta itemMeta = is.getItemMeta();
-		PersistentDataContainer tagContainer = itemMeta.getPersistentDataContainer();
-		if (tagContainer.has(namespace, PersistentDataType.STRING)) {
-			return tagContainer.get(namespace, PersistentDataType.STRING);
-		}
-		return null;
 	}
 
 	public ArrayList<String> getLore() {
@@ -700,7 +656,6 @@ public class ItemBuilder {
 	/**
 	 * @return the skull
 	 */
-	@Deprecated
 	public String getSkull() {
 		try {
 			SkullMeta im = (SkullMeta) is.getItemMeta();
@@ -712,23 +667,8 @@ public class ItemBuilder {
 		return "";
 	}
 
-	public OfflinePlayer getSkullOwner() {
-		try {
-			SkullMeta im = (SkullMeta) is.getItemMeta();
-			if (im.hasOwner()) {
-				return im.getOwningPlayer();
-			}
-		} catch (ClassCastException expected) {
-		}
-		return null;
-	}
-
 	public Material getType() {
 		return is.getType();
-	}
-
-	public boolean hasAttributes() {
-		return is.getItemMeta().hasAttributeModifiers();
 	}
 
 	public boolean hasCustomDisplayName() {
@@ -854,21 +794,6 @@ public class ItemBuilder {
 		return "Rewards";
 	}
 
-	public ItemBuilder setCustomData(String key, String value) {
-		NamespacedKey namespace = new NamespacedKey(AdvancedCorePlugin.getInstance(), key);
-		ItemMeta itemMeta = is.getItemMeta();
-		itemMeta.getPersistentDataContainer().set(namespace, PersistentDataType.STRING, value);
-		is.setItemMeta(itemMeta);
-		return this;
-	}
-
-	public ItemBuilder setCustomModelData(int data) {
-		ItemMeta im = is.getItemMeta();
-		im.setCustomModelData(data);
-		is.setItemMeta(im);
-		return this;
-	}
-
 	/**
 	 * Change the durability of the item.
 	 *
@@ -909,19 +834,6 @@ public class ItemBuilder {
 
 	public ItemBuilder setHeadFromBase64(String value) {
 		is = SkullCreator.itemWithBase64(is, value);
-		return this;
-	}
-
-	/**
-	 * Sets infinity durability on the item by setting the durability to
-	 * Short.MAX_VALUE.
-	 *
-	 * @return ItemBuilder
-	 */
-	public ItemBuilder setInfinityDurability() {
-		ItemMeta meta = is.getItemMeta();
-		meta.setUnbreakable(true);
-		is.setItemMeta(meta);
 		return this;
 	}
 
@@ -1010,7 +922,7 @@ public class ItemBuilder {
 		if (offlinePlayer != null) {
 			try {
 				SkullMeta im = (SkullMeta) is.getItemMeta();
-				im.setOwningPlayer(offlinePlayer);
+				im.setOwner(offlinePlayer.getName());
 				is.setItemMeta(im);
 			} catch (Exception expected) {
 				setSkullOwner(offlinePlayer.getName());
@@ -1040,17 +952,6 @@ public class ItemBuilder {
 
 	public ItemBuilder setSlot(int slot) {
 		this.slot = slot;
-		return this;
-	}
-
-	public ItemBuilder setUnbreakable(boolean unbreakable) {
-		try {
-			ItemMeta meta = is.getItemMeta();
-			meta.setUnbreakable(unbreakable);
-			is.setItemMeta(meta);
-		} catch (NoSuchMethodError e) {
-
-		}
 		return this;
 	}
 

@@ -70,7 +70,7 @@ public class SignMenu {
 				.createPacket(PacketType.Play.Server.TILE_ENTITY_DATA);
 
 		fakeSign.getBlockPositionModifier().write(0, blockPosition);
-		fakeSign.getBlockData().write(0, WrappedBlockData.createData(Material.OAK_SIGN));
+		fakeSign.getBlockData().write(0, WrappedBlockData.createData(Material.SIGN));
 
 		openSign.getBlockPositionModifier().write(0, blockPosition);
 

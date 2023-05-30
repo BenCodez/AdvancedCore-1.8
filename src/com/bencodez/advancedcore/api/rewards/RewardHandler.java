@@ -46,11 +46,9 @@ import com.bencodez.advancedcore.api.rewards.editbuttons.RewardEditActionBar;
 import com.bencodez.advancedcore.api.rewards.editbuttons.RewardEditAdvancedPriority;
 import com.bencodez.advancedcore.api.rewards.editbuttons.RewardEditAdvancedRandomReward;
 import com.bencodez.advancedcore.api.rewards.editbuttons.RewardEditAdvancedWorld;
-import com.bencodez.advancedcore.api.rewards.editbuttons.RewardEditBossBar;
 import com.bencodez.advancedcore.api.rewards.editbuttons.RewardEditChoices;
 import com.bencodez.advancedcore.api.rewards.editbuttons.RewardEditEXP;
 import com.bencodez.advancedcore.api.rewards.editbuttons.RewardEditEXPLevels;
-import com.bencodez.advancedcore.api.rewards.editbuttons.RewardEditEffect;
 import com.bencodez.advancedcore.api.rewards.editbuttons.RewardEditFirework;
 import com.bencodez.advancedcore.api.rewards.editbuttons.RewardEditItems;
 import com.bencodez.advancedcore.api.rewards.editbuttons.RewardEditJavascript;
@@ -716,8 +714,8 @@ public class RewardHandler {
 					perm = !perm;
 				}
 				if (!perm) {
-					plugin.debug(user.getPlayerName() + " does not have permission " + str
-							+ " to get reward " + reward.getName() + ", reverse: " + reverse);
+					plugin.debug(user.getPlayerName() + " does not have permission " + str + " to get reward "
+							+ reward.getName() + ", reverse: " + reverse);
 					return false;
 				}
 				return true;
@@ -1896,39 +1894,6 @@ public class RewardHandler {
 			}
 		}.addLore("Configure Title & SubTitle"))));
 
-		injectedRewards.add(new RewardInjectConfigurationSection("BossBar") {
-
-			@Override
-			public String onRewardRequested(Reward reward, AdvancedCoreUser user, ConfigurationSection section,
-					HashMap<String, String> placeholders) {
-
-				if (section.getBoolean("Enabled")) {
-					user.sendBossBar(
-							StringParser.getInstance().replacePlaceHolder(section.getString("Message", ""),
-									placeholders),
-							section.getString("Color", "BLUE"), section.getString("Style", "SOLID"),
-							section.getDouble("Progress", .5), section.getInt("Delay", 30));
-				}
-				return null;
-
-			}
-		}.addEditButton(new EditGUIButton(new ItemBuilder("DRAGON_HEAD"), new EditGUIValueInventory("BossBar") {
-
-			@Override
-			public void openInventory(ClickEvent clickEvent) {
-				RewardEditData reward = (RewardEditData) getInv().getData("Reward");
-				new RewardEditBossBar() {
-
-					@Override
-					public void setVal(String key, Object value) {
-						RewardEditData reward = (RewardEditData) getInv().getData("Reward");
-						reward.setValue(key, value);
-						plugin.reloadAdvancedCore(false);
-					}
-				}.open(clickEvent.getPlayer(), reward);
-			}
-		}.addLore("Configure bossbar"))));
-
 		injectedRewards.add(new RewardInjectConfigurationSection("Sound") {
 
 			@Override
@@ -1962,35 +1927,6 @@ public class RewardHandler {
 				}.open(clickEvent.getPlayer(), reward);
 			}
 		}.addLore("Configure sound"))));
-
-		injectedRewards.add(new RewardInjectConfigurationSection("Effect") {
-
-			@Override
-			public String onRewardRequested(Reward reward, AdvancedCoreUser user, ConfigurationSection section,
-					HashMap<String, String> placeholders) {
-				if (section.getBoolean("Enabled")) {
-					user.playParticle(section.getString("Effect"), section.getInt("Data", 1),
-							section.getInt("Particles", 1), section.getInt("Radius", 5));
-				}
-				return null;
-
-			}
-		}.addEditButton(new EditGUIButton(new ItemBuilder(Material.DIAMOND), new EditGUIValueInventory("Effect") {
-
-			@Override
-			public void openInventory(ClickEvent clickEvent) {
-				RewardEditData reward = (RewardEditData) getInv().getData("Reward");
-				new RewardEditEffect() {
-
-					@Override
-					public void setVal(String key, Object value) {
-						RewardEditData reward = (RewardEditData) getInv().getData("Reward");
-						reward.setValue(key, value);
-						plugin.reloadAdvancedCore(false);
-					}
-				}.open(clickEvent.getPlayer(), reward);
-			}
-		}.addLore("Configure particle effect"))));
 
 		injectedRewards.add(new RewardInjectConfigurationSection("Firework") {
 
@@ -2046,17 +1982,9 @@ public class RewardHandler {
 					warning(reward, inject, "No material is set on item");
 				} else {
 					try {
-						Material m = Material.matchMaterial(material.toUpperCase());
-
-						// change legacy item
-						if (m == null) {
-							m = Material.matchMaterial(material, true);
-							if (material != null) {
-								warning(reward, inject,
-										"Found legacy material: " + material + ", please update material");
-							}
-						}
-					} catch (NoSuchMethodError e) {
+						Material.matchMaterial(material.toUpperCase());
+					} catch (Exception e) {
+						e.printStackTrace();
 					}
 				}
 
@@ -2280,17 +2208,9 @@ public class RewardHandler {
 						warning(reward, inject, "No material is set on item: " + item);
 					} else {
 						try {
-							Material m = Material.matchMaterial(material.toUpperCase());
-
-							// change legacy item
-							if (m == null) {
-								m = Material.matchMaterial(material.toUpperCase(), true);
-								if (material != null) {
-									warning(reward, inject, "Found legacy material: " + material
-											+ ", please update material on RandomItem." + item);
-								}
-							}
-						} catch (NoSuchMethodError e) {
+							Material.matchMaterial(material.toUpperCase());
+						} catch (Exception e) {
+							e.printStackTrace();
 						}
 					}
 
@@ -2398,19 +2318,9 @@ public class RewardHandler {
 
 						} else {
 							try {
-								Material m = Material.matchMaterial(material.toUpperCase());
-
-								// check legacy
-								if (m == null) {
-									m = Material.matchMaterial(material, true);
-									if (m != null) {
-										warning(reward, inject,
-												"Found legacy material: " + material + ", please update material");
-									} else {
-										warning(reward, inject, "Invalid material set: " + material);
-									}
-								}
-							} catch (NoSuchMethodError e) {
+								Material.matchMaterial(material.toUpperCase());
+							} catch (Exception e) {
+								e.printStackTrace();
 							}
 						}
 

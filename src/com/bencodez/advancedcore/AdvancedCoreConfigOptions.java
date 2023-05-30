@@ -21,7 +21,7 @@ public class AdvancedCoreConfigOptions {
 	private double clickSoundPitch = 1;
 	@Getter
 	@Setter
-	private Sound clickSoundSound = Sound.UI_BUTTON_CLICK;
+	private Sound clickSoundSound = Sound.CLICK;
 	@Getter
 	@Setter
 	private double clickSoundVolume = 1;
@@ -258,7 +258,7 @@ public class AdvancedCoreConfigOptions {
 			ConfigurationSection soundData = configData.getConfigurationSection("ClickSound");
 			if (soundData != null) {
 				try {
-					String str = configData.getString("Sound", "UI_BUTTON_CLICK");
+					String str = configData.getString("Sound", "CLICK");
 					if (str.equalsIgnoreCase("none")) {
 						clickSoundSound = null;
 					} else {
@@ -268,7 +268,7 @@ public class AdvancedCoreConfigOptions {
 					clickSoundSound = Sound.valueOf(str);
 				} catch (Exception e) {
 					e.printStackTrace();
-					clickSoundSound = Sound.UI_BUTTON_CLICK;
+					clickSoundSound = Sound.CLICK;
 				}
 			}
 

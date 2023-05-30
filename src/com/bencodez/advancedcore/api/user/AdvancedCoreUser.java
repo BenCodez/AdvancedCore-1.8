@@ -15,7 +15,6 @@ import java.util.concurrent.TimeUnit;
 import org.bukkit.Bukkit;
 import org.bukkit.Effect;
 import org.bukkit.OfflinePlayer;
-import org.bukkit.Particle;
 import org.bukkit.Sound;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
@@ -30,7 +29,6 @@ import com.bencodez.advancedcore.api.messages.StringParser;
 import com.bencodez.advancedcore.api.misc.ArrayUtils;
 import com.bencodez.advancedcore.api.misc.PlayerUtils;
 import com.bencodez.advancedcore.api.misc.effects.ActionBar;
-import com.bencodez.advancedcore.api.misc.effects.BossBar;
 import com.bencodez.advancedcore.api.misc.effects.Title;
 import com.bencodez.advancedcore.api.rewards.Reward;
 import com.bencodez.advancedcore.api.rewards.RewardBuilder;
@@ -529,7 +527,7 @@ public class AdvancedCoreUser {
 		}
 
 	}
-	
+
 	public void giveItems(ItemStack... item) {
 		if (item == null) {
 			return;
@@ -798,29 +796,6 @@ public class AdvancedCoreUser {
 		}
 	}
 
-	public void playParticle(String effectName, int data, int particles, int radius) {
-		Player player = getPlayer();
-		if ((player != null) && (effectName != null)) {
-			try {
-				Particle effect = Particle.valueOf(effectName);
-				for (int i = 0; i < particles; i++) {
-					player.getWorld().spawnParticle(effect, player.getLocation(), particles, radius, radius, radius,
-							data);
-				}
-
-			} catch (Exception e) {
-				plugin.getLogger().warning(
-						"Failed to create particle: " + effectName + ", " + data + ", " + particles + ", " + radius);
-				e.printStackTrace();
-			}
-		}
-	}
-
-	@Deprecated
-	public void playParticleEffect(String effectName, int data, int particles, int radius) {
-		playParticle(effectName, data, particles, radius);
-	}
-
 	/**
 	 * Play sound.
 	 *
@@ -910,31 +885,6 @@ public class AdvancedCoreUser {
 					actionBar.send(player);
 				} catch (Exception ex) {
 					plugin.debug("Failed to send ActionBar, turn debug on to see stack trace");
-					plugin.debug(ex);
-				}
-			}
-		}
-	}
-
-	/**
-	 * Send boss bar.
-	 *
-	 * @param msg      the msg
-	 * @param color    the color
-	 * @param style    the style
-	 * @param progress the progress
-	 * @param delay    the delay
-	 */
-	public void sendBossBar(String msg, String color, String style, double progress, int delay) {
-		if (msg != null && msg != "") {
-			Player player = getPlayer();
-			if (player != null) {
-				try {
-					BossBar bossBar = new BossBar(StringParser.getInstance().replaceJavascript(getPlayer(), msg), color,
-							style, progress);
-					bossBar.send(player, delay);
-				} catch (Exception ex) {
-					plugin.debug("Failed to send BossBar");
 					plugin.debug(ex);
 				}
 			}

@@ -1,25 +1,18 @@
 package com.bencodez.advancedcore.api.hologram;
 
-import org.bukkit.Bukkit;
 import org.bukkit.Location;
-import org.bukkit.NamespacedKey;
 import org.bukkit.entity.ArmorStand;
-import org.bukkit.entity.EntityType;
-import org.bukkit.persistence.PersistentDataContainer;
-import org.bukkit.persistence.PersistentDataType;
-
-import com.bencodez.advancedcore.AdvancedCorePlugin;
-import com.bencodez.advancedcore.api.messages.StringParser;
 
 import lombok.Getter;
 
+@Deprecated
 public class Hologram {
 	@Getter
 	private ArmorStand armorStand;
 	@Getter
 	private Location loc;
 
-	public Hologram(Location loc, String name) {
+	/*public Hologram(Location loc, String name) {
 		this.loc = loc;
 		if (!Bukkit.isPrimaryThread()) {
 			Bukkit.getScheduler().runTask(AdvancedCorePlugin.getInstance(), new Runnable() {
@@ -156,5 +149,5 @@ public class Hologram {
 			armorStand = null;
 		}
 		AdvancedCorePlugin.getInstance().getHologramHandler().remove(this, false);
-	}
+	}*/
 }
