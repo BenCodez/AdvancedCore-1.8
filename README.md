@@ -1,3 +1,5 @@
+# This is for 1.8 and is NOT actively supported!!!!
+
 # AdvancedCore
 API used in the plugins developed by BenCodez, can be used in any project.
 
