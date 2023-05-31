@@ -51,7 +51,6 @@ import com.bencodez.advancedcore.api.rewards.RewardEditData;
 import com.bencodez.advancedcore.api.rewards.RewardHandler;
 import com.bencodez.advancedcore.api.rewards.RewardOptions;
 import com.bencodez.advancedcore.api.rewards.injectedrequirement.RequirementInjectString;
-import com.bencodez.advancedcore.api.skull.SkullHandler;
 import com.bencodez.advancedcore.api.time.TimeChecker;
 import com.bencodez.advancedcore.api.time.TimeType;
 import com.bencodez.advancedcore.api.updater.UpdateDownloader;
@@ -504,8 +503,6 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 
 		getUserManager().purgeOldPlayers();
 
-		SkullHandler.getInstance().load();
-
 		userStartup();
 		loadTabComplete();
 
@@ -889,7 +886,6 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 		inventoryTimer.shutdownNow();
 		timeChecker.getTimer().shutdownNow();
 		onUnLoad();
-		SkullHandler.getInstance().close();
 		fullInventoryHandler.save();
 		unRegisterValueRequest();
 

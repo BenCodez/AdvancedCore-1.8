@@ -31,7 +31,6 @@ import com.bencodez.advancedcore.AdvancedCorePlugin;
 import com.bencodez.advancedcore.api.javascript.JavascriptEngine;
 import com.bencodez.advancedcore.api.messages.StringParser;
 import com.bencodez.advancedcore.api.misc.ArrayUtils;
-import com.bencodez.advancedcore.api.skull.SkullCreator;
 import com.bencodez.advancedcore.nms.NMSManager;
 
 import lombok.Getter;
@@ -202,7 +201,7 @@ public class ItemBuilder {
 
 					String textureURL = data.getString("SkullURL", "");
 					if (!textureURL.equals("")) {
-						is = SkullCreator.itemFromUrl(textureURL);
+					//	is = SkullCreator.itemFromUrl(textureURL);
 						is.setAmount(currentAmount);
 					}
 
@@ -833,7 +832,7 @@ public class ItemBuilder {
 	}
 
 	public ItemBuilder setHeadFromBase64(String value) {
-		is = SkullCreator.itemWithBase64(is, value);
+		//is = SkullCreator.itemWithBase64(is, value);
 		return this;
 	}
 
