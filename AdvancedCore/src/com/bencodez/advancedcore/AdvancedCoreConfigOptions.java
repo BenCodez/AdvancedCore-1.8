@@ -21,7 +21,7 @@ public class AdvancedCoreConfigOptions {
 	private double clickSoundPitch = 1;
 	@Getter
 	@Setter
-	private Sound clickSoundSound = Sound.CLICK;
+	private Sound clickSoundSound;
 	@Getter
 	@Setter
 	private double clickSoundVolume = 1;
@@ -268,7 +268,7 @@ public class AdvancedCoreConfigOptions {
 					clickSoundSound = Sound.valueOf(str);
 				} catch (Exception e) {
 					e.printStackTrace();
-					clickSoundSound = Sound.CLICK;
+					clickSoundSound = Sound.valueOf("UI_BUTTON_CLICK");
 				}
 			}
 
