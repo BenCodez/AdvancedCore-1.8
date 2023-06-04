@@ -267,7 +267,7 @@ public class AdvancedCoreConfigOptions {
 					}
 					clickSoundSound = Sound.valueOf(str);
 				} catch (Exception e) {
-					e.printStackTrace();
+					plugin.debug(e);
 					clickSoundSound = Sound.valueOf("UI_BUTTON_CLICK");
 				}
 			}
