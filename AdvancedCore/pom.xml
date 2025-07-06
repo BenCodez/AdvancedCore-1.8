@@ -1,35 +1,38 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
 	<modelVersion>4.0.0</modelVersion>
 	<groupId>com.bencodez</groupId>
 	<artifactId>advancedcore-1.8</artifactId>
-	<version>3.6.7</version>
+	<version>3.7.17_1.8</version>
 	<packaging>jar</packaging>
-	<name>AdvancedCore-1.8</name>
+	<name>AdvancedCore</name>
 	<properties>
-		<maven.compiler.source>1.8</maven.compiler.source>
-		<maven.compiler.target>1.8</maven.compiler.target>
 		<!-- github server corresponds to entry in ~/.m2/settings.xml -->
 		<github.global.server>github</github.global.server>
 		<project.build.sourceEncoding>Cp1252</project.build.sourceEncoding>
 		<timestamp>${maven.build.timestamp}</timestamp>
 		<maven.build.timestamp.format>yyyy-MM-dd HH:mm</maven.build.timestamp.format>
 		<build.number>NOTSET</build.number>
+		<maven.compiler.source>8</maven.compiler.source>
+		<maven.compiler.target>8</maven.compiler.target>
+		<maven.compiler.release>8</maven.compiler.release>
 	</properties>
 	<build>
 		<resources>
 			<resource>
-				<directory>Resources</directory>
+				<directory>src/main/resources</directory>
 				<filtering>true</filtering>
 				<includes>
 					<include>advancedcoreversion.yml</include>
 				</includes>
 			</resource>
 			<resource>
-				<directory>Resources</directory>
+				<directory>src/main/resources</directory>
 				<filtering>false</filtering>
 			</resource>
 		</resources>
-		<sourceDirectory>src</sourceDirectory>
+		<sourceDirectory>src/main/java</sourceDirectory>
 		<pluginManagement>
 			<plugins>
 				<plugin>
@@ -73,7 +76,7 @@
 						<configuration>
 							<addOutputDirectory>false</addOutputDirectory>
 							<outputDirectory>${project.basedir}/target/delombok</outputDirectory>
-							<sourceDirectory>${project.basedir}/src</sourceDirectory>
+							<sourceDirectory>${project.basedir}/src/main/java</sourceDirectory>
 						</configuration>
 					</execution>
 				</executions>
@@ -81,17 +84,15 @@
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-jar-plugin</artifactId>
-				<version>2.3.1</version>
+				<version>3.4.2</version>
 				<configuration>
-					<source>1.8</source>
-					<target>1.8</target>
 					<finalName>${project.name}</finalName>
 				</configuration>
 			</plugin>
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-shade-plugin</artifactId>
-				<version>2.4.3</version>
+				<version>3.6.0</version>
 				<configuration>
 					<shadedArtifactAttached>false</shadedArtifactAttached>
 					<minimizeJar>true</minimizeJar>
@@ -103,14 +104,31 @@
 							<goal>shade</goal>
 						</goals>
 						<configuration>
+						  <filters>
+                            <filter>
+                              <artifact>*:*</artifact>
+                              <excludes>
+                                 <exclude>META-INF/*.SF</exclude>
+                                 <exclude>META-INF/*.DSA</exclude>
+                                 <exclude>META-INF/*.RSA</exclude>
+                              </excludes>
+                              </filter>
+                            </filters>
 							<relocations>
 								<relocation>
 									<pattern>com.zaxxer.HikariCP</pattern>
-									<shadedPattern>${project.groupId}.advancedcore.HikariCP</shadedPattern>
+									<shadedPattern>
+										${project.groupId}.advancedcore.HikariCP</shadedPattern>
 								</relocation>
 								<relocation>
 									<pattern>com.zaxxer.hikari</pattern>
-									<shadedPattern>${project.groupId}.advancedcore.hikari</shadedPattern>
+									<shadedPattern>
+										${project.groupId}.advancedcore.hikari</shadedPattern>
+								</relocation>
+								<relocation>
+									<pattern>com.tcoded.folialib</pattern>
+									<shadedPattern>
+										${project.groupId}.advancedcore.folialib</shadedPattern>
 								</relocation>
 							</relocations>
 							<artifactSet>
@@ -132,7 +150,8 @@
 		</repository>
 		<repository>
 			<id>placeholderapi</id>
-			<url>https://repo.extendedclip.com/content/repositories/placeholderapi/</url>
+			<url>
+				https://repo.extendedclip.com/content/repositories/placeholderapi/</url>
 		</repository>
 		<repository>
 			<id>jitpack.io</id>
@@ -157,13 +176,37 @@
 		<repository>
 			<id>bencodez repo</id>
 			<url>https://nexus.bencodez.com/repository/maven-public/</url>
+			<snapshots>
+				<enabled>true</enabled>
+				<updatePolicy>always</updatePolicy>
+			</snapshots>
 		</repository>
 		<repository>
-			<id>minecraft-repo</id>
-			<url>https://libraries.minecraft.net/</url>
+			<id>opencollab-snapshot</id>
+			<url>https://repo.opencollab.dev/main/</url>
+		</repository>
+		<repository>
+			<id>dmulloy2-repo</id>
+			<url>https://repo.dmulloy2.net/repository/public/</url>
+		</repository>
+		<repository>
+			<id>nickuc-repo</id>
+			<url>https://repo.nickuc.com/maven-releases/</url>
 		</repository>
 	</repositories>
 	<dependencies>
+		<dependency>
+			<groupId>com.bencodez</groupId>
+			<artifactId>simpleapi</artifactId>
+			<version>0.0.7-SNAPSHOT</version>
+			<scope>compile</scope>
+		</dependency>
+		<dependency>
+			<groupId>com.github.LoneDev6</groupId>
+			<artifactId>api-itemsadder</artifactId>
+			<version>3.6.1</version>
+			<scope>provided</scope>
+		</dependency>
 		<dependency>
 			<groupId>org.spigotmc</groupId>
 			<artifactId>spigot-api</artifactId>
@@ -179,10 +222,11 @@
 		<dependency>
 			<groupId>me.clip</groupId>
 			<artifactId>placeholderapi</artifactId>
-			<version>2.10.9</version>
+			<version>2.11.6</version>
 			<scope>provided</scope>
 		</dependency>
-		<!-- <dependency> <groupId>com.github.Ben12345rocks</groupId> <artifactId>ChatComponentAPI</artifactId> 
+		<!-- <dependency> <groupId>com.github.Ben12345rocks</groupId>
+		<artifactId>ChatComponentAPI</artifactId> 
 			<version>master-SNAPSHOT</version> <scope>compile</scope> </dependency> -->
 		<dependency>
 			<groupId>com.zaxxer</groupId>
@@ -193,25 +237,25 @@
 		<dependency>
 			<groupId>org.slf4j</groupId>
 			<artifactId>slf4j-simple</artifactId>
-			<version>1.7.5</version>
+			<version>2.0.17</version>
 			<scope>compile</scope>
 		</dependency>
 		<dependency>
 			<groupId>com.comphenix.protocol</groupId>
 			<artifactId>ProtocolLib</artifactId>
-			<version>4.6.0</version>
+			<version>5.3.0</version>
 			<scope>provided</scope>
 		</dependency>
 		<dependency>
 			<groupId>org.projectlombok</groupId>
 			<artifactId>lombok</artifactId>
-			<version>1.18.20</version>
+			<version>1.18.38</version>
 			<scope>provided</scope>
 		</dependency>
 		<dependency>
 			<groupId>fr.xephi</groupId>
 			<artifactId>authme</artifactId>
-			<version>5.6.0-SNAPSHOT</version>
+			<version>5.6.0</version>
 			<scope>provided</scope>
 		</dependency>
 		<dependency>
@@ -228,7 +272,7 @@
 		<dependency>
 			<groupId>net.md-5</groupId>
 			<artifactId>bungeecord-api</artifactId>
-			<version>1.17-R0.1-SNAPSHOT</version>
+			<version>1.21-R0.1-SNAPSHOT</version>
 			<scope>provided</scope>
 		</dependency>
 		<dependency>
@@ -240,32 +284,93 @@
 		<dependency>
 			<groupId>com.github.LeonMangler</groupId>
 			<artifactId>PremiumVanishAPI</artifactId>
-			<version>2.7.3</version>
+			<version>2.8.8</version>
 			<scope>provided</scope>
 		</dependency>
 		<dependency>
-			<groupId>com.mojang</groupId>
-			<artifactId>authlib</artifactId>
-			<version>1.5.21</version>
+			<groupId>com.lenis0012</groupId>
+			<artifactId>loginsecurity</artifactId>
+			<version>3.2.0</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>net.luckperms</groupId>
+			<artifactId>api</artifactId>
+			<version>5.4</version>
+			<scope>provided</scope>
+		</dependency>
+		<dependency>
+			<groupId>com.nickuc.login</groupId>
+			<artifactId>api</artifactId>
+			<version>10.4</version>
 			<scope>provided</scope>
 		</dependency>
 	</dependencies>
 	<profiles>
 		<profile>
-			<id>normal</id>
+			<id>deploy-snapshot</id>
 			<properties>
-				<build.profile.id>normal</build.profile.id>
+				<build.profile.id>deploy-snapshot</build.profile.id>
 			</properties>
-			<activation>
-				<activeByDefault>true</activeByDefault>
-			</activation>
 			<distributionManagement>
+				<snapshotRepository>
+					<id>nexus</id>
+					<url>https://nexus.bencodez.com/repository/maven-snapshots/</url>
+				</snapshotRepository>
 				<repository>
-					<id>internal.repo</id>
-					<name>Temporary Staging Repository</name>
-					<url>file://${project.build.directory}/mvn-repo</url>
+					<id>nexus</id>
+					<url>https://nexus.bencodez.com/repository/maven-releases</url>
 				</repository>
 			</distributionManagement>
+			<build>
+				<plugins>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-javadoc-plugin</artifactId>
+						<version>3.11.2</version>
+						<executions>
+							<execution>
+								<id>attach-javadocs</id>
+								<goals>
+									<goal>jar</goal>
+								</goals>
+								<phase>deploy</phase>
+								<configuration>
+									<sourcepath>
+										${project.basedir}/target/delombok</sourcepath>
+								</configuration>
+							</execution>
+						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-deploy-plugin</artifactId>
+						<version>3.1.4</version>
+						<configuration>
+							<skip>true</skip>
+						</configuration>
+					</plugin>
+					<plugin>
+						<groupId>org.sonatype.plugins</groupId>
+						<artifactId>nexus-staging-maven-plugin</artifactId>
+						<version>1.7.0</version>
+						<executions>
+							<execution>
+								<id>default-deploy</id>
+								<phase>deploy</phase>
+								<goals>
+									<goal>deploy</goal>
+								</goals>
+							</execution>
+						</executions>
+						<configuration>
+							<serverId>nexus</serverId>
+							<nexusUrl>https://nexus.bencodez.com/nexus/</nexusUrl>
+							<skipStaging>true</skipStaging>
+						</configuration>
+					</plugin>
+				</plugins>
+			</build>
 		</profile>
 		<profile>
 			<id>deploy</id>
@@ -287,7 +392,7 @@
 					<plugin>
 						<groupId>org.apache.maven.plugins</groupId>
 						<artifactId>maven-javadoc-plugin</artifactId>
-						<version>2.10.4</version>
+						<version>3.11.2</version>
 						<executions>
 							<execution>
 								<id>attach-javadocs</id>
@@ -296,7 +401,8 @@
 								</goals>
 								<phase>deploy</phase>
 								<configuration>
-									<sourcepath>${project.basedir}/target/delombok</sourcepath>
+									<sourcepath>
+										${project.basedir}/target/delombok</sourcepath>
 								</configuration>
 							</execution>
 						</executions>
@@ -304,7 +410,7 @@
 					<plugin>
 						<groupId>org.apache.maven.plugins</groupId>
 						<artifactId>maven-deploy-plugin</artifactId>
-						<version>3.0.0-M1</version>
+						<version>3.1.4</version>
 						<configuration>
 							<skip>true</skip>
 						</configuration>
@@ -312,7 +418,7 @@
 					<plugin>
 						<groupId>org.sonatype.plugins</groupId>
 						<artifactId>nexus-staging-maven-plugin</artifactId>
-						<version>1.5.1</version>
+						<version>1.7.0</version>
 						<executions>
 							<execution>
 								<id>default-deploy</id>
@@ -328,32 +434,50 @@
 							<skipStaging>true</skipStaging>
 						</configuration>
 					</plugin>
+				</plugins>
+			</build>
+		</profile>
+		<profile>
+			<id>javadoc</id>
+			<properties>
+				<build.profile.id>javadoc</build.profile.id>
+			</properties>
+			<distributionManagement>
+				<repository>
+					<id>internal.repo</id>
+					<name>Temporary Staging Repository</name>
+					<url>file://${project.build.directory}/mvn-repo</url>
+				</repository>
+			</distributionManagement>
+			<build>
+				<plugins>
 					<plugin>
-						<groupId>com.github.github</groupId>
-						<artifactId>site-maven-plugin</artifactId>
-						<version>0.12</version>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-javadoc-plugin</artifactId>
+						<version>3.11.2</version>
 						<executions>
 							<execution>
-								<id>javadoc</id>
+								<id>attach-javadocs</id>
 								<goals>
-									<goal>site</goal>
+									<goal>jar</goal>
 								</goals>
 								<phase>deploy</phase>
 								<configuration>
-									<message>Maven javadoc for ${project.version}</message>
-									<noJekyll>true</noJekyll>
-									<outputDirectory>${project.build.directory}/apidocs
-									</outputDirectory>
-									<branch>refs/heads/gh-pages</branch>
-									<includes>
-										<include>**/*</include>
-									</includes>
-									<repositoryName>AdvancedCore</repositoryName>
-									<repositoryOwner>BenCodez</repositoryOwner>
-									<server>github</server>
+									<sourcepath>
+										${project.basedir}/target/delombok</sourcepath>
+									<outputDirectory>
+										${project.basedir}/target/apidocs</outputDirectory>
 								</configuration>
 							</execution>
 						</executions>
+					</plugin>
+					<plugin>
+						<groupId>org.apache.maven.plugins</groupId>
+						<artifactId>maven-deploy-plugin</artifactId>
+						<version>3.1.4</version>
+						<configuration>
+							<skip>true</skip>
+						</configuration>
 					</plugin>
 				</plugins>
 			</build>
