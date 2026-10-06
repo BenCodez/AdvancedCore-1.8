@@ -1,5 +1,6 @@
 package com.bencodez.advancedcore.api.user.userstorage.sql;
 
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
@@ -618,6 +619,67 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 			}
 			if (addPrimary) columns.add(primaryKey);
 			insert(columns);
+		}
+	}
+
+	/**
+	 * Synchronously writes a batch without replacing unrelated row columns.
+	 * Supports the legacy SQLite driver; no modern UPSERT syntax is required.
+	 * SQL failures propagate. The shared SQLite connection remains owner-managed.
+	 */
+	public void updateStrict(Column primary, List<Column> values) throws SQLException {
+		if (values.isEmpty()) return;
+		if (!primary.getName().equalsIgnoreCase(primaryKey.getName())) {
+			throw new IllegalArgumentException("The configured primary identity must be used");
+		}
+		for (Column column : values) {
+			if (column.getName().equalsIgnoreCase(primary.getName())) {
+				throw new IllegalArgumentException("The primary identity cannot be updated");
+			}
+		}
+		synchronized (object) {
+			Connection connection = sqLite.getSQLConnection();
+			if (!connection.getAutoCommit()) throw new SQLException("Checked user writes require auto-commit");
+			for (Column column : values) checkColumn(column);
+			StringBuilder update = new StringBuilder("UPDATE ").append(getName()).append(" SET ");
+			for (int i = 0; i < values.size(); i++) {
+				if (i > 0) update.append(", ");
+				update.append("`").append(values.get(i).getName()).append("`=?");
+			}
+			update.append(" WHERE `").append(primary.getName()).append("`=?");
+			if (executeStrictUpdate(connection, update.toString(), primary, values) > 0) return;
+			StringBuilder insert = new StringBuilder("INSERT OR IGNORE INTO ").append(getName())
+					.append(" (`").append(primary.getName()).append("`");
+			for (Column column : values) insert.append(", `").append(column.getName()).append("`");
+			insert.append(") VALUES (?");
+			for (int i = 0; i < values.size(); i++) insert.append(", ?");
+			insert.append(")");
+			try (PreparedStatement statement = connection.prepareStatement(insert.toString())) {
+				bindStrictValue(statement, 1, primary);
+				for (int i = 0; i < values.size(); i++) bindStrictValue(statement, i + 2, values.get(i));
+				if (statement.executeUpdate() > 0) return;
+			}
+			// Another writer may have inserted this identity after the first UPDATE.
+			if (executeStrictUpdate(connection, update.toString(), primary, values) == 0) {
+				throw new SQLException("User identity was not written");
+			}
+		}
+	}
+
+	private int executeStrictUpdate(Connection connection, String query, Column primary, List<Column> values) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement(query)) {
+			for (int i = 0; i < values.size(); i++) bindStrictValue(statement, i + 1, values.get(i));
+			bindStrictValue(statement, values.size() + 1, primary);
+			return statement.executeUpdate();
+		}
+	}
+
+	private void bindStrictValue(PreparedStatement statement, int parameter, Column column) throws SQLException {
+		// UserData boolean readers expect the legacy textual true/false format.
+		if (column.getValue() != null && column.getValue().isBoolean()) {
+			statement.setString(parameter, Boolean.toString(column.getValue().getBoolean()));
+		} else {
+			bindValue(statement, parameter, column);
 		}
 	}
 

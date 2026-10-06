@@ -205,3 +205,37 @@ Java8 `clean install` passes 63 unit and three packaged-artifact tests, with zer
 failures, errors, or skips. These tests isolate placeholder processing; they do
 not claim a new JavaScript/PlaceholderAPI implementation or live runtime proof
 of every command overload.
+
+## Checked SQL write foundation for cache integration
+
+The legacy MySQL and SQLite void update APIs remain unchanged. New additive
+`updateStrict` methods provide synchronous checked writes for the forthcoming
+cache adapter: SQL failure propagates, external transactions cannot produce a
+false acknowledgement, primary identities cannot be mutated, and unrelated row
+columns remain intact. MySQL uses a bound `INSERT ... ON DUPLICATE KEY UPDATE`;
+SQLite uses UPDATE and INSERT OR IGNORE with a bounded race retry, compatible
+with the retained SQLite3.7.2 driver. Both preserve textual true/false for legacy
+UserData boolean readers. SQLite retains its owner-managed connection; MySQL
+closes each borrowed connection and statement. Existing automatic column checks
+are retained; the tests below cover writes against explicitly prepared schemas.
+
+The actual Java8 full build passes69 unit+7 packaged-artifact tests, zero
+failures/errors/skips (`ac-checked-write-autocommit-valid-fixture.log`). Six new
+SQLite regressions use JDBC, and four MySQL regressions load the actual shaded
+Java8 artifact to verify bindings, SQL errors, resource closure, transaction
+acknowledgement and identity-cache publication. The initial artifact fixture
+omitted the existing column-check mutex; fixing that fixture initialization
+allowed the unchanged assertions to exercise the intended SQL paths.
+
+The packaged MySQL method was additionally run against the isolated MariaDB11.8.6
+fixture with Java8u504 and an already cached, Java8-compatible Connector/J5.1.14
+provided only to the test runner. Actual insert, update, idempotent retry,
+apostrophe/boolean values, preservation of unrelated columns, and a rejected
+batch with unchanged earlier data all pass. The unique owned test table was
+removed and the fixture daemon stopped. No production dependency was added.
+
+These APIs are a prerequisite, not completed cache integration. Legacy
+UserData/cache callers still use the legacy methods. The checked FLAT adapter,
+cache failure retention, serialized flushes, retirement fencing, caller threading
+and shutdown behavior remain under implementation and audit. No claim of
+completed vote/point durability follows from adding these methods alone.

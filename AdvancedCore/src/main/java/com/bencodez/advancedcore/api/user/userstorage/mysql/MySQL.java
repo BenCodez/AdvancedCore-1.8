@@ -700,6 +700,49 @@ public class MySQL {
 		}
 	}
 
+	/**
+	 * Synchronously writes a batch, propagating SQL failure to its owner.
+	 * Unlike the legacy void update API, return means the statement completed.
+	 * Existing row fields outside this batch remain untouched.
+	 */
+	public void updateStrict(String index, List<Column> cols) throws SQLException {
+		if (cols.isEmpty()) return;
+		for (Column col : cols) {
+			if (col.getName().equalsIgnoreCase("uuid")) {
+				throw new IllegalArgumentException("The primary identity cannot be updated");
+			}
+		}
+		for (Column col : cols) checkColumn(col.getName(), col.getDataType());
+		synchronized (object2) {
+			StringBuilder query = new StringBuilder("INSERT INTO ").append(getName()).append(" (`uuid`");
+			for (Column col : cols) query.append(", `").append(col.getName()).append("`");
+			query.append(") VALUES (?");
+			for (int i = 0; i < cols.size(); i++) query.append(", ?");
+			query.append(") ON DUPLICATE KEY UPDATE ");
+			for (int i = 0; i < cols.size(); i++) {
+				String column = cols.get(i).getName();
+				if (i > 0) query.append(", ");
+				query.append("`").append(column).append("`=VALUES(`").append(column).append("`)");
+			}
+			query.append(";");
+			try (Connection connection = mysql.getConnectionManager().getConnection()) {
+				if (!connection.getAutoCommit()) throw new SQLException("Checked user writes require auto-commit");
+				try (PreparedStatement prepared = connection.prepareStatement(query.toString())) {
+					prepared.setString(1, index);
+					for (int i = 0; i < cols.size(); i++) prepared.setObject(i + 2, toSqlValue(cols.get(i).getValue()));
+					prepared.executeUpdate();
+				}
+			}
+			uuids.add(index);
+			for (Column col : cols) {
+				if (col.getName().equalsIgnoreCase("PlayerName") && col.getValue() != null) {
+					String playerName = col.getValue().toString();
+					if (playerName != null && !playerName.isEmpty()) names.add(playerName);
+				}
+			}
+		}
+	}
+
 	private Object toSqlValue(DataValue value) {
 		if (value == null) return null;
 		if (value.isString()) return value.getString();
