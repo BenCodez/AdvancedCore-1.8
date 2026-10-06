@@ -1029,3 +1029,76 @@ before global cleanup can be claimed safe alongside core final cache flush. Redi
 MQTT transport producer retirement needs inspection. No full lifecycle/main parity,
 full upstream ledger, final independent-review result or PR readiness is claimed.
 No production dependency, config key/default, schema, wire or version changed.
+
+
+### Captured global-data pool ownership and physical reload fencing
+
+This consumer backport addresses the pool-ownership portion of pinned upstream
+VotingPlugin `4a137fd40f507b86a63f0b54fb9298e69fb49184`; the full commit is still
+partial. The main pool borrowed by GlobalData.UseMainMySQL is now retained when
+global data closes/reloads. An independently created global pool is closed using
+its captured creation ownership, even after UseMainMySQL changes. AdvancedCore's
+public GlobalMySQL.close behavior is unchanged; the consumer owns this distinction.
+
+BungeeHandler seals new global polling, drains its existing scheduled executor and
+all admitted direct protocol polls/period processing, then retires its provider.
+The counter is constant-space; no registry, queue or extra executor is introduced.
+Bodies capture their provider, arbitrary callbacks run outside the lifecycle
+monitor, and physical completion is required before close/replacement. Nested
+accepted continuation can finish after sealing; the original public period-method
+override dispatch is retained and regression-tested. Self-retirement and concurrent
+replacement are rejected before transport side effects. Existing five-second grace
+is monotonic/shared across the timer and direct work. False await/interruption is
+visible, preserves provider ownership for explicit retry, and never shutdownNow.
+Preparation occurs before polling tasks are scheduled. Failed candidate setup stays
+sealed/owned for explicit cleanup; legacy GlobalMySQL SQL acknowledgements remain
+forgiving and are not newly claimed to be strict initialization evidence.
+
+Full storage reload first drains global readers before configuration/main-pool
+replacement. Existing handlers are stopped/closed at disable regardless of current
+proxy-enable flags. Switching global data off retires it and restores local time
+processing. Initial handler creation is no longer followed by redundant global
+replacement in that same reload. These changes do not establish that AdvancedCore
+main-provider replacement itself drains every raw/native user operation: that
+separate lifecycle work remains incomplete.
+
+Actual Java8 focused native lifecycle tests pass; the direct-poll retirement test
+failed on the prior implementation after correcting two fixture issues (wrong
+BungeeSettings import, absent mocked GlobalMySQL). Final full consumer clean verify
+passes 45 unit + 1 packaged-artifact test, all zero failures/errors/skips, with 2439
+base classes and maximum major52. Producer code is unchanged from AdvancedCore
+2f7fc42: its exact prior clean install 250 unit + 16 artifact pass and SHA256
+cc3bf3f1c8e536421af73d1899368d78b52b1270f3565c3e79eea344f0f1e7f7
+are reused, rather than treating a different installed dependency as acceptance.
+The consumer was built with Temurin1.8.0_504/Maven3.9.9 and:
+`mvn -B -f VotingPlugin/pom.xml -Dmaven.resolver.transport=wagon -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean verify`.
+
+Final consumer SHA256
+1c29e9e01a9598cb14aefd264ed7404304f21f8c57208658d359152641d8a785
+passes real Java8/Spigot1.8.8/MariaDB11.8.6 acceptance with ConnectorJ5.1.14 supplied
+on the test server classpath. A controlled helper uses the native provider factory:
+borrowed pool retained after configuration changes, independent pool closure with
+main pool still usable, borrowed-to-borrowed reload, queued main-user points19
+persisted at clean disable and restart. Separate final SQLite GlobalCompatSQL
+passes async receipt, snapshot, mutation, bulk, removal, vote/reward, points10total1,
+both clean disables, integrity and restart persistence. Four final server logs were
+independently inspected for disable/unsettled/linkage/rejection/retired-admission
+errors and fixture credentials; none observed. All processes stopped and temporary
+helper plugin jars removed. Evidence: global-provider-compatible-build-results.json,
+global-provider-final-compatible-clean-verify.log, global-provider-mysql-compatible-live.log,
+global-provider-mysql-runtime-results.json, global-provider-sqlite-compatible-live.log,
+checked-cache-runtime-results-GlobalCompatSQL.json. Initial live fixture readback
+wrongly assumed string-valued Points; actual MySQL returned DataValueInt. It failed
+before pool tests, was corrected, and is retained as failed fixture evidence.
+A restart preflight also rejected a transient socket bind; listener state was
+checked, and SO_REUSEADDR fixed the harness check without stealing a live daemon.
+
+No production dependency, release metadata, public signature, config/default,
+schema or wire changes. All original checkouts/references remain read-only. This
+pool acceptance is not full proxy transport/routing, failed-shutdown, raw API,
+main-provider replacement, wipe/migration, same-instance re-enable, or durable
+reward root queue/checkpoint/replay acceptance. Async time-change dispatch and
+captured-online VoteReminder/VoteShop changes from 4a137fd still need their own
+behavior-aware backports. Full ledger/source parity and final independent review
+remain incomplete. The earlier global-reload/pool-ownership TODO is superseded
+only for the tested native global provider paths described here.
