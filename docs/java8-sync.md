@@ -3740,3 +3740,35 @@ such names needs a separate reproduction and fix. The full801fb0a/5ef372/5198b96
 headless/borrowed/retained migration patches remain partial or pending. Existing APIs,
 configuration/data/wire/release contracts and original/reference checkouts are preserved.
 No whole-main parity, final independent review, push or PR readiness is claimed.
+
+## Canonical retained SQL column reads
+
+Native MySQL and SQLite individual/legacy/bulk readers now capture registered SQL
+names once per read and project physical case aliases onto the registered name.
+Complete-source conversion uses the same projection before validating duplicate labels
+and UUID identity. A retained `points=17` for registered `Points` consequently reaches
+UserData/cache under `Points`, rather than an unknown key beside a default `Points=0`.
+Unknown dynamic columns keep their physical names. FLAT key handling and the public
+integer/boolean type-index APIs are unchanged. Identical repeated legacy registrations
+remain supported; distinct case aliases for one registered physical identity fail visibly.
+
+The initial two packaged reproductions failed on physical names instead of canonical
+names. Final actual Java8 producer clean install passes625 unit +37 artifact =662 tests;
+exact locally installed producer consumer clean verify passes45 unit +1 artifact =46.
+Zero failures/errors/skips. Producer SHA256
+`71994ccb9e754203107428a2db23daf5a083a769aa38c417da0e8b877f28df34`;
+consumer SHA256 `1b54f644851d4460bb73e39f0ed4e5f322695f9b024cbd2201c6c70e73e56518`.
+All1834/2451 base classes respectively have major<=52.
+
+RealJava8/MariaDB11.8.6 verifies physical lowercase `points=17` through strict/legacy
+single-user and complete/bulk reads plus actual UserData conversion, preserving unknown
+stored data. The existing forced concurrent schema-add acceptance also remains green.
+Nine realJava8/Spigot1.8.8 acceptance checks pass against the exact final consumer,
+including preserved nonzero canonical cache data, detached registration/default passes,
+SQLite integrity and clean shutdown/linkage. Owned tables/servers/workers are cleaned up.
+
+This adapts the pinned main JdbcSqlUserStorage canonical projection to native legacy
+stores. It does not complete retained physical type/default migration, UUID uniqueness,
+full borrowed-schema reconciliation or the broader storage ledger. No new dependency,
+release change, configuration/wire change, final independent review, push or PR readiness
+is claimed. Remaining upstream entries keep their partial/pending dispositions.

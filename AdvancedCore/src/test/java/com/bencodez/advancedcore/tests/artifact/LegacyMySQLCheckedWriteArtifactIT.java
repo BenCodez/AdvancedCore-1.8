@@ -133,6 +133,8 @@ class LegacyMySQLCheckedWriteArtifactIT {
             loader=new URLClassLoader(new URL[]{artifact},getClass().getClassLoader()) {
                 private boolean child(String name) {
                     return name.startsWith("com.bencodez.advancedcore.api.user.userstorage.mysql.MySQL")
+                        ||name.startsWith("com.bencodez.advancedcore.api.user.userstorage.SqlColumnNames")
+                        ||name.startsWith("com.bencodez.advancedcore.api.user.userstorage.CompleteUserRows")
                         ||name.startsWith("com.bencodez.simpleapi.sql.mysql.")
                         ||name.startsWith("com.bencodez.advancedcore.hikari.");
                 }

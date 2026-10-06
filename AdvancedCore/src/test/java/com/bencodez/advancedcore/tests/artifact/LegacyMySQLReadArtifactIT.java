@@ -40,6 +40,8 @@ class LegacyMySQLReadArtifactIT {
         try(URLClassLoader loader=new URLClassLoader(new URL[]{artifact},getClass().getClassLoader()) {
             @Override public URL getResource(String name) {
                 if (name.startsWith("com/bencodez/advancedcore/api/user/userstorage/mysql/MySQL")
+                        ||name.startsWith("com/bencodez/advancedcore/api/user/userstorage/SqlColumnNames")
+                        ||name.startsWith("com/bencodez/advancedcore/api/user/userstorage/CompleteUserRows")
                         || name.startsWith("com/bencodez/simpleapi/sql/mysql/")
                         || name.startsWith("com/bencodez/advancedcore/hikari/")) {
                     URL resource = findResource(name);
@@ -49,6 +51,8 @@ class LegacyMySQLReadArtifactIT {
             }
             @Override protected synchronized Class<?> loadClass(String n,boolean resolve)throws ClassNotFoundException {
                 if(n.startsWith("com.bencodez.advancedcore.api.user.userstorage.mysql.MySQL")
+                        ||n.startsWith("com.bencodez.advancedcore.api.user.userstorage.SqlColumnNames")
+                        ||n.startsWith("com.bencodez.advancedcore.api.user.userstorage.CompleteUserRows")
                         ||n.startsWith("com.bencodez.simpleapi.sql.mysql.")
                         ||n.startsWith("com.bencodez.advancedcore.hikari.")) {
                     Class<?> type=findLoadedClass(n);

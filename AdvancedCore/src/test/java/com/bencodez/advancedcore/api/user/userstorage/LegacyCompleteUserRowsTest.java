@@ -36,6 +36,34 @@ class LegacyCompleteUserRowsTest {
         ArrayList<Column> values=CompleteUserRows.read(rows(new String[]{"uuid","Points","Enabled"},new String[][]{{id,null,null}}),types).get(UUID.fromString(id));assertEquals(0,values.get(1).getValue().getInt());assertFalse(values.get(2).getValue().getBoolean());
         assertTrue(CompleteUserRows.read(rows(new String[]{"uuid"},new String[0][]),types).isEmpty());
     }
+    @Test void registeredPhysicalAliasesKeepCanonicalNamesAndUnknownColumns() throws Exception {
+        UserDataManager types=mock(UserDataManager.class);
+        when(types.getRegisteredKeysSnapshot()).thenReturn(new ArrayList<>(Arrays.asList(
+            new com.bencodez.advancedcore.api.user.usercache.keys.UserDataKeyInt("Points"),
+            new com.bencodez.advancedcore.api.user.usercache.keys.UserDataKeyBoolean("Enabled"))));
+        when(types.isInt("Points")).thenReturn(true);when(types.isBoolean("Enabled")).thenReturn(true);
+        List<Column> values=CompleteUserRows.read(rows(new String[]{"UUID","points","ENABLED","Custom"},
+            new String[][]{{id,"17","1","raw"}}),types).get(UUID.fromString(id));
+        assertEquals("uuid",values.get(0).getName());assertEquals("Points",values.get(1).getName());
+        assertEquals(17,values.get(1).getValue().getInt());assertEquals("Enabled",values.get(2).getName());
+        assertTrue(values.get(2).getValue().getBoolean());assertEquals("Custom",values.get(3).getName());
+        assertEquals("raw",values.get(3).getValue().getString());
+        verify(types,times(1)).getRegisteredKeysSnapshot();
+    }
+    @Test void aliasesOfOneRegisteredColumnRejectAmbiguousConversion() throws Exception {
+        UserDataManager types=mock(UserDataManager.class);
+        when(types.getRegisteredKeysSnapshot()).thenReturn(new ArrayList<>(Collections.singletonList(
+            new com.bencodez.advancedcore.api.user.usercache.keys.UserDataKeyInt("Points"))));
+        assertThrows(SQLException.class,() -> CompleteUserRows.read(
+            rows(new String[]{"uuid","points","Points"},new String[0][]),types));
+    }
+    @Test void distinctRegisteredAliasesFailRatherThanChoosingAnArbitraryDefault() throws Exception {
+        UserDataManager types=mock(UserDataManager.class);
+        when(types.getRegisteredKeysSnapshot()).thenReturn(new ArrayList<>(Arrays.asList(
+            new com.bencodez.advancedcore.api.user.usercache.keys.UserDataKeyInt("Points"),
+            new com.bencodez.advancedcore.api.user.usercache.keys.UserDataKeyInt("points"))));
+        assertThrows(SQLException.class,() -> SqlColumnNames.capture(types));
+    }
     ResultSet rows(String[] labels,String[][] data)throws Exception {
         ResultSet rows=mock(ResultSet.class);ResultSetMetaData meta=mock(ResultSetMetaData.class);when(rows.getMetaData()).thenReturn(meta);when(meta.getColumnCount()).thenReturn(labels.length);
         for(int i=0;i<labels.length;i++)when(meta.getColumnLabel(i+1)).thenReturn(labels[i]);

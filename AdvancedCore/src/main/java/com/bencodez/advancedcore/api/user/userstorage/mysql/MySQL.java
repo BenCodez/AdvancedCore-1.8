@@ -4,6 +4,8 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+
+import com.bencodez.advancedcore.api.user.userstorage.SqlColumnNames;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -372,12 +374,13 @@ public class MySQL {
 		try (Connection conn = mysql.getConnectionManager().getConnection();
 				PreparedStatement sql = conn.prepareStatement(query)) {
 			ResultSet rs = sql.executeQuery();
+			SqlColumnNames names = SqlColumnNames.capture(plugin.getUserManager().getDataManager());
 
 			while (rs.next()) {
 				ArrayList<Column> cols = new ArrayList<>();
 				UUID uuid = null;
 				for (int i = 1; i <= rs.getMetaData().getColumnCount(); i++) {
-					String columnName = rs.getMetaData().getColumnLabel(i);
+					String columnName = names.name(rs.getMetaData().getColumnLabel(i));
 					Column rCol = null;
 
 					if (plugin.getUserManager().getDataManager().isInt(columnName)) {
@@ -460,10 +463,11 @@ public class MySQL {
 			try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM " + getName() + " WHERE `uuid`=?;")) {
 				statement.setString(1, uuid);
 				try (ResultSet rows = statement.executeQuery()) {
+					SqlColumnNames names = SqlColumnNames.capture(plugin.getUserManager().getDataManager());
 					ArrayList<Column> result = new ArrayList<>();
 					if (rows.next()) {
 						for (int i = 1; i <= rows.getMetaData().getColumnCount(); i++) {
-							String key = rows.getMetaData().getColumnLabel(i);
+							String key = names.name(rows.getMetaData().getColumnLabel(i));
 							if (plugin.getUserManager().getDataManager().isInt(key)) result.add(new Column(key, new DataValueInt(rows.getInt(i))));
 							else if (plugin.getUserManager().getDataManager().isBoolean(key)) result.add(new Column(key, new DataValueBoolean(Boolean.valueOf(rows.getString(i)))));
 							else result.add(new Column(key, new DataValueString(rows.getString(i))));
@@ -488,10 +492,11 @@ public class MySQL {
 				PreparedStatement sql = conn.prepareStatement(query)) {
 			sql.setObject(1, toSqlValue(column.getValue()));
 			try (ResultSet rs = sql.executeQuery()) {
+				SqlColumnNames names = SqlColumnNames.capture(plugin.getUserManager().getDataManager());
 
 			if (rs.next()) {
 				for (int i = 1; i <= rs.getMetaData().getColumnCount(); i++) {
-					String columnName = rs.getMetaData().getColumnLabel(i);
+					String columnName = names.name(rs.getMetaData().getColumnLabel(i));
 					Column rCol = null;
 					if (plugin.getUserManager().getDataManager().isInt(columnName)) {
 						try {

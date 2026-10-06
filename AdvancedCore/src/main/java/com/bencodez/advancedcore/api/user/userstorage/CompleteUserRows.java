@@ -13,10 +13,11 @@ public final class CompleteUserRows {
     private CompleteUserRows() {}
     public static HashMap<UUID,ArrayList<Column>> read(ResultSet rows,UserDataManager types) throws SQLException {
         HashMap<UUID,ArrayList<Column>> result=new HashMap<>();
+        SqlColumnNames registered=SqlColumnNames.capture(types);
         ResultSetMetaData metadata=rows.getMetaData();int count=metadata.getColumnCount();
         Set<String> labels=new HashSet<>();String[] names=new String[count];
         for(int i=0;i<count;i++) {
-            String name=metadata.getColumnLabel(i+1);
+            String name=registered.name(metadata.getColumnLabel(i+1));
             if(name==null||name.isEmpty()||!labels.add(name))throw new SQLException("Invalid source column identities");
             names[i]=name;
         }
