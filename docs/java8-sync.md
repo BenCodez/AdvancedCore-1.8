@@ -389,3 +389,30 @@ consumer artifact; all fixture processes are stopped. This is not live MySQL,
 proxy, or failed-shutdown acceptance. Registry generation fencing, non-queued
 setter admission, shutdown draining, the broader ledger and final independent
 review remain incomplete. No PR readiness is claimed.
+
+## Cache registry generation fencing
+
+Manager removal retires the captured cache and conditionally detaches that exact
+instance before delivering its post-commit notification. Failed checked writes
+leave the canonical cache and pending work intact. Removing an absent identity
+does not populate it. Bulk clear captures existing generations and never clears
+a newer generation created by another caller or notification. Concurrent initial
+population performs storage reads outside registry locks and atomically selects
+an already published live generation instead of overwriting it. The public
+ConcurrentHashMap getter and existing cache/refresh overloads remain available.
+
+Eight deterministic regressions cover absent removal, callback replacement, bulk
+replacement, slow/concurrent publication, retired-entry recovery, failure
+preservation, and a callback awaiting population from another thread. This is
+registry fencing, not global storage admission: direct non-queued writers and
+shutdown/reload admission, draining and native owner closure still require
+further implementation. Returning a cache does not grant a lifetime lease;
+concurrent retirement rejects subsequent stale writes visibly. No full upstream
+ledger or final PR readiness is claimed by this cohort.
+
+Validation: 37 focused cache tests pass; Java8 clean install passes119 unit
+plus12 artifact tests, exact VotingPlugin clean verify passes14 unit plus1
+artifact test, zero failures/errors/skips. Base bytecode remains major<=52.
+The exact consumer passes actual Java8/Spigot1.8.8 SQLite online vote/reward,
+SetPoints7/AddPoints3=>10,total1, graceful stop and restart persistence
+(CacheRegistry evidence). This does not verify failed shutdown or live MySQL.

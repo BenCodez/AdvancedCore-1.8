@@ -73,51 +73,48 @@ public class UserDataManager {
 	@Deprecated
 	public void cacheUser(UUID uuid) {
 		plugin.devDebug("Caching " + uuid.toString());
-		if (userDataCache.containsKey(uuid)) {
-			UserDataCache data = userDataCache.get(uuid);
+		UserDataCache data = userDataCache.get(uuid);
+		if (data != null && !data.isRetired()) {
 			data.clearChanges();
 			data.cache();
-		} else {
-			UserDataCache data = new UserDataCache(this, uuid).cache();
-			if (data.hasCache()) {
-				userDataCache.put(uuid, data);
-			}
-		}
+		} else getOrPopulate(uuid);
 	}
 
 	public void cacheUser(UUID uuid, String playerName) {
-		if (playerName != null && !playerName.isEmpty()) {
-			if (!plugin.getOptions().isOnlineMode()) {
-				uuid = UUID.fromString(PlayerManager.getInstance().getUUID(playerName));
-			}
+		if (playerName != null && !playerName.isEmpty() && !plugin.getOptions().isOnlineMode()) {
+			uuid = UUID.fromString(PlayerManager.getInstance().getUUID(playerName));
 		}
-		plugin.devDebug("Caching " + uuid.toString());
-		if (userDataCache.containsKey(uuid)) {
-			UserDataCache data = userDataCache.get(uuid);
-			data.clearChanges();
-			data.cache();
-		} else {
-			UserDataCache data = new UserDataCache(this, uuid).cache();
-			if (data.hasCache()) {
-				userDataCache.put(uuid, data);
-			}
-		}
+		cacheUser(uuid);
+	}
+
+	private UserDataCache getOrPopulate(UUID uuid) {
+		UserDataCache current = userDataCache.get(uuid);
+		if (current != null && !current.isRetired()) return current;
+		// Storage reads run outside registry locks. A concurrently published live
+		// generation wins over this private candidate, even if its read began later.
+		UserDataCache candidate = new UserDataCache(this, uuid).cache();
+		if (!candidate.hasCache()) return null;
+		return userDataCache.compute(uuid, (key, registered) ->
+				registered == null || registered.isRetired() ? candidate : registered);
 	}
 
 	public void cacheUserIfNeeded(UUID uuid) {
-		if (!userDataCache.containsKey(uuid)) {
-			cacheUser(uuid);
-		}
+		getOrPopulate(uuid);
 	}
 
 	public void clearCache() {
 		plugin.debug("Clearing cache: " + userDataCache.keySet().size());
-		for (UserDataCache c : userDataCache.values()) {
-			c.clearCache();
-			c.dump();
+		// Clear only generations captured here, never a replacement installed by
+		// concurrent work or a post-commit callback.
+		for (java.util.Map.Entry<UUID, UserDataCache> entry : new ArrayList<>(userDataCache.entrySet())) {
+			retire(entry.getKey(), entry.getValue());
 		}
-		userDataCache.clear();
+	}
 
+	private void retire(UUID uuid, UserDataCache cache) {
+		Runnable notification = cache.retireForManager();
+		userDataCache.remove(uuid, cache);
+		if (notification != null) notification.run();
 	}
 
 	public void clearCacheBasic() {
@@ -145,12 +142,12 @@ public class UserDataManager {
 	}
 
 	public boolean containsKey(UUID fromString) {
-		return userDataCache.containsKey(fromString);
+		UserDataCache cache = userDataCache.get(fromString);
+		return cache != null && !cache.isRetired();
 	}
 
 	public UserDataCache getCache(UUID uuid) {
-		cacheUserIfNeeded(uuid);
-		return userDataCache.get(uuid);
+		return getOrPopulate(uuid);
 	}
 
 	public boolean isBoolean(String str) {
@@ -158,10 +155,8 @@ public class UserDataManager {
 	}
 
 	public boolean isCached(UUID uuid) {
-		if (userDataCache.containsKey(uuid)) {
-			return userDataCache.get(uuid).hasCache();
-		}
-		return false;
+		UserDataCache cache = userDataCache.get(uuid);
+		return cache != null && cache.hasCache();
 	}
 
 	public boolean isInt(String str) {
@@ -185,11 +180,8 @@ public class UserDataManager {
 				uuid = UUID.fromString(PlayerManager.getInstance().getUUID(playerName));
 			}
 		}
-		UserDataCache cache = getCache(uuid);
-		if (cache != null) {
-			cache.clearCache();
-		}
-		userDataCache.remove(uuid);
+		UserDataCache cache = userDataCache.get(uuid);
+		if (cache != null) retire(uuid, cache);
 	}
 
 	public void updateCacheOnline() {

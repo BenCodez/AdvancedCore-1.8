@@ -41,7 +41,7 @@ public class UserDataCache {
 	private final HashMap<String, DataValue> inFlightValues = new HashMap<>();
 	private boolean scheduled = false;
 	@Getter
-	private UUID uuid;
+	private volatile UUID uuid;
 
 	public UserDataCache(UserDataManager manager, UUID uuid) {
 		this.uuid = uuid;
@@ -111,17 +111,18 @@ public class UserDataCache {
 	}
 
 	public void clearCache() {
-		finishCache(false);
+		Runnable notification = finishCache(false);
+		if (notification != null) notification.run();
 	}
 
-	private void finishCache(boolean retire) {
+	private Runnable finishCache(boolean retire) {
 		Runnable notification = null;
 		boolean markedRemoval = false;
 		batchOwner.lock();
 		try {
 			synchronized (this) {
 				if (inFlight) throw new IllegalStateException("Cannot retire a cache from its own storage write");
-				if (cache == null) return;
+				if (cache == null) return null;
 				removing = true;
 				markedRemoval = true;
 			}
@@ -141,7 +142,16 @@ public class UserDataCache {
 			if (markedRemoval) synchronized (this) { removing = false; }
 			batchOwner.unlock();
 		}
-		if (notification != null) notification.run();
+		return notification;
+	}
+
+	// Registry removal must happen before callbacks can populate a new generation.
+	Runnable retireForManager() {
+		return finishCache(true);
+	}
+
+	boolean isRetired() {
+		return uuid == null;
 	}
 
 	public void clearChanges() {
@@ -170,7 +180,8 @@ public class UserDataCache {
 	}
 
 	public void dump() {
-		finishCache(true);
+		Runnable notification = finishCache(true);
+		if (notification != null) notification.run();
 	}
 
 	public AdvancedCoreUser getUser() {
