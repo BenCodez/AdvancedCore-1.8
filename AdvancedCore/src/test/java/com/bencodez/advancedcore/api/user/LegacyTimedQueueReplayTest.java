@@ -22,6 +22,34 @@ class LegacyTimedQueueReplayTest {
     private Reward.ReplayCheckpoint checkpoint() {
         try {java.lang.reflect.Constructor<Reward.ReplayCheckpoint> c=Reward.ReplayCheckpoint.class.getDeclaredConstructor(Map.class,Map.class,HashMap.class);c.setAccessible(true);return c.newInstance(Collections.singletonMap("daily",1),Collections.singletonMap("daily","registry"),new HashMap<String,String>());}catch(Exception failure){throw new AssertionError(failure);}
     }
+    @Test void failedEffectReconcilesNewerCachedRecordForTheSameOccurrence() {
+        String id=UUID.randomUUID().toString();long due=System.currentTimeMillis()-1000;
+        String original=entry("daily%asyncoccurrence%"+id+"%placeholders%Server%pair%old",due);
+        String newer=entry("daily%asyncoccurrence%"+id+"%asyncprogress%2%asyncretry%3%placeholders%Server%pair%cached",due+60000);
+        fixture(Collections.singletonList(original),x->{
+            CompletableFuture<Void> effect=new CompletableFuture<>();when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenReturn(effect);
+            CompletionStage<Void> result=x.f.user.checkDelayedTimedRewardsAsync();
+            x.f.data.mutateStringListStrict("TimedRewards",list->{list.add(newer);return list;});
+            effect.completeExceptionally(new IllegalStateException("temporary"));
+            assertThrows(CompletionException.class,()->result.toCompletableFuture().join());
+            String retained=pending(x);assertEquals(1,retained.split("%line%").length);
+            assertTrue(retained.contains("%asyncprogress%2%"));assertTrue(retained.contains("%asyncretry%4%"));
+            assertTrue(retained.contains("Server%pair%cached"));assertFalse(retained.contains("Server%pair%old"));
+            verify(x.f.user).loadTimedDelayedTimer(anyLong());
+        });
+    }
+    @Test void conflictingRewardIdentityCannotBeReconciledByOccurrenceAlone() {
+        String id=UUID.randomUUID().toString();long due=System.currentTimeMillis()-1000;
+        String original=entry("daily%asyncoccurrence%"+id,due),conflict=entry("other%asyncoccurrence%"+id,due+60000);
+        fixture(Collections.singletonList(original),x->{
+            CompletableFuture<Void> effect=new CompletableFuture<>();when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenReturn(effect);
+            CompletionStage<Void> result=x.f.user.checkDelayedTimedRewardsAsync();
+            x.f.data.mutateStringListStrict("TimedRewards",list->{list.add(conflict);return list;});String before=pending(x);
+            effect.completeExceptionally(new IllegalStateException("temporary"));assertThrows(CompletionException.class,()->result.toCompletableFuture().join());
+            assertEquals(before,pending(x));verify(x.f.user,never()).loadTimedDelayedTimer(anyLong());
+        });
+    }
+
     @Test void dueOccurrenceRemainsDurableUntilEffectCompletes() {
         fixture(Collections.singletonList(due()),x->{CompletableFuture<Void> effect=new CompletableFuture<>();when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenAnswer(call->{RewardOptions options=call.getArgument(2);assertNotNull(options.getAsyncReplayOccurrenceId());assertTrue(options.isTimedQueueReplay());assertNotNull(options.getPlaceholders().get("date"));assertTrue(pending(x).contains("%asyncoccurrence%"));return effect;});CompletionStage<Void> result=x.f.user.checkDelayedTimedRewardsAsync();assertFalse(result.toCompletableFuture().isDone());effect.complete(null);result.toCompletableFuture().join();assertEquals("",pending(x));});
     }

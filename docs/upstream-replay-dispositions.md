@@ -229,3 +229,45 @@ shutdown checks (`async-child-handoff-runtime.log`). These are live integration
 regressions; deadline expiry and zero callbacks are covered by deterministic
 tests, not mislabeled as live process-crash tests. All 167 original checkouts
 and both immutable references remain unchanged.
+
+## Timed failure recovery publication
+
+Additional adaptation for `9a29a43b17d2d9ffd26edbfaea7fad5aad256bd4`;
+its disposition remains `PARTIAL_PORT_WITH_JAVA8_ADAPTATION`.
+Timed failure recovery now reconciles the current admitted record with one
+unambiguous cached record for the same occurrence inside the checked atomic queue
+mutation. It validates reward identity before choosing that cached record,
+retains its placeholders and progress, increments its existing retry count, and
+publishes only one retry record. Different reward identities or multiple
+conflicting alternatives fail before publication. Legacy pre-admission storage
+failures still match their exact entry and preserve bounded storage wakeups.
+The admitted claim and producer publication fence are retained until publication
+settles; no vote/reward effect is repeated by the recovery edit itself.
+
+Two new deterministic tests prove the original failure leaves duplicate records,
+and then verify reconciliation of cached progress/retry/placeholders versus an
+identity conflict retaining the original queue without timer publication. The
+38 focused timed/checked-mutation/publication tests pass, including storage outage
+wakeups, retired owners and physical checkpoint publication failure behavior.
+No existing assertion was weakened. Initial-admission duplicate reconciliation
+remains a required compatibility obligation; strict initial duplicate rejection
+is not claimed to implement the complete upstream patch. Configurations, public
+APIs, wire formats and serialized markers are unchanged.
+
+Java 8 `clean install`: 733 unit + 78 artifact = 811 PASS; exact consumer
+`clean verify`: 45 unit + one artifact = 46 PASS. Zero failures/errors/skips.
+Producer SHA-256: `16ac8e5ec1c27cbd4b430c30726465921053e9c214b09ddd073677569841e356`.
+Consumer SHA-256: `7ee34f87044f09bf7e58b8d4c4d79d03a4485d5b3edf21f258fb2c04fe9aab52`.
+Base classes remain major 52 (1867 producer, 2484 consumer). Evidence:
+`timed-reconciliation-red.log`, `timed-reconciliation-focused.log`,
+`timed-reconciliation-clean-install.log`,
+`timed-reconciliation-consumer-clean-verify.log`,
+`timed-reconciliation-build-results.json`.
+
+Actual Java 8/Spigot 1.8.8 acceptance passes all 12 existing timed physical
+checkpoint, completion-removal outage/timer retry, competing-poll fencing,
+native actions, overflow park/disable/restart, item recovery and checked SQLite
+integrity checks against this exact consumer (`timed-reconciliation-runtime.log`,
+`queue-publication-recovery-runtime-680e2d4728.json`). The cached-record conflict
+reproduction is deterministic; this fixture is not a process-crash or initial
+duplicate-admission proof. All 167 originals and both references remain unchanged.

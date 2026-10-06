@@ -1274,16 +1274,38 @@ public class AdvancedCoreUser {
                 replay.handle((ignored,failure)->owner.dispatchOffPrimary(()->{
                     if(failure==null)return publishQueueEdit(owner,captured,()->mutateTimedQueue(pending->{if(!pending.remove(current.get()))throw new IllegalStateException("Timed occurrence disappeared before completion");return pending;}));
                     else {
-                        String before=current.get();TimedQueueEntry pendingEntry=decodeTimedEntry(before);
-                        int retry=Math.min(8,asyncRetryCount(pendingEntry.key)+1);
-                        long retryTime=System.currentTimeMillis()+Math.min(TimeUnit.MINUTES.toMillis(5),TimeUnit.SECONDS.toMillis(1L<<retry));
-                        String key=withAsyncRetryCount(withAsyncReplayProgress(stripTimedExecutionMarker(pendingEntry.key),failure),retry);
-                        String restored=encodeTimedEntry(key,retryTime);
-                        Runnable edit=()->{mutateTimedQueue(pending->{int index=pending.indexOf(before);if(index<0)throw new IllegalStateException("Timed occurrence disappeared during recovery");pending.set(index,restored);return pending;});current.set(restored);};
+                        String before=current.get();
+                        java.util.concurrent.atomic.AtomicLong retryAt=new java.util.concurrent.atomic.AtomicLong();
+                        Runnable edit=()->{
+                            ArrayList<String> committed=mutateTimedQueue(pending->{
+                                TimedQueueEntry original=decodeTimedEntry(before),selected=original;
+                                String reference=parseQueuedReplay(stripAsyncRetryMarker(stripTimedExecutionMarker(original.key).split("%placeholders%",2)[0])).rewardReference;
+                                String replacement=null;int matches=0;
+                                for(String candidate:pending) {
+                                    TimedQueueEntry decoded=decodeTimedEntry(candidate);
+                                    if(!candidate.equals(before) && !id.equals(occurrenceId(decoded.key)))continue;
+                                    matches++;
+                                    if(!reference.equals(parseQueuedReplay(stripAsyncRetryMarker(stripTimedExecutionMarker(decoded.key).split("%placeholders%",2)[0])).rewardReference))
+                                        throw new IllegalStateException("Timed occurrence has conflicting reward identities");
+                                    if(!candidate.equals(before)) {
+                                        if(replacement!=null && !replacement.equals(candidate))
+                                            throw new IllegalStateException("Timed occurrence has conflicting recovery records");
+                                        replacement=candidate;selected=decoded;
+                                    }
+                                }
+                                if(matches==0)throw new IllegalStateException("Timed occurrence disappeared during recovery");
+                                int retry=Math.min(8,asyncRetryCount(selected.key)+1);
+                                long retryTime=System.currentTimeMillis()+Math.min(TimeUnit.MINUTES.toMillis(5),TimeUnit.SECONDS.toMillis(1L<<retry));
+                                String key=withAsyncRetryCount(withAsyncReplayProgress(stripTimedExecutionMarker(selected.key),failure),retry);
+                                pending.removeIf(candidate->candidate.equals(before) || id.equals(occurrenceId(decodeTimedEntry(candidate).key)));
+                                String restored=encodeTimedEntry(key,retryTime);pending.add(restored);retryAt.set(retryTime);return pending;
+                            });
+                            for(String candidate:committed)if(id.equals(occurrenceId(decodeTimedEntry(candidate).key)))current.set(candidate);
+                        };
                         CompletionStage<Void> publication;
                         if(effectsStarted.get())publication=publishQueueEdit(owner,captured,edit);
                         else {edit.run();publication=CompletableFuture.completedFuture(null);}
-                        return publication.thenCompose(published->{retryPublished.set(true);loadTimedDelayedTimer(retryTime);return AdvancedCoreUser.<Void>failedStage(failure);});
+                        return publication.thenCompose(published->{retryPublished.set(true);loadTimedDelayedTimer(retryAt.get());return AdvancedCoreUser.<Void>failedStage(failure);});
                     }
                 },TimeUnit.SECONDS.toMillis(30))).thenCompose(stage->stage).whenComplete((ignored,failure)->{
                     synchronized(REPLAY_CLAIMS_LOCK){captured.occurrences.remove(id);if(existing==null){int count=captured.legacy.getOrDefault(stored,0);if(count<=1)captured.legacy.remove(stored);else captured.legacy.put(stored,count-1);}}
