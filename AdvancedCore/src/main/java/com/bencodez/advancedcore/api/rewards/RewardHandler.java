@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.Timer;
@@ -150,6 +151,10 @@ public class RewardHandler {
 	}
 
 	public void addDirectlyDefined(DirectlyDefinedReward directlyDefinedReward) {
+		if (getDirectlyDefined(directlyDefinedReward.getPath()) != null) {
+			plugin.extraDebug("DirectlyDefinedReward with path already exists, skipping: " + directlyDefinedReward.getPath());
+			return;
+		}
 		plugin.extraDebug("Adding directlydefined reward handle: " + directlyDefinedReward.getPath()
 				+ ", isdirectlydefined: " + directlyDefinedReward.isDirectlyDefined());
 		directlyDefinedRewards.add(directlyDefinedReward);
@@ -198,6 +203,10 @@ public class RewardHandler {
 	}
 
 	public void addSubDirectlyDefined(SubDirectlyDefinedReward subDirectlyDefinedReward) {
+		if (getSubDirectlyDefined(subDirectlyDefinedReward.getFullPath()) != null) {
+			plugin.extraDebug("SubDirectlyDefinedReward with path already exists, skipping: " + subDirectlyDefinedReward.getFullPath());
+			return;
+		}
 		plugin.extraDebug("Adding subdirectlydefined reward handle: " + subDirectlyDefinedReward.getFullPath()
 				+ ", isdirectlydefined: " + subDirectlyDefinedReward.isDirectlyDefined());
 		subDirectlyDefinedRewards.add(subDirectlyDefinedReward);
@@ -264,7 +273,7 @@ public class RewardHandler {
 
 	public DirectlyDefinedReward getDirectlyDefined(String path) {
 		for (DirectlyDefinedReward direct : getDirectlyDefinedRewards()) {
-			if (direct.getPath().equalsIgnoreCase(path)) {
+			if (matchesDirectPath(direct.getPath(), path)) {
 				return direct;
 			}
 		}
@@ -314,10 +323,7 @@ public class RewardHandler {
 	 * @return the reward
 	 */
 	public Reward getReward(String reward) {
-		if (reward == null) {
-			reward = "";
-		}
-		reward = reward.replace(" ", "_");
+		reward = normalizeLookupName(reward);
 
 		/*
 		 * if (rewardOptions != null) { String prefix = rewardOptions.getPrefix(); if
@@ -336,7 +342,7 @@ public class RewardHandler {
 		}
 
 		for (DirectlyDefinedReward direct : getDirectlyDefinedRewards()) {
-			if (direct.getPath().replace(".", "_").equals(reward)) {
+			if (matchesDirectPath(direct.getPath(), reward)) {
 				plugin.debug("Using directlydefined reward for: " + reward);
 				return direct.getReward();
 			}
@@ -355,14 +361,12 @@ public class RewardHandler {
 			}
 		}
 
+		validateRewardFileName(reward);
 		return new Reward(reward);
 	}
 
 	public Reward getRewardDirectlyDefined(String reward) {
-		if (reward == null) {
-			reward = "";
-		}
-		reward = reward.replace(" ", "_");
+		reward = normalizeLookupName(reward);
 
 		for (Reward rewardFile : getRewards()) {
 			File folder = rewardFile.getConfig().getRewardFolder();
@@ -382,6 +386,7 @@ public class RewardHandler {
 			plugin.getLogger().warning("Using example rewards as a reward, becarefull");
 		}
 
+		validateRewardFileName(reward);
 		File directFolder = new File(getDefaultFolder().getAbsolutePath() + File.separator + "DirectlyDefined");
 		directFolder.mkdirs();
 		return new Reward(directFolder, reward);
@@ -579,7 +584,7 @@ public class RewardHandler {
 
 	public boolean hasDirectRewardHandle(String reward) {
 		for (DirectlyDefinedReward direct : getDirectlyDefinedRewards()) {
-			if (direct.getPath().replace(".", "_").equals(reward)) {
+			if (matchesDirectPath(direct.getPath(), reward)) {
 				return true;
 			}
 		}
@@ -593,9 +598,24 @@ public class RewardHandler {
 	}
 
 	private boolean matchesSubDirectlyDefined(SubDirectlyDefinedReward direct, String reward) {
-		return direct.getFullPath().equalsIgnoreCase(reward)
-				|| direct.getFullPath().replace(".", "_").equalsIgnoreCase(reward)
-				|| direct.getFullPath().equalsIgnoreCase(reward.replaceAll("_", "."));
+		return matchesDirectPath(direct.getFullPath(), reward);
+	}
+
+	private static String normalizeLookupName(String reward) {
+		return reward == null ? "" : reward.replace(" ", "_");
+	}
+
+	private static boolean matchesDirectPath(String registeredPath, String lookupPath) {
+		return normalizeLookupName(registeredPath).replace('.', '_').toLowerCase(Locale.ROOT)
+				.equals(normalizeLookupName(lookupPath).replace('.', '_').toLowerCase(Locale.ROOT));
+	}
+
+	private void validateRewardFileName(String reward) {
+		if (reward == null || reward.indexOf('\0') >= 0 || new File(reward).isAbsolute()
+				|| reward.indexOf('/') >= 0 || reward.indexOf('\\') >= 0) {
+			plugin.getLogger().warning("Rejected unsafe reward file name");
+			throw new IllegalArgumentException("Reward name must not contain path separators or be an absolute path");
+		}
 	}
 
 	public boolean hasRewards(FileConfiguration data, String path) {
@@ -2872,6 +2892,7 @@ public class RewardHandler {
 	 * @return true, if successful
 	 */
 	public boolean rewardExist(String reward) {
+		reward = normalizeLookupName(reward);
 		if (reward.equals("")) {
 			return false;
 		}

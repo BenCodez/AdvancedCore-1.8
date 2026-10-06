@@ -451,3 +451,35 @@ graceful stop/restart persistence with no observed write/event/linkage errors.
 The fixture-only plugin is removed and temporary FLAT config restored byte for
 byte. This is not live MySQL, proxy or failed-shutdown acceptance. Full ledger,
 remaining ownership/lifecycle work and final independent review remain due.
+
+## Reward name normalization and file fallback guards
+
+Pinned upstream2599db95f058d9cbeb21f81111e63729e3cf8b5a lookup behavior is
+adapted into the existing RewardHandler facade: case/spaces/dots/underscores
+resolve consistently using Locale.ROOT, direct/sub aliases register once,
+and rewardExist normalizes spaces/null. Existing ArrayList-returning APIs,
+file lookup precedence and ordinary missing-file fallback remain compatible.
+VotingPlugin clears/rebuilds direct handles before registering them.
+
+Upstream5d4d5bee446510f242de6c7523b1648128895353 and its follow-up fix
+1da8dd94036afea300e6afea6a1df57409126431 provide the final filename guard.
+The invalid intermediate syntax is not copied. Missing reward-file fallbacks
+reject absolute paths, either separator and NUL before file construction.
+The guard also covers the legacy generated DirectlyDefined fallback before
+mkdir. Registered handles still resolve first; a registered path containing
+a separator is not confused with file traversal. Rejections remain visible
+and their warnings omit raw lookup text. No schema/config/wire change.
+
+Four baseline failures reproduced incorrect resolution/deduplication/existence
+and unsafe fallback. Seven new tests plus two prior resolution tests cover
+locale independence, duplicate aliases, valid fallback, registered separator
+handles, null/space lookup and rejected file names. The broader reward loader/
+registry/executor reorganization, generated snapshot quarantine and ownership
+audits remain incomplete; this does not claim a complete reward subsystem port.
+
+Exact consumerb795fac2... passes actual Java8/Spigot1.8.8SQLite RewardNamesSQL
+vote/reward, packaged alias/file-guard checks,points10,total1,graceful stop
+and restart persistence. No checkedwrite/event/linkage errors observed.
+Fixture-only plugin removed, no escape probe created, owned server stopped.
+Evidence reward-names-build-results.json and RewardNamesSQL runtime JSON/logs.
+Live MySQL/proxy/quarantine/shutdown-failure acceptance remains unverified.
