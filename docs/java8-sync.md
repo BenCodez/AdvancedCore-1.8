@@ -416,3 +416,38 @@ artifact test, zero failures/errors/skips. Base bytecode remains major<=52.
 The exact consumer passes actual Java8/Spigot1.8.8 SQLite online vote/reward,
 SetPoints7/AddPoints3=>10,total1, graceful stop and restart persistence
 (CacheRegistry evidence). This does not verify failed shutdown or live MySQL.
+
+## Checked direct typed writes
+
+The existing setInt/setString overloads use checked storage writes for uncached
+or queue=false writes. Their signatures, explicit-storage selection and stored
+representations remain unchanged. Cached direct writes share the queued-batch
+owner: older queued work commits first, the direct value publishes only after
+acknowledgement, and later queued changes remain visible and pending. Retirement
+and recursive direct writes cannot close/reorder an in-flight direct commit.
+Callbacks execute after owner release; all committed notifications are attempted
+and callback failures remain visible without replaying committed storage work.
+The additive setValuesStrict(UserStorage,Map) overload preserves explicit backend
+selection; legacy bulk setValues APIs remain unchanged.
+
+Observable correction: failed direct writes throw visibly and do not publish or
+notify; async direct writes publish after their scheduled commit, not before
+executor admission. FLAT direct writes use the checked atomic file owner rather
+than the legacy polling thread. Cached queue=true writes retain existing
+optimistic publication/notification semantics. Rejected scheduling leaves the
+cache unchanged. Ten deterministic regressions cover failure, ordering, delayed
+async publication/rejection, later queue writes, string/uncached routes, explicit
+storage selection, callback failures and recursive retirement/write rejection.
+This does not yet provide manager-wide uncached identity arbitration or shutdown
+admission/drain, and legacy bulk mutation paths still need an ownership audit.
+
+Actual Java8 clean install passes129unit+12artifact tests; exact VotingPlugin
+clean verify passes14unit+1artifact, all zero failures/errors/skips. Base bytecode
+remains major<=52. Controlled Java8/Spigot1.8.8 acceptance invokes the packaged
+relocated direct setter through a fixture-only console plugin and verifies
+acknowledged cache state plus persisted points. SQLite DirectWriteSQL and FLAT
+DirectWriteFlat both pass vote/reward, direct SetPoints7, AddPoints3=>10,total1,
+graceful stop/restart persistence with no observed write/event/linkage errors.
+The fixture-only plugin is removed and temporary FLAT config restored byte for
+byte. This is not live MySQL, proxy or failed-shutdown acceptance. Full ledger,
+remaining ownership/lifecycle work and final independent review remain due.

@@ -459,66 +459,11 @@ public class UserData {
 	@SuppressWarnings("deprecation")
 	public void setInt(final UserStorage storage, final String key, final int value, boolean queue, boolean async) {
 		if (key.equals("")) {
-			user.getPlugin().debug("No key: " + key + " to " + value);
+			user.getPlugin().debug("No key: " + key);
 			return;
 		}
-		if (key.contains(" ")) {
-			user.getPlugin().getLogger().severe("Keys cannot contain spaces " + key);
-		}
-
-		user.getPlugin().extraDebug("PlayerData " + storage.toString() + ": Setting " + key + " to '" + value
-				+ "' for '" + user.getPlayerName() + "/" + user.getUUID() + "' Queue: " + queue);
-
-		if (user.isCached()) {
-			user.getCache().addChange(new UserDataChangeInt(key, value), queue);
-			user.getPlugin().getUserManager().onChange(user, key);
-			if (queue) {
-				return;
-			}
-		}
-
-		if (async) {
-			user.getPlugin().getTimer().execute(new Runnable() {
-
-				@Override
-				public void run() {
-					if (storage.equals(UserStorage.SQLITE)) {
-						ArrayList<Column> columns = new ArrayList<>();
-						Column primary = new Column("uuid", new DataValueString(user.getUUID()));
-						Column column = new Column(key, new DataValueInt(value));
-						columns.add(primary);
-						columns.add(column);
-						user.getPlugin().getSQLiteUserTable().update(primary, columns);
-					} else if (storage.equals(UserStorage.MYSQL)) {
-						user.getPlugin().getMysql().update(user.getUUID(), key, new DataValueInt(value));
-					} else if (storage.equals(UserStorage.FLAT)) {
-						setData(user.getUUID(), key, value);
-					}
-
-					if (!user.isCached()) {
-						user.getPlugin().getUserManager().onChange(user, key);
-					}
-				}
-			});
-		} else {
-			// process change right away
-			if (storage.equals(UserStorage.SQLITE)) {
-				ArrayList<Column> columns = new ArrayList<>();
-				Column primary = new Column("uuid", new DataValueString(user.getUUID()));
-				Column column = new Column(key, new DataValueInt(value));
-				columns.add(primary);
-				columns.add(column);
-				user.getPlugin().getSQLiteUserTable().update(primary, columns);
-			} else if (storage.equals(UserStorage.MYSQL)) {
-				user.getPlugin().getMysql().update(user.getUUID(), key, new DataValueInt(value));
-			} else if (storage.equals(UserStorage.FLAT)) {
-				setData(user.getUUID(), key, value);
-			}
-
-			if (!user.isCached()) {
-				user.getPlugin().getUserManager().onChange(user, key);
-			}
-		}
+		if (key.contains(" ")) user.getPlugin().getLogger().severe("Keys cannot contain spaces " + key);
+		writeTypedValue(storage, key, new DataValueInt(value), queue, async);
 	}
 
 	public void setString(final String key, final String value) {
@@ -541,64 +486,34 @@ public class UserData {
 	public void setString(final UserStorage storage, final String key, final String value, boolean queue,
 			boolean async) {
 		if (key.equals("") && value != null) {
-			user.getPlugin().debug("No key/value: " + key + " to " + value);
+			user.getPlugin().debug("No key: " + key);
 			return;
 		}
-		if (key.contains(" ")) {
-			user.getPlugin().getLogger().severe("Keys cannot contain spaces " + key);
-		}
+		if (key.contains(" ")) user.getPlugin().getLogger().severe("Keys cannot contain spaces " + key);
+		writeTypedValue(storage, key, new DataValueString(value), queue, async);
+	}
 
-		user.getPlugin().extraDebug("PlayerData " + storage.toString() + ": Setting " + key + " to '" + value
-				+ "' for '" + user.getPlayerName() + "/" + user.getUUID() + "' Queue: " + queue);
-
-		if (user.isCached()) {
-			user.getCache().addChange(new UserDataChangeString(key, value), queue);
+	private void writeTypedValue(UserStorage storage, String key, DataValue value, boolean queue, boolean async) {
+		UserDataCache cache = user.isCached() ? user.getCache() : null;
+		if (queue && cache != null) {
+			if (value instanceof DataValueInt) cache.addChange(new UserDataChangeInt(key, value.getInt()), true);
+			else cache.addChange(new UserDataChangeString(key, value.getString()), true);
 			user.getPlugin().getUserManager().onChange(user, key);
-			if (queue) {
-				return;
-			}
+			return;
 		}
-
-		if (async) {
-			user.getPlugin().getTimer().execute(new Runnable() {
-
-				@Override
-				public void run() {
-					if (storage.equals(UserStorage.SQLITE)) {
-						ArrayList<Column> columns = new ArrayList<>();
-						Column primary = new Column("uuid", new DataValueString(user.getUUID()));
-						Column column = new Column(key, new DataValueString(value));
-						columns.add(primary);
-						columns.add(column);
-						user.getPlugin().getSQLiteUserTable().update(primary, columns);
-					} else if (storage.equals(UserStorage.MYSQL)) {
-						user.getPlugin().getMysql().update(user.getUUID(), key, new DataValueString(value));
-					} else if (storage.equals(UserStorage.FLAT)) {
-						setData(user.getUUID(), key, value);
-					}
-					if (!user.isCached()) {
-						user.getPlugin().getUserManager().onChange(user, key);
-					}
-				}
-			});
-		} else {
-			if (storage.equals(UserStorage.SQLITE)) {
-				ArrayList<Column> columns = new ArrayList<>();
-				Column primary = new Column("uuid", new DataValueString(user.getUUID()));
-				Column column = new Column(key, new DataValueString(value));
-				columns.add(primary);
-				columns.add(column);
-				user.getPlugin().getSQLiteUserTable().update(primary, columns);
-			} else if (storage.equals(UserStorage.MYSQL)) {
-				user.getPlugin().getMysql().update(user.getUUID(), key, new DataValueString(value));
-			} else if (storage.equals(UserStorage.FLAT)) {
-				setData(user.getUUID(), key, value);
-			}
-			if (!user.isCached()) {
+		Runnable write = () -> {
+			Runnable storageWrite = () -> {
+				try { setValuesStrict(storage, java.util.Collections.singletonMap(key, value)); }
+				catch (SQLException | IOException failure) { throw new IllegalStateException("Direct user-data write was not acknowledged", failure); }
+			};
+			if (cache != null) cache.writeDirect(key, value, storageWrite);
+			else {
+				storageWrite.run();
 				user.getPlugin().getUserManager().onChange(user, key);
 			}
-		}
-
+		};
+		if (async) user.getPlugin().getTimer().execute(write);
+		else write.run();
 	}
 
 	public void setStringList(final String key, final ArrayList<String> value) {
@@ -662,8 +577,12 @@ public class UserData {
 
 	/** Writes one synchronous checked batch; callers retain pending changes on failure. */
 	public void setValuesStrict(Map<String, DataValue> values) throws SQLException, IOException {
+		setValuesStrict(user.getPlugin().getStorageType(), values);
+	}
+
+	/** Checked explicit-storage overload for compatibility setters and converters. */
+	public void setValuesStrict(UserStorage storage, Map<String, DataValue> values) throws SQLException, IOException {
 		if (values.isEmpty()) return;
-		UserStorage storage = user.getPlugin().getStorageType();
 		if (storage == null) throw new IllegalStateException("User storage is not initialized");
 		if (storage == UserStorage.FLAT) {
 			FileThread.getInstance().setValuesStrict(user.getUUID(), values);

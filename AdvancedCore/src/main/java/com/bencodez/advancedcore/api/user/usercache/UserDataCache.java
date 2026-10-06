@@ -216,6 +216,51 @@ public class UserDataCache {
 		if (notification != null) notification.run();
 	}
 
+	/** Serialize a direct checked write with queued batches and retirement. */
+	public void writeDirect(String key, DataValue value, Runnable storageWrite) {
+		Runnable pendingNotification = null;
+		Runnable directNotification = null;
+		Throwable failure = null;
+		batchOwner.lock();
+		try {
+			synchronized (this) {
+				if (uuid == null || removing || inFlight) throw new IllegalStateException("User cache cannot accept a direct write");
+			}
+			pendingNotification = flushClaimedChanges();
+			final AdvancedCoreUser user = getUser();
+			final Long expectedVersion;
+			synchronized (this) { expectedVersion = changedAt.get(key); inFlight = true; }
+			try {
+				storageWrite.run();
+				synchronized (this) {
+					// Later queued changes remain optimistic and must not be overwritten.
+					if (Objects.equals(expectedVersion, changedAt.get(key))) {
+						cache.put(key, value);
+						changedAt.put(key, ++snapshotVersion);
+					}
+				}
+				directNotification = () -> manager.getPlugin().getUserManager().onChange(user, key);
+			} finally { synchronized (this) { inFlight = false; } }
+		} catch (RuntimeException | Error rejected) { failure = rejected; throw rejected; }
+		finally {
+			batchOwner.unlock();
+			// Notify every committed write, even when another callback or later write fails.
+			Throwable notificationFailure = null;
+			for (Runnable notification : new Runnable[] {pendingNotification, directNotification}) {
+				if (notification != null) try { notification.run(); }
+				catch (RuntimeException | Error rejected) {
+					if (notificationFailure == null) notificationFailure = rejected;
+					else if (notificationFailure != rejected) notificationFailure.addSuppressed(rejected);
+				}
+			}
+			if (notificationFailure != null) {
+				if (failure != null) { if (failure != notificationFailure) failure.addSuppressed(notificationFailure); }
+				else if (notificationFailure instanceof RuntimeException) throw (RuntimeException) notificationFailure;
+				else throw (Error) notificationFailure;
+			}
+		}
+	}
+
 	/** Called only by the batch owner; claims a finite batch under the cache monitor. */
 	private Runnable flushClaimedChanges() {
 		final ArrayList<UserDataChange> changes;
