@@ -322,8 +322,10 @@ public class FileThread {
 					try { identity = UUID.fromString(text);if (!identity.toString().equalsIgnoreCase(text)) throw new IllegalArgumentException(); }
 					catch (IllegalArgumentException invalid) { throw new IOException("Invalid source user file identity", invalid); }
 					if (!Files.isRegularFile(file)) throw new IOException("User source is not a readable regular file");
+					String source = new String(Files.readAllBytes(file), java.nio.charset.StandardCharsets.UTF_8);
+					validateConversionYaml(source);
 					YamlConfiguration data = new YamlConfiguration();
-					try { data.load(file.toFile()); }
+					try { data.loadFromString(source); }
 					catch (InvalidConfigurationException invalid) { throw new IOException("Existing user source is malformed", invalid); }
 					HashMap<String, DataValue> values = new HashMap<>();
 					for (String key : data.getKeys(false)) {
@@ -337,6 +339,38 @@ public class FileThread {
 				}
 			}
 			return result;
+		}
+	}
+
+	/** Inspect syntax nodes before Bukkit's legacy loader can collapse duplicate keys. */
+	private void validateConversionYaml(String source) throws IOException {
+		org.yaml.snakeyaml.nodes.Node root;
+		try { root = new org.yaml.snakeyaml.Yaml().compose(new java.io.StringReader(source)); }
+		catch (org.yaml.snakeyaml.error.YAMLException invalid) { throw new IOException("Existing user source is malformed", invalid); }
+		if (root == null) return;
+		if (!(root instanceof org.yaml.snakeyaml.nodes.MappingNode)) throw new IOException("User source must be a mapping");
+		java.util.Set<org.yaml.snakeyaml.nodes.Node> visited = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<org.yaml.snakeyaml.nodes.Node, Boolean>());
+		java.util.Set<org.yaml.snakeyaml.nodes.Node> active = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<org.yaml.snakeyaml.nodes.Node, Boolean>());
+		java.util.ArrayDeque<java.util.Map.Entry<org.yaml.snakeyaml.nodes.Node, Boolean>> pending = new java.util.ArrayDeque<>();
+		pending.push(new java.util.AbstractMap.SimpleImmutableEntry<>(root, false));
+		while (!pending.isEmpty()) {
+			java.util.Map.Entry<org.yaml.snakeyaml.nodes.Node, Boolean> frame = pending.pop();org.yaml.snakeyaml.nodes.Node node = frame.getKey();
+			if (frame.getValue()) { active.remove(node);visited.add(node);continue; }
+			if (visited.contains(node)) continue;
+			if (!active.add(node)) throw new IOException("Recursive user source YAML alias");
+			pending.push(new java.util.AbstractMap.SimpleImmutableEntry<>(node, true));
+			if (node instanceof org.yaml.snakeyaml.nodes.MappingNode) {
+				java.util.Set<String> keys = new java.util.HashSet<>();
+				for (org.yaml.snakeyaml.nodes.NodeTuple entry : ((org.yaml.snakeyaml.nodes.MappingNode) node).getValue()) {
+					if (!(entry.getKeyNode() instanceof org.yaml.snakeyaml.nodes.ScalarNode)) throw new IOException("Unsupported user source key");
+					String key = ((org.yaml.snakeyaml.nodes.ScalarNode) entry.getKeyNode()).getValue();
+					if (!keys.add(key)) throw new IOException("Duplicate user source YAML key");
+					pending.push(new java.util.AbstractMap.SimpleImmutableEntry<>(entry.getValueNode(), false));
+				}
+			} else if (node instanceof org.yaml.snakeyaml.nodes.SequenceNode) {
+				for (org.yaml.snakeyaml.nodes.Node child : ((org.yaml.snakeyaml.nodes.SequenceNode) node).getValue())
+					pending.push(new java.util.AbstractMap.SimpleImmutableEntry<>(child, false));
+			}
 		}
 	}
 

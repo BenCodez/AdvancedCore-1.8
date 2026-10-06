@@ -1400,3 +1400,48 @@ same-instance re-enable or broad async Bukkit/debug/user API audit. Caller overr
 that internally schedule hidden work cannot acquire physical completion merely from
 a void return. Full upstream ledger/features/runtime matrix/fresh independent final
 review remain unfinished. Full goal active; no PR opening/source push authorized.
+
+
+### Explicit flat-source YAML validation and retry acceptance (2026-10-06)
+
+Conversion now captures one UTF-8 source document and validates its SnakeYAML
+syntax nodes before passing that same text to Bukkit's legacy loader. This avoids
+silently choosing the last duplicate key. Quoted/escaped equivalent keys, nested
+duplicates, non-scalar keys and recursive aliases fail before copying. Scalar
+aliases and UTF-8 text remain supported. This uses the existing Spigot SnakeYAML
+API, without a dependency, version, schema, configuration or wire-format change.
+Normal configuration loading is unchanged; validation applies to explicit user
+source conversion. The unchanged duplicate-key regression failed before the fix.
+
+A focused fault-injected adapter regression also establishes the existing partial
+copy contract: acknowledged absolute assignments remain, source rows are retained,
+the original failure reaches the caller and ordinary admission stays sealed.
+An explicit successful retry assigns the same values rather than adding them,
+then reopens admission. This is not transactional rollback, a durable migration
+journal, cross-process recovery, or proof of live database-outage recovery.
+
+Final focused conversion/source/completion/retry tests: 18 passed. Actual Java 8
+coordinated `clean install` (AdvancedCore) and `clean verify` (VotingPlugin), using
+explicit module POMs, workspace-local Maven repository/tmp and wagon transport:
+AdvancedCore 311 unit + 18 artifact tests; VotingPlugin 45 unit + 1 artifact test.
+All have zero failures/errors/skips; 1823/2440 base classes, maximum major 52.
+Artifact SHA256:
+AdvancedCore `9f3af91126ba125f7cf86fc9b96bd7223ab300c60eeb03766e1024b6ec6c2495`;
+VotingPlugin `597647f2f5f2925b24f378bdfe436f6688697d6d3b1f5f7b9105d5bb505dcea8`.
+
+The exact consumer ran on Java 8/Spigot 1.8.8/MariaDB 11.8.6 in isolated fixture
+fd993131b9. Duplicate source rejection preserved source bytes, prior SQLite21
+and active MySQL19. Explicit repair/retry produced SQLite22 with independent
+readback and reopened admission. Actual `av ConvertToData SQLITE` and
+`av ConvertFromData SQLITE` then completed and produced points20; clean disable
+and restart retained20. Offline SQLite integrity passed. Both server logs passed
+failure-marker and credential-absence audits. ConnectorJ5.1.14 was supplied only
+on the test server classpath. Evidence: conversion-retry-yaml-build-results.json,
+conversion-retry-yaml-live-results.json, focused/build/live logs under the isolated
+workspace's evidence directory.
+
+Still unverified: physical mid-copy database failure, inactive-provider config
+drift, concurrent external/raw storage mutation, failed shutdown and the remaining
+full upstream ledger/runtime matrix. The bounded local tooltip draft was empty
+and inconclusive, so no claim or change was adopted from it. Tooltip adaptation
+and the full independent final review remain pending. No PR or source push.

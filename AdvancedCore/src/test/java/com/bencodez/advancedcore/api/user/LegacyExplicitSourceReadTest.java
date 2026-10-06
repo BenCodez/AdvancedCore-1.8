@@ -39,6 +39,18 @@ class LegacyExplicitSourceReadTest {
     @Test void missingFlatDirectoryIsEmptyButUnreadableShapeIsNot() throws Exception {
         withOwner(files -> assertTrue(files.getAllValuesStrict().isEmpty()));Files.write(folder.resolve("Data"),new byte[0]);withOwner(files -> assertThrows(IOException.class,files::getAllValuesStrict));
     }
+    @Test void duplicateYamlKeysCannotSilentlyChooseOneValueForConversion() throws Exception {
+        Path data=Files.createDirectories(folder.resolve("Data")),file=data.resolve(id+".yml");String original="Points: 7\nPoints: 8\n";Files.write(file,original.getBytes("UTF-8"));
+        withOwner(files -> assertThrows(IOException.class,files::getAllValuesStrict));assertEquals(original,new String(Files.readAllBytes(file),"UTF-8"));
+    }
+    @Test void quotedDuplicateKeysFailAndScalarAliasesRemainCompatible() throws Exception {
+        Path data=Files.createDirectories(folder.resolve("Data")),file=data.resolve(id+".yml");
+        for(String source:new String[]{"Points: 7\n'Points': 8\n", "Points: 7\n\"Poin\\u0074s\": 8\n", "Defaults: &d {Points: 1, Points: 2}\n<<: *d\n", "&cycle {Recursive: *cycle}", "Recursive: &cycle [*cycle]"}) {
+            Files.write(file,source.getBytes("UTF-8"));withOwner(files -> assertThrows(IOException.class,files::getAllValuesStrict));assertEquals(source,new String(Files.readAllBytes(file),"UTF-8"));
+        }
+        String valid="Message: &m 'O’Brien'\nOtherMessage: *m\nPoints: 7\n";Files.write(file,valid.getBytes("UTF-8"));
+        withOwner(files -> {Map<String,DataValue> values=files.getAllValuesStrict().get(UUID.fromString(id));assertEquals("O’Brien",values.get("Message").getString());assertEquals("O’Brien",values.get("OtherMessage").getString());});
+    }
     interface CheckedWork {void run(FileThread owner)throws Exception;}
     void withOwner(CheckedWork work)throws Exception {
         AdvancedCorePlugin plugin=mock(AdvancedCorePlugin.class);when(plugin.getDataFolder()).thenReturn(folder.toFile());FileThread owner=FileThread.getInstance();java.lang.reflect.Field f=FileThread.class.getDeclaredField("plugin");f.setAccessible(true);Object before=f.get(owner);
