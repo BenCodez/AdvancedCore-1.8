@@ -2036,3 +2036,62 @@ native failure and crash exactly-once delivery remain incomplete. This cohort
 does not complete the full upstream ledger or independent final review. All 167
 original checkouts and both pinned references remain unchanged. No source push or
 PR opening is authorized.
+
+## Replay-aware item delivery boundary
+
+Added the pinned-main `giveItemAsync(Player, ItemStack...)` and `saveDurably()`
+APIs while preserving established void APIs and legacy FullInventory data. A
+queued receipt is not completed at scheduling. It validates the captured player
+identity immediately before mutation; scheduler rejection, pre-admission timeout,
+and shutdown produce the main-compatible not-started marker. Java 8 uses the
+existing private handler executor instead of Java 9 delayedExecutor. Observer
+cancellation cannot turn physically accepted work into a replay receipt. Queued
+receipts settle before shutdown cancels their deadlines; external executor stop
+rejects queued admission without throwing away its receipt.
+
+Started overflow stays in a private reservation, excluded from ordinary sweeps.
+It is promoted and acknowledged only after serialization succeeds. Failed writes
+use an owner-thread drop fallback; only undropped items are retained. If neither
+persistence nor fallback succeeds, the receipt remains pending and a retry is
+scheduled. Shutdown flushes accepted reservations before executor retirement and
+propagates its save failure while still stopping the executor. Missing ServerData
+cannot produce a positive durable result. The existing separate disk-publication
+monitor and cloned snapshot items remain; a fallback defers while reservations
+are being published. Completion callbacks run after releasing publication locks.
+
+Nineteen added tests comprise fourteen pinned-main cases, three queue admission/
+cancellation regressions, missing-persistence evidence and a callback-lock
+regression. Eight duplicate upstream cases remain in the existing suite rather
+than being added again. The three queue defects fail before their corrections;
+the callback-lock test reproduces a TimeoutException before releasing the monitor.
+Fault-injection tests end their injected write failure before fixture retirement
+and await physical executor termination; their original behavioral assertions
+remain unchanged. Existing capture, native delivery latency, clone ownership,
+competing saves, remove/requeue and failed-save tests continue passing.
+
+Exact workspace Java 8 clean install: 417 unit plus 18 artifact AdvancedCore
+tests. Exact-dependent clean verify: 45 unit plus one artifact VotingPlugin test.
+Zero failures, errors or skips. Base bytecode maximum 52, class counts 1818/2435.
+Artifact SHA-256:
+
+- AdvancedCore: `8f3ef9decacd73c612e59650dccdc1afac35c5d16cdf472f2697d8e4380176b4`
+- VotingPlugin: `45cd7c469568076ba3d6310e044d74c70902cb2f1b451767e2933b8429586f37`
+
+Real Java 8/Spigot 1.8.8 fixture `aa04caf4d3` uses the new async API, waits for its
+receipt without an additional explicit save, validates persisted three-diamond
+overflow, disables/restarts and delivers it to a connected protocol client.
+Retained connected listener acceptance passes in `645ec5a5c6`; native items,
+MySQL/global pools, conversion/repaired retry/console completion and pending-write
+restart acceptance pass in `b771fd5ed2`. Evidence is workspace
+`replay-item-final-results.json` and its build/runtime logs. This is not graphical
+UI inspection, arbitrary crash exactly-once acceptance or a complete reward replay
+proof. All 167 originals remain unchanged and reference commits stay pinned.
+
+The item-handler portions of the pinned main reservation/lifecycle series are
+ported. AdvancedCoreUser legacy action collection/context, Reward root checkpoints
+and identity/fingerprint/random replay integration are still incomplete; existing
+legacy user methods have not yet switched to the new receipt. Queued ordinary void
+give retirement, queue capacity/mutable getter bypasses, arbitrary partial native
+failure, shared ServerData writers and atomic publication remain outstanding.
+The full backport/ledger/runtime matrix and fresh independent final review remain
+incomplete. No source push, PR opening, merge, release or deployment is authorized.

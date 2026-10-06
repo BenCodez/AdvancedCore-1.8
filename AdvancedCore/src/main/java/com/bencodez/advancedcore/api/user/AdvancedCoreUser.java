@@ -48,6 +48,37 @@ import net.md_5.bungee.chat.ComponentSerializer;
  */
 public class AdvancedCoreUser {
 
+	/** Signals a replay-aware legacy action that was conclusively never started. */
+	private static final class LegacyActionNotStartedException extends IllegalStateException {
+		private static final long serialVersionUID = 1L;
+
+		private LegacyActionNotStartedException(String message) {
+			super(message);
+		}
+
+		private LegacyActionNotStartedException(String message, Throwable cause) {
+			super(message, cause);
+		}
+	}
+
+	/** Internal cross-package signal for a replay action proven not to have begun. */
+	public static RuntimeException replayActionNotStarted(String message) {
+		return new LegacyActionNotStartedException(message);
+	}
+
+	/** Internal cross-package signal for scheduler rejection before a replay action began. */
+	public static RuntimeException replayActionNotStarted(String message, Throwable cause) {
+		return new LegacyActionNotStartedException(message, cause);
+	}
+
+	/** Returns whether a completion failed before its replay-aware action began. */
+	public static boolean isReplayActionNotStarted(Throwable failure) {
+		Throwable current = failure;
+		while ((current instanceof java.util.concurrent.CompletionException || current instanceof java.util.concurrent.ExecutionException) && current.getCause() != null && current.getCause() != current) current = current.getCause();
+		return current instanceof LegacyActionNotStartedException;
+	}
+
+
 	@Getter
 	private boolean cacheData = true;
 
