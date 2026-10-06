@@ -20,6 +20,7 @@ public final class UserStorageOwnership {
     private final Object admission = new Object();
     private final ThreadLocal<Integer> depth = ThreadLocal.withInitial(() -> 0);
     private final ThreadLocal<Boolean> finalFlush = ThreadLocal.withInitial(() -> false);
+    private final ThreadLocal<Boolean> replacementPublication = ThreadLocal.withInitial(() -> false);
     private int accepted;
     private boolean retiring;
     private boolean closed;
@@ -132,10 +133,15 @@ public final class UserStorageOwnership {
             synchronized (admission) {
                 if (accepted != 0) throw new IllegalStateException("Final storage flush has not settled; provider remains open");
             }
-            close.run();
+            if (!permanent) replacementPublication.set(true);
+            try { close.run(); }
+            finally { replacementPublication.remove(); }
             synchronized (admission) { closed = permanent; retiring = permanent; }
         } finally { synchronized (admission) { retiringThread = null; } }
     }
+
+    /** Only the current replacement publisher may compose provider setters. */
+    public boolean isReplacingOnCurrentThread() { return replacementPublication.get(); }
 
     boolean isFinalFlush() { return finalFlush.get(); }
 

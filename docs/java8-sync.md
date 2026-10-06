@@ -1158,3 +1158,54 @@ identity. This fixture-only failure remains recorded, not treated as product
 evidence. Four final MySQL/SQLite server logs have no lifecycle/linkage/failure
 markers or fixture credentials. Evidence main-provider-rebind-sqlite-fixed-live.log
 and checked-cache-runtime-results-MainRebindSQL2.json.
+
+### Configuration reload: flush before settings and provider publication
+
+Native loadConfig(true) now seals/drains existing storage admission and flushes
+pending cache batches under the old type/config before Options.load or provider
+creation. The current replacement publisher may compose the MySQL setter without
+starting another retirement or reopening admission midway. Permission is
+thread-local, unavailable during final flush, unavailable to other threads, and
+cleared on failure. The redundant post-publication cache retirement is removed
+for this path. Options-only/disabled-user-data paths retain legacy behavior.
+No release/config/schema/wire/dependency change.
+
+The native old-options/cache-order regression fails on prior code (1 assertion,
+0 errors), then passes. Extended focus19 passes, including nested setter, failed
+flush/preparation, retry, shutdown prohibition and thread-local publication.
+The initial full build exposed an order-dependent LegacyRewardShutdownTest fixture:
+RewardHandler eager singleton initialization requires a plugin/datafolder context.
+Isolated baseline3errors reproduced it. Its fixture now supplies that context and
+closes singleton test timers; all original production shutdown assertions remain.
+No production reward change was needed. Initial failed logs are retained.
+
+Actual Temurin1.8.0_504/Maven3.9.9 full coordinated build: AdvancedCore clean install
+269 unit+16artifact, VotingPlugin clean verify45unit+1artifact, all0fail/errors/skips.
+Use module POM with -Dmaven.resolver.transport=wagon,
+-Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository and
+-Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp.
+Producer SHA256 fc0c32014290f52b0b7412af5b5912587d54126b737b863ad495be47d0205c74;
+consumer98b0323b9f99a7abfe5a9e6f5e4f5b6ab86d29281ba1d743116efbf91c4bec5e.
+Base classes1822/2439, maximum major52. Evidence
+configuration-storage-reload-final-clean-install.log,
+configuration-storage-reload-consumer-clean-verify.log,
+configuration-storage-reload-build-results.json.
+
+Real Java8/Spigot1.8.8/MariaDB11.8.6 fixture9166cde10e passes VotingPlugin.reloadAll
+on the server thread with pending points18, retaining main pool usability and
+persisted data; native setter/global ownership tests also pass. Final points19
+flush at clean disable and restart. ConnectorJ5.1.14 is test classpath only.
+Exact consumer separately passes SQLite ConfigReloadSQL async pipeline/snapshot/
+mutation/bulk/removal/vote/reward/points10total1/clean disable/integrity/restart.
+Four final server logs contain no lifecycle/linkage/failure or fixture credentials.
+Evidence configuration-storage-reload-live-results.json and mysql-live/sqlite-live logs.
+
+Not established: cross-provider changes, SQLite predecessor connection retirement,
+public loadUserAPI outside this fenced config path, lazy initialization and
+convertDataStorage migration ownership, raw user/provider APIs, options-only
+storage-type changes, same-instance re-enable, blocked server-owner callbacks
+across reload, failed-shutdown or full proxy routing. The entire remaining
+upstream ledger/features/durable root queue/final independent review remains
+unfinished. This supersedes the old Options-before-flush TODO only for tested
+native storage-config reload. Do not treat the setter/config tests as a full
+provider/migration guarantee.

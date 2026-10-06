@@ -21,8 +21,18 @@ class LegacyRewardShutdownTest {
         finally {Thread.interrupted();}
     }
     static class Fixture {
-        final RewardHandler handler=mock(RewardHandler.class,CALLS_REAL_METHODS);final Timer repeat=mock(Timer.class);final ScheduledExecutorService delayed=mock(ScheduledExecutorService.class);
-        Fixture()throws Exception {set("repeatTimer",repeat);set("delayedTimer",delayed);}
+        final RewardHandler handler;final Timer repeat=mock(Timer.class);final ScheduledExecutorService delayed=mock(ScheduledExecutorService.class);
+        Fixture()throws Exception {
+            com.bencodez.advancedcore.AdvancedCorePlugin plugin=mock(com.bencodez.advancedcore.AdvancedCorePlugin.class);
+            when(plugin.getDataFolder()).thenReturn(new java.io.File(System.getProperty("java.io.tmpdir"),"legacy-reward-shutdown"));
+            try (org.mockito.MockedStatic<com.bencodez.advancedcore.AdvancedCorePlugin> global=mockStatic(com.bencodez.advancedcore.AdvancedCorePlugin.class)) {
+                global.when(com.bencodez.advancedcore.AdvancedCorePlugin::getInstance).thenReturn(plugin);
+                handler=mock(RewardHandler.class,CALLS_REAL_METHODS);
+                RewardHandler.getInstance().getRepeatTimer().cancel();
+                RewardHandler.getInstance().getDelayedTimer().shutdown();
+            }
+            set("repeatTimer",repeat);set("delayedTimer",delayed);
+        }
         void set(String name,Object value)throws Exception {java.lang.reflect.Field field=RewardHandler.class.getDeclaredField(name);field.setAccessible(true);field.set(handler,value);}
     }
 }

@@ -478,10 +478,13 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	}
 
 	private void loadConfig(boolean userStorage) {
-		getOptions().load(this);
 		if (loadUserData && userStorage) {
-			loadUserAPI(getOptions().getStorageType());
-		}
+			getUserStorageOwnership().replace(5, TimeUnit.SECONDS, this::flushStorageForReplacement, () -> {
+				// Pending batches must use the old type/config, before Options changes.
+				getOptions().load(this);
+				loadUserAPI(getOptions().getStorageType());
+			});
+		} else getOptions().load(this);
 	}
 
 	private void loadHandle() {
@@ -1010,7 +1013,7 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 		loadConfig(userStorage);
 
 		if (userStorage) {
-			getUserManager().getDataManager().clearCache();
+			if (!loadUserData) getUserManager().getDataManager().clearCache();
 			if (getStorageType().equals(UserStorage.MYSQL) && getMysql() != null) {
 				getMysql().clearCacheBasic();
 			}
@@ -1062,16 +1065,23 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	 */
 	public void setMysql(MySQL mysql) {
 		if (this.mysql == mysql) return;
-		getUserStorageOwnership().replace(5, TimeUnit.SECONDS, () -> {
-			// Flush pending old-provider batches before publishing another pool.
-			// Do not create a user manager merely to replace an unused provider.
-			if (userManager != null && userManager.getDataManager() != null) {
-				userManager.getDataManager().clearCacheForShutdown();
-			}
-		}, () -> {
-			if (this.mysql != null) this.mysql.close();
-			this.mysql = mysql;
-		});
+		if (getUserStorageOwnership().isReplacingOnCurrentThread()) {
+			setMysqlOwned(mysql);
+		} else {
+			getUserStorageOwnership().replace(5, TimeUnit.SECONDS, this::flushStorageForReplacement, () -> setMysqlOwned(mysql));
+		}
+	}
+
+	private void flushStorageForReplacement() {
+		// Do not create a user manager merely to replace an unused provider.
+		if (userManager != null && userManager.getDataManager() != null) {
+			userManager.getDataManager().clearCacheForShutdown();
+		}
+	}
+
+	private void setMysqlOwned(MySQL mysql) {
+		if (this.mysql != null) this.mysql.close();
+		this.mysql = mysql;
 	}
 
 	public void unRegisterValueRequest() {

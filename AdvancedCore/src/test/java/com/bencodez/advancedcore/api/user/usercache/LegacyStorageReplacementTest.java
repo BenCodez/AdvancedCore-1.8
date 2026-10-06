@@ -6,6 +6,21 @@ import java.util.concurrent.atomic.*;
 import org.junit.jupiter.api.Test;
 
 class LegacyStorageReplacementTest {
+    @Test void publicationPermissionIsThreadLocalAndUnavailableDuringFlushOrAfterFailure() throws Exception {
+        UserStorageOwnership owner=new UserStorageOwnership();ExecutorService worker=Executors.newSingleThreadExecutor();
+        try {
+            IllegalStateException failure=new IllegalStateException("publish failed");
+            assertSame(failure,assertThrows(IllegalStateException.class,() -> owner.replace(0,TimeUnit.NANOSECONDS,
+                () -> assertFalse(owner.isReplacingOnCurrentThread()),() -> {
+                    assertTrue(owner.isReplacingOnCurrentThread());
+                    try {assertFalse(worker.submit(owner::isReplacingOnCurrentThread).get(2,TimeUnit.SECONDS));}catch(Exception unexpected){throw new AssertionError(unexpected);}
+                    throw failure;
+                })));
+            assertFalse(owner.isReplacingOnCurrentThread());
+            owner.replace(0,TimeUnit.NANOSECONDS,() -> {},() -> assertTrue(owner.isReplacingOnCurrentThread()));
+            assertFalse(owner.isReplacingOnCurrentThread());
+        }finally{worker.shutdownNow();assertTrue(worker.awaitTermination(2,TimeUnit.SECONDS));}
+    }
     @Test void successfulReplacementReopensTheExistingOwnerWithoutResettingUuidRevisions() {
         UserStorageOwnership owner=new UserStorageOwnership();java.util.UUID id=java.util.UUID.randomUUID();
         UserStorageOwnership.Slot slot=owner.owner(id);slot.getLock().lock();try {slot.beginWrite();slot.endWrite();}finally {slot.getLock().unlock();}
