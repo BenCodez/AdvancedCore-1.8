@@ -39,6 +39,20 @@ public class UserDataManager {
 	@Getter
 	private ConcurrentHashMap<UUID, UserDataCache> userDataCache;
 
+    private final ConcurrentHashMap<UUID,OnlineSessionState> onlineUserSessions=new ConcurrentHashMap<>();
+    private final java.util.concurrent.atomic.AtomicLong onlineSessionGeneration=new java.util.concurrent.atomic.AtomicLong();
+    private final Object[] onlineSessionLocks=createOnlineSessionLocks();
+    @Getter private volatile Throwable lastDeferredStorageFailure;
+
+    private static final class OnlineSessionState {
+        final boolean online;final long generation;
+        OnlineSessionState(boolean online,long generation){this.online=online;this.generation=generation;}
+    }
+    private static Object[] createOnlineSessionLocks() {
+        Object[] locks=new Object[64];java.util.Arrays.setAll(locks,ignored->new Object());return locks;
+    }
+    private Object onlineSessionLock(UUID uuid){return onlineSessionLocks[(uuid.hashCode() & Integer.MAX_VALUE)%onlineSessionLocks.length];}
+
 	public UserDataManager(AdvancedCorePlugin plugin) {
 		this.plugin = plugin;
 		userDataCache = new ConcurrentHashMap<>();
@@ -134,18 +148,26 @@ public class UserDataManager {
 		retire(uuid, cache, true);
 	}
 
-	private void retire(UUID uuid, UserDataCache cache, boolean notify) {
-		try (UserStorageOwnership.Scope admission = getPlugin().getUserStorageOwnership().admit()) {
-		UserStorageOwnership.Slot owner = plugin.getUserStorageOwnership().owner(uuid);
-		Runnable notification;
-		owner.getLock().lock();
-		try {
-			notification = cache.retireForManager();
-			userDataCache.remove(uuid, cache);
-		} finally { owner.getLock().unlock(); }
-		if (notify && notification != null) notification.run();
-		}
-	}
+    private void retire(UUID uuid,UserDataCache cache,boolean notify) {
+        retire(uuid,cache,notify,false);
+    }
+
+    private boolean retire(UUID uuid,UserDataCache cache,boolean notify,boolean onlyOffline) {
+        try(UserStorageOwnership.Scope admission=getPlugin().getUserStorageOwnership().admit()) {
+            UserStorageOwnership.Slot owner=plugin.getUserStorageOwnership().owner(uuid);
+            Runnable notification;
+            owner.getLock().lock();
+            try {
+                if(onlyOffline && (userDataCache.get(uuid)!=cache || isUserOnline(uuid)))return false;
+                // Join markers must not wait for physical storage. Once flush starts,
+                // retire that flushed generation even if a concurrent join arrives.
+                notification=cache.retireForManager();
+                userDataCache.remove(uuid,cache);
+            }finally {owner.getLock().unlock();}
+            if(notify && notification!=null)notification.run();
+            return true;
+        }
+    }
 
 	/** Resolve cached/uncached ownership at execution, not asynchronous admission. */
 	public void writeDirect(com.bencodez.advancedcore.api.user.AdvancedCoreUser user, String key,
@@ -259,23 +281,63 @@ public class UserDataManager {
 		}
 	}
 
-	public void clearNonNeededCachedUsers() {
-		plugin.devDebug("Clearing cache for non online players (if any)");
-		ArrayList<UUID> onlineUUIDS = new ArrayList<>();
-		for (Player p : Bukkit.getOnlinePlayers()) {
-			onlineUUIDS.add(p.getUniqueId());
-		}
-		int removed = 0;
-		for (UUID uuid : userDataCache.keySet()) {
-			if (!onlineUUIDS.contains(uuid)) {
-				removeCache(uuid, null);
-				removed++;
-			}
-		}
-		if (removed > 0) {
-			plugin.devDebug("Removed " + removed + " cached users who are no longer online");
-		}
-	}
+    /** Capture Bukkit state on its owner; flush and retire only on the storage worker. */
+    public void clearNonNeededCachedUsers() {
+        final com.bencodez.advancedcore.api.rewards.ServerThreadRewardDispatch owner=plugin.getRewardDispatch();
+        owner.dispatch(()->{
+            java.util.HashSet<UUID> platformOnline=new java.util.HashSet<>();
+            if(Bukkit.getServer()!=null)for(Player player:Bukkit.getOnlinePlayers())platformOnline.add(onlineStorageUuid(player));
+            final long generation=onlineSessionGeneration.get();
+            timer.execute(()->{
+                try {clearNonNeededCachedUsers(reconcileOnlineSnapshot(platformOnline,generation));}
+                catch(RuntimeException | Error failure){reportDeferredStorageFailure(failure);throw failure;}
+            });
+            return java.util.concurrent.CompletableFuture.<Void>completedFuture(null);
+        },30000).whenComplete((unused,failure)->{if(failure!=null)reportDeferredStorageFailure(failure);});
+    }
+
+    private void reportDeferredStorageFailure(Throwable failure) {
+        lastDeferredStorageFailure=failure;
+        plugin.getLogger().log(java.util.logging.Level.SEVERE,"Deferred user-cache cleanup failed",failure);
+    }
+
+    private java.util.Set<UUID> reconcileOnlineSnapshot(java.util.Set<UUID> platformOnline,long generation) {
+        java.util.Set<UUID> online=new java.util.HashSet<>();
+        for(UUID uuid:platformOnline)synchronized(onlineSessionLock(uuid)) {
+            OnlineSessionState state=onlineUserSessions.computeIfAbsent(uuid,ignored->new OnlineSessionState(true,generation));
+            if(state.online)online.add(uuid);
+        }
+        for(UUID uuid:new ArrayList<>(onlineUserSessions.keySet()))synchronized(onlineSessionLock(uuid)) {
+            OnlineSessionState state=onlineUserSessions.get(uuid);
+            if(state!=null && !state.online && state.generation<=generation && !platformOnline.contains(uuid))onlineUserSessions.remove(uuid,state);
+        }
+        return online;
+    }
+
+    private UUID onlineStorageUuid(Player player) {
+        if(plugin.getOptions().isOnlineMode())return player.getUniqueId();
+        return UUID.fromString(PlayerManager.getInstance().getUUID(player.getName()));
+    }
+    public void markUserOnline(UUID uuid) {
+        if(uuid!=null)synchronized(onlineSessionLock(uuid)){onlineUserSessions.put(uuid,new OnlineSessionState(true,onlineSessionGeneration.incrementAndGet()));}
+    }
+    /** Invoke from the native owner-thread join event, even when delayed user loading is disabled. */
+    public void markUserOnline(Player player){if(player!=null)markUserOnline(onlineStorageUuid(player));}
+    public void markUserOffline(UUID uuid) {
+        if(uuid!=null)synchronized(onlineSessionLock(uuid)){onlineUserSessions.put(uuid,new OnlineSessionState(false,onlineSessionGeneration.incrementAndGet()));}
+    }
+    public void markUserOffline(Player player){if(player!=null)markUserOffline(onlineStorageUuid(player));}
+    private boolean isUserOnline(UUID uuid){OnlineSessionState state=onlineUserSessions.get(uuid);return state!=null && state.online;}
+
+    private void clearNonNeededCachedUsers(java.util.Set<UUID> onlineSnapshot) {
+        plugin.devDebug("Clearing cache for non online players (if any)");
+        int removed=0;
+        for(java.util.Map.Entry<UUID,UserDataCache> entry:new ArrayList<>(userDataCache.entrySet())) {
+            if(onlineSnapshot.contains(entry.getKey()) || isUserOnline(entry.getKey()))continue;
+            if(retire(entry.getKey(),entry.getValue(),true,true))removed++;
+        }
+        if(removed>0)plugin.devDebug("Removed "+removed+" cached users who are no longer online");
+    }
 
 	public boolean containsKey(UUID fromString) {
 		UserDataCache cache = userDataCache.get(fromString);

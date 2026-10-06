@@ -82,7 +82,9 @@ public class PlayerJoinEvent implements Listener {
 	 */
 	@EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onPlayerLogin(final org.bukkit.event.player.PlayerJoinEvent event) {
-        if(plugin==null || !plugin.isEnabled() || !plugin.isLoadUserData())return;
+        if(plugin==null || !plugin.isEnabled())return;
+        plugin.getUserManager().getDataManager().markUserOnline(event.getPlayer());
+        if(!plugin.isLoadUserData())return;
         final Player player=event.getPlayer();final java.util.UUID uuid=player.getUniqueId();
         final com.bencodez.advancedcore.api.rewards.ServerThreadRewardDispatch owner=plugin.getRewardDispatch();
         plugin.getLogger().info("Login: "+player.getName()+" ("+uuid+")");
@@ -120,8 +122,11 @@ public class PlayerJoinEvent implements Listener {
 	public void onPlayerQuit(PlayerQuitEvent event) {
 		if (plugin != null && plugin.isEnabled()) {
 			Player player = event.getPlayer();
-            synchronized(loginSessionLock(player.getUniqueId())) {
-                pendingLoginSessions.remove(player.getUniqueId(),player);
+            final java.util.UUID uuid=player.getUniqueId();
+            final String playerName=player.getName();
+            plugin.getUserManager().getDataManager().markUserOffline(player);
+            synchronized(loginSessionLock(uuid)) {
+                pendingLoginSessions.remove(uuid,player);
                 if(plugin.getPermissionHandler()!=null)plugin.getPermissionHandler().logout(player);
             }
 			plugin.debug("Logout: " + event.getPlayer().getName() + " (" + player.getUniqueId() + ")");
@@ -133,7 +138,7 @@ public class PlayerJoinEvent implements Listener {
 					if (plugin != null && plugin.isEnabled()) {
 						TabCompleteHandler.getInstance().onLogin();
 						
-						plugin.getUserManager().getDataManager().removeCache(player.getUniqueId(), player.getName());
+						plugin.getUserManager().getDataManager().removeCache(uuid, playerName);
 
 					}
 				}

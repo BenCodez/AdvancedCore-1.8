@@ -3517,3 +3517,45 @@ stored epoch deadline through automatic login and physical expiry. Native SuperV
 integration and the full compatibility matrix remain unverified. Cache cleanup
 lifecycle and complete upstream patch/caller classification remain separate work;
 this cohort does not establish whole-main parity or PR readiness.
+
+
+## Cache cleanup owner and session-generation backport
+
+Periodic cache cleanup captures Bukkit Player identities on the existing captured owner
+dispatcher, then reconciles session markers and flushes/retires caches on the manager's
+storage worker. Native joins mark online even when delayed user loading is disabled;
+quits mark offline and capture UUID/name before their worker callback. Generation-stamped
+offline tombstones prevent an older queued snapshot from erasing a newer quit or
+resurrecting it. Java8 immutable state classes and copied collections replace modern
+records/Set.copyOf. Offline storage identity resolution preserves the existing fork's
+PlayerManager contract.
+
+Cleanup reuses canonical UserStorageOwnership. It rechecks the selected handler and
+online state under storage ownership; accepted physical flushes retire their generation
+even if a join arrives during the flush. Failed retirement retains mapped pending work
+for retry, and notification-created successor generations remain protected by existing
+conditional removal. Owner retirement fences queued capture; admission/storage failures
+are reported and retained as the last diagnostic failure without stopping later attempts.
+Explicit removeCache remains unconditional invalidation, matching pinned main.
+
+Focused cache/registry/login/permission tests49 PASS. ActualJava8 producer clean install
+614 unit +18 artifact =632 PASS; exact locally installed producer consumer clean verify
+45 unit +1 artifact =46 PASS, failures/errors/skips zero. Base classes remain major<=52.
+Producer SHA256 `c81bcf8b69f74d46b6f9d1ac0f736ae68bd395935434b3b965d90d1e52dbf0d3`;
+consumer SHA256 `6bf2c652dcdfa08ee4da7ee745989599546f9534ffc8b10f1a072e82e439481f`.
+
+Six real Java8/Spigot1.8.8 cache checks pass on that exact consumer: automatic existing-
+user cache loading, online protection after a storage-worker barrier, queued offline
+flush/retirement, distinct PlayerName value persisted in SQLite, integrity and clean
+shutdown/linkage. Ten native permission and five legacy timestamp upgrade checks also
+pass on the rebuilt consumer after join/quit integration. Initial cache fixture failure
+used an unstored new player, whose normal login correctly does not populate a stored-
+user cache; the corrected fixture seeds a representative legacy SQLite user and retains
+all physical assertions. A headless test mock-restubbing error was corrected before
+final passing validation; production assertions were not weakened.
+
+Remaining full-patch audit includes the pinned cleanup snapshot-version fence against
+in-place cache mutation while canonical ownership is awaited, wider cache population/
+refresh callers, and runtime reload/failure matrix. This cohort does not establish
+whole-main parity or full-backport readiness. Configuration, schemas, public existing
+APIs, proxy wire formats and release metadata are unchanged.
