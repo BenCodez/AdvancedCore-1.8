@@ -232,6 +232,37 @@ class LegacyNestedRewardSequenceTest {
             CompletionStage<Object> result=f.builtin("AdvancedWorld").onRewardRequestAsync(mock(Reward.class),f.user,config,new HashMap<>());f.drain();await(result);verify(f.handler,never()).getReward(anyString());
         });
     }
+    @Test void commandReplayFreezesExpandedPayloadAndSkipsAcknowledgedCommandsOnRetry() {
+        fixture(f->{
+            RewardOptions options=f.options();Reward.ReplayState state=Reward.replayStateFor(options);state.captureRuntime(f.dispatch.plugin);List<String> calls=new ArrayList<>();CompletableFuture<Void> first=new CompletableFuture<>(),last=new CompletableFuture<>();
+            CompletionStage<Void> initial=Reward.replayCommandSequence(f.dispatch.plugin,options.getPlaceholders(),"console",Arrays.asList("first %value%","last %value%"),Arrays.asList("first old","last old"),state,"root",(command,index)->{assertFalse(f.writes.isEmpty());calls.add(command);return index==0?first:last;});f.drain();assertEquals(Arrays.asList("first old"),calls);assertFalse(initial.toCompletableFuture().isDone());
+            first.complete(null);f.drain();assertEquals(Arrays.asList("first old","last old"),calls);assertFalse(initial.toCompletableFuture().isDone());last.completeExceptionally(new IllegalStateException("last failed"));f.drain();assertThrows(CompletionException.class,()->await(initial));
+            Reward.ReplayCheckpoint saved=f.writes.get(f.writes.size()-1);RewardOptions retry=f.options();retry.getPlaceholders().putAll(saved.getPlaceholders());retry.setAsyncReplayProgress(saved.getReplayProgress());retry.setAsyncReplayRegistryFingerprints(saved.getReplayRegistryFingerprints());Reward.ReplayState restored=Reward.replayStateFor(retry);restored.captureRuntime(f.dispatch.plugin);
+            CompletionStage<Void> resumed=Reward.replayCommandSequence(f.dispatch.plugin,retry.getPlaceholders(),"console",Arrays.asList("changed"),Arrays.asList("changed new"),restored,"root",(command,index)->{calls.add(command);return CompletableFuture.completedFuture(null);});f.drain();await(resumed);assertEquals(Arrays.asList("first old","last old","last old"),calls);
+        });
+    }
+    @Test void commandSnapshotPublicationFailurePreventsPhysicalDispatch() {
+        fixture(f->{
+            RewardOptions options=f.options();options.setAsyncReplayCheckpointConsumer(checkpoint->{throw new IllegalStateException("storage failed");});Reward.ReplayState state=Reward.replayStateFor(options);state.captureRuntime(f.dispatch.plugin);List<String> calls=new ArrayList<>();
+            CompletionStage<Void> result=Reward.replayCommandSequence(f.dispatch.plugin,options.getPlaceholders(),"console",Arrays.asList("command"),Arrays.asList("expanded"),state,"root",(command,index)->{calls.add(command);return CompletableFuture.completedFuture(null);});f.drain();assertThrows(CompletionException.class,()->await(result));assertTrue(calls.isEmpty());
+        });
+    }
+    @Test void commandReplayRejectsMalformedCursorAndMismatchedExpansion() {
+        fixture(f->{
+            List<String> calls=new ArrayList<>();CompletionStage<Void> mismatch=Reward.replayCommandSequence(f.dispatch.plugin,new HashMap<>(),"console",Arrays.asList("command"),Collections.emptyList(),null,null,(command,index)->{calls.add(command);return CompletableFuture.completedFuture(null);});assertThrows(CompletionException.class,()->await(mismatch));assertTrue(calls.isEmpty());
+            RewardOptions options=f.options();Reward.ReplayState state=Reward.replayStateFor(options);state.captureRuntime(f.dispatch.plugin);CompletionStage<Void> completed=Reward.replayCommandSequence(f.dispatch.plugin,options.getPlaceholders(),"console",Arrays.asList("command"),Arrays.asList("expanded"),state,"root",(command,index)->CompletableFuture.completedFuture(null));f.drain();await(completed);
+            String snapshot=options.getPlaceholders().keySet().stream().filter(key->key.endsWith("_snapshot")).findFirst().get();String cursor=snapshot.substring(0,snapshot.length()-"_snapshot".length());options.getPlaceholders().put(cursor,"99");
+            RewardOptions retry=f.options();retry.getPlaceholders().putAll(options.getPlaceholders());Reward.ReplayState restored=Reward.replayStateFor(retry);restored.captureRuntime(f.dispatch.plugin);CompletionStage<Void> invalid=Reward.replayCommandSequence(f.dispatch.plugin,retry.getPlaceholders(),"console",Arrays.asList("command"),Arrays.asList("expanded"),restored,"root",(command,index)->{calls.add(command);return CompletableFuture.completedFuture(null);});f.drain();assertThrows(CompletionException.class,()->await(invalid));assertTrue(calls.isEmpty());
+        });
+    }
+    @Test void commandRetryRepublishesUnacknowledgedInMemorySnapshotBeforeDispatch() {
+        fixture(f->{
+            java.util.concurrent.atomic.AtomicInteger writes=new java.util.concurrent.atomic.AtomicInteger();RewardOptions options=f.options();options.setAsyncReplayCheckpointConsumer(checkpoint->{if(writes.incrementAndGet()==1)throw new IllegalStateException("first publication failed");});Reward.ReplayState state=Reward.replayStateFor(options);state.captureRuntime(f.dispatch.plugin);List<String> calls=new ArrayList<>();
+            java.util.function.BiFunction<String,Integer,CompletionStage<Void>> physical=(command,index)->{assertTrue(writes.get()>=2,"Retry must acknowledge snapshot before issuing command");calls.add(command);return CompletableFuture.completedFuture(null);};
+            CompletionStage<Void> initial=Reward.replayCommandSequence(f.dispatch.plugin,options.getPlaceholders(),"console",Arrays.asList("template"),Arrays.asList("original expansion"),state,"root",physical);f.drain();assertThrows(CompletionException.class,()->await(initial));assertTrue(calls.isEmpty());
+            CompletionStage<Void> retry=Reward.replayCommandSequence(f.dispatch.plugin,options.getPlaceholders(),"console",Arrays.asList("changed template"),Arrays.asList("changed expansion"),state,"root",physical);f.drain();await(retry);assertEquals(Arrays.asList("original expansion"),calls);
+        });
+    }
     private Object await(CompletionStage<?> stage) {
         try{return stage.toCompletableFuture().get(2,TimeUnit.SECONDS);}
         catch(ExecutionException failure){throw new CompletionException(failure.getCause());}

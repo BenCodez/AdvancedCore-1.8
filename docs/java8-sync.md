@@ -3337,3 +3337,40 @@ This is a partial adaptation of mixed upstream 167952a0feec97017a550477e54694a94
 remaining changes in that commit and the full upstream ledger still need audit.
 No public signature, schema, release metadata or proxy format was changed.
 No full-main alignment, final review or PR readiness is claimed. No push or PR.
+
+
+## Command replay sequence foundation (integration pending)
+
+The additive replayCommandSequence overloads freeze concrete command expansions
+in the existing reserved command-metadata namespace and v1 snapshot codec, then
+await each physical dispatch and durable cursor. Snapshot/pending-work queries
+mirror the pinned API. Java 9 collection factories and failedFuture are adapted
+to Java 8. Existing void command callbacks and their timing remain unchanged in
+this commit; builtin command wiring is the next implementation phase.
+
+Four helper regressions prove ordered awaiting, restored cursor skipping and
+frozen expansions despite changed input, initial publication failure with no
+physical command, malformed cursors/expansion mismatch, and same-state retry of
+an unacknowledged snapshot. The last reproduces an issue in the initially copied
+pinned helper: createdSnapshot=false bypasses pre-dispatch persistence after a
+failed initial write. The candidate reacknowledges retained metadata before
+physical dispatch or completed return. It does not claim transactional or
+exactly-once external command effects across an unacknowledged crash.
+
+Temurin 8u504/Maven 3.9.9, explicit workspace-local Maven repository and temp
+paths, producer clean install and exact consumer clean verify: 563 unit + 18
+artifact = 581 AdvancedCore checks; 45 unit + 1 artifact = 46 VotingPlugin checks.
+All pass, zero failures/errors/skips; focused nested/helper suite has 26 tests.
+Producer SHA-256: 4683b53430943656484c7f56938853a2bb1450bf7b2f7198936afd29666088e5.
+Consumer SHA-256: 0184c393ede9af1faa83a3e6908d9bb0df31c2aabebf445b301a4d53e4ff9997.
+All producer/consumer base classes remain major <=52. No release metadata,
+existing public signature, database schema or proxy payload change is made.
+
+This helper has not yet been exercised through actual builtin commands or live
+command SIGKILL acceptance. Captured owner admission with legacy tick staggering,
+console/player/numeric/random builtin integration, sibling snapshot retry audit
+and live storage/recovery proofs remain required before claiming command replay
+complete. Arbitrary pending inline-definition immutability is not a separate
+pinned-main contract; retain root snapshot provenance and audit actual prepared
+effect behavior rather than inventing an additional nested-YAML queue format.
+The whole backport remains incomplete; no final review, PR or push.

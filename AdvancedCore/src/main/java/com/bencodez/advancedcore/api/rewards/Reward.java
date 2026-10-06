@@ -23,6 +23,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -673,6 +674,139 @@ public class Reward {
 		ReplayState replayState = ACTIVE_REPLAY_STATE.get();
 		return replayState == null ? CompletableFuture.completedFuture(null)
 				: replayState.persistCheckpointAsync(plugin, placeholders);
+	}
+
+	/** Executes a command list sequentially and durably records each successful item. */
+	public static CompletionStage<Void> replayCommandSequence(AdvancedCorePlugin plugin,
+			HashMap<String, String> placeholders, String lane, List<String> commands,
+			Function<String, CompletionStage<Void>> dispatch) {
+		return replayCommandSequence(plugin, placeholders, lane, commands,
+				(command, ignoredIndex) -> dispatch.apply(command));
+	}
+
+	/** Executes an indexed command list sequentially and durably records each successful item. */
+	public static CompletionStage<Void> replayCommandSequence(AdvancedCorePlugin plugin,
+			HashMap<String, String> placeholders, String lane, List<String> commands,
+			BiFunction<String, Integer, CompletionStage<Void>> dispatch) {
+		return replayCommandSequence(plugin, placeholders, lane, commands, commands, currentReplayState(), currentReplayKey(), dispatch);
+	}
+
+	/** Executes expanded commands while identifying the sequence by stable templates. */
+	public static CompletionStage<Void> replayCommandSequence(AdvancedCorePlugin plugin,
+			HashMap<String, String> placeholders, String lane, List<String> commandTemplates,
+			List<String> expandedCommands, BiFunction<String, Integer, CompletionStage<Void>> dispatch) {
+		return replayCommandSequence(plugin, placeholders, lane, commandTemplates, expandedCommands,
+				currentReplayState(), currentReplayKey(), dispatch);
+	}
+
+	static CompletionStage<Void> replayCommandSequence(AdvancedCorePlugin plugin,
+			HashMap<String, String> placeholders, String lane, List<String> commandTemplates,
+			List<String> expandedCommands,
+			ReplayState replayState, String activeKey,
+			BiFunction<String, Integer, CompletionStage<Void>> dispatch) {
+		if (replayState == null || activeKey == null) {
+			if (commandTemplates == null || commandTemplates.isEmpty()) return CompletableFuture.completedFuture(null);
+			if (expandedCommands == null || expandedCommands.size() != commandTemplates.size()) {
+				return failedStage(
+						new IllegalArgumentException("Command templates and expansions differ in size"));
+			}
+			CompletionStage<Void> sequence = CompletableFuture.completedFuture(null);
+			for (int index = 0; index < expandedCommands.size(); index++) {
+				String command = expandedCommands.get(index);
+				int commandIndex = index;
+				sequence = sequence.thenCompose(ignored -> dispatch.apply(command, commandIndex));
+			}
+			return sequence;
+		}
+		String storageKey = replaySequenceKey(REPLAY_COMMAND_PREFIX, activeKey,
+				lane == null ? "commands" : lane);
+		String snapshotKey = storageKey + "_snapshot";
+		List<String> commands;
+		String storedSnapshot = replayMetadata(placeholders, replayState, snapshotKey);
+		if (storedSnapshot == null) {
+			List<String> templates = commandTemplates == null ? java.util.Collections.emptyList() : commandTemplates;
+			List<String> expansions = expandedCommands == null ? java.util.Collections.emptyList() : expandedCommands;
+			if (expansions.size() != templates.size()) {
+				return failedStage(
+						new IllegalArgumentException("Command templates and expansions differ in size"));
+			}
+			commands = new ArrayList<>(expansions);
+			String encodedSnapshot = encodeCommandSnapshot(commands);
+			recordReplayMetadata(placeholders, replayState, snapshotKey, encodedSnapshot);
+		} else {
+			replayState.recordReplayMetadata(snapshotKey, storedSnapshot);
+			try {
+				commands = decodeCommandSnapshot(storedSnapshot);
+			} catch (IllegalArgumentException failure) {
+				return failedStage(new IllegalStateException("Malformed command replay snapshot", failure));
+			}
+		}
+		String storedProgress = replayMetadata(placeholders, replayState, storageKey);
+		int completed;
+		try {
+			completed = storedProgress == null ? 0 : Integer.parseInt(storedProgress);
+		} catch (NumberFormatException failure) {
+			return failedStage(
+					new IllegalStateException("Malformed command replay progress", failure));
+		}
+		if (storedProgress != null) replayState.recordReplayMetadata(storageKey, storedProgress);
+		if (completed < 0 || completed > commands.size()) {
+			return failedStage(new IllegalStateException("Command replay progress exceeds snapshot"));
+		}
+		// Persist the concrete expansion before issuing its first side effect. A
+		// restart during an indeterminate dispatch must reuse this exact payload,
+		// even though no command-progress marker exists yet.
+		// A previous write may have failed after recording snapshot/cursor in memory.
+		// A retry must acknowledge that retained metadata before dispatch or return.
+		CompletionStage<Void> sequence = replayState.persistCheckpointAsync(plugin, placeholders);
+		for (int index = completed; index < commands.size(); index++) {
+			String command = commands.get(index);
+			int completedCount = index + 1;
+			int commandIndex = index;
+			sequence = sequence.thenCompose(ignored -> dispatch.apply(command, commandIndex)).thenCompose(ignored -> {
+				recordReplayMetadata(placeholders, replayState, storageKey, String.valueOf(completedCount));
+				return replayState == null ? CompletableFuture.completedFuture(null)
+						: replayState.persistCheckpointAsync(plugin, placeholders);
+			});
+		}
+		return sequence;
+	}
+
+	public static boolean hasReplayCommandSnapshot(HashMap<String, String> placeholders, String lane) {
+		ReplayState replayState = currentReplayState();
+		String activeKey = currentReplayKey();
+		if (replayState == null || activeKey == null) return false;
+		String storageKey = replaySequenceKey(REPLAY_COMMAND_PREFIX, activeKey,
+				lane == null ? "commands" : lane);
+		return replayMetadata(placeholders, replayState, storageKey + "_snapshot") != null;
+	}
+
+	/** Returns whether a frozen command lane still has an undispatched command. */
+	public static boolean hasPendingReplayCommandWork(HashMap<String, String> placeholders, String lane) {
+		ReplayState replayState = currentReplayState();
+		String activeKey = currentReplayKey();
+		if (replayState == null || activeKey == null) return false;
+		String storageKey = replaySequenceKey(REPLAY_COMMAND_PREFIX, activeKey,
+				lane == null ? "commands" : lane);
+		String storedSnapshot = replayMetadata(placeholders, replayState, storageKey + "_snapshot");
+		if (storedSnapshot == null) return false;
+		List<String> commands;
+		try {
+			commands = decodeCommandSnapshot(storedSnapshot);
+		} catch (IllegalArgumentException failure) {
+			throw new IllegalStateException("Malformed command replay snapshot", failure);
+		}
+		String storedProgress = replayMetadata(placeholders, replayState, storageKey);
+		int completed;
+		try {
+			completed = storedProgress == null ? 0 : Integer.parseInt(storedProgress);
+		} catch (NumberFormatException failure) {
+			throw new IllegalStateException("Malformed command replay progress", failure);
+		}
+		if (completed < 0 || completed > commands.size()) {
+			throw new IllegalStateException("Command replay progress exceeds snapshot");
+		}
+		return completed < commands.size();
 	}
 
 	public static CompletionStage<List<String>> replayNestedRewardSnapshot(AdvancedCorePlugin plugin,
