@@ -3917,3 +3917,41 @@ VARCHAR(30) applies on the worker, a later check retains it, and stored17 is pre
 Nine exact-consumer Java8/Spigot1.8.8 SQLite/schema/cache/startup/shutdown checks pass.
 The remaining upstream ledger, numeric/driver/pool and full runtime/API/lifecycle scope,
 and fresh independent final review are still incomplete. No push or PR readiness is claimed.
+
+
+### Root checkpoint notification ledger audit
+
+Compared the complete production patches of pinned-main commits
+`e75605add366aa23b9bed6452aee6681c410506c` (skip empty legacy action checkpoints)
+and `2533230d62fa84550614debd32b0c40eabdcbbf5` (durable replay checkpoint callbacks)
+against the isolated fork. Both behaviors already exist; this audit adds regression
+coverage rather than another production implementation.
+
+The empty-action guard is unchanged: an empty persisted snapshot becomes dirty only
+when the current action snapshot is nonempty. The public additive
+`RewardInject.onReplayCheckpointPersisted` hook retains its completed no-op default.
+`Reward` awaits a checkpoint before notification, awaits the hook before the next
+injection, and invokes the hook again for a persisted completed prefix on recovery.
+The fork uses its Java 8 exceptional-stage helper and admitted server-thread
+owner instead of Java 9+ `CompletableFuture.failedFuture`. Occurrence and injection
+identities remain stable. Hook failure does not erase the persisted completed effect.
+The hook must be idempotent: a later recovery may notify it again.
+
+Three regression tests exercise the production collection/pipeline entry points:
+empty collections preserve operator placeholders without creating replay metadata;
+notifications start after the durable write and block the next effect until settlement;
+and failed notification recovery from the saved checkpoint retries the hook without
+repeating the first effect. The empty-collection regression also fails when the
+upstream guard is temporarily removed, with source restored afterward.
+Actual Java 8 focused command uses the recorded workspace-local Maven flags and
+`-Dtest=LegacyOrderedRewardPipelineTest test`: 45 tests pass, zero failures/errors/skips.
+Evidence is in `evidence/root-checkpoint-notification-focused.log` and
+`evidence/empty-legacy-checkpoint-mutation.log` under the isolated workspace.
+The complete actual-Java-8 `mvn ... test` unit suite also passes: 633 tests, zero
+failures/errors/skips (`evidence/root-checkpoint-notification-full-unit.log`).
+Production sources and packaged dependencies are unchanged from the previous
+702-test producer / 46-test consumer artifact cohort; no fresh package or server
+acceptance is claimed for this test/documentation-only audit.
+This is deterministic pipeline evidence, not new end-to-end database/crash acceptance.
+Remaining replay/storage-generation commits and the full upstream ledger still need
+individual source review. No final PR readiness is claimed.
