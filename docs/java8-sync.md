@@ -3659,3 +3659,42 @@ existing-user/integrity/linkage checks plus registration during default populati
 late-default availability on the next cache pass. This is not MySQL live migration
 acceptance or whole-main parity. Full schema reconciliation and remaining ledger work
 are still pending; the final independent review and PR readiness gate have not run.
+
+
+## Native MySQL registered-column expansion
+
+Missing registered MySQL columns now use their declared UserDataKey SQL type, length,
+nullability and default, matching initial table creation. Unregistered dynamic columns
+retain legacy TEXT storage. Synchronous JDBC DDL finishes and borrowed resources close
+before column membership is published. SQL failures propagate as IllegalStateException
+with the original cause. Missing connections and non-auto-commit borrowed transactions
+are rejected; this path never commits an existing caller transaction or closes its pool.
+Public method signatures, existing values/schemas, configuration and releases are kept.
+
+The bundled SimpleAPI Query.executeUpdate catches SQLExceptions internally; simply
+catching its declared exception cannot prove DDL completion. Packaged-artifact regressions
+exercise the JDBC boundary instead. Their child loader uses the final Java8-compatible
+pool replacement, avoiding the compile dependency's embedded Java11 pool classes. The
+existing fixture is shared at test-package scope only; no production dependency changed.
+Five packaged checks cover integer/default expansion, string length/attributes, rejected
+DDL without membership publication, unknown dynamic TEXT, and transaction rejection.
+The prototype helper-boundary tests were superseded after bytecode inspection exposed
+swallowed JDBC failures; the corrected packaged RED had three failures before checked DDL.
+
+ActualJava8 clean install621 unit +23 artifact =644 PASS; exact locally installed producer
+consumer clean verify45 unit +1 artifact =46 PASS, zero failures/errors/skips. Base bytecode
+remains major<=52. Producer SHA256
+`d78ed032dce11b268881fbbd640216df88c3ed748180381d553a52420049541e`;
+consumer SHA256 `a2aca893e85e198b08e19575b19e22cb265a1bd08a3bbafe75d9b453383c6ed6`.
+RealJava8/MariaDB11.8.6 validates physical integer/default expansion, preserved existing
+row, synchronous DDL, deliberately invalid-type SQL rejection, and unchanged membership
+on failure. The unique fixture table is removed and owned daemon terminated. Eight native
+Java8/Spigot1.8.8 registration/cache/SQLite/linkage checks pass on the exact rebuilt consumer.
+A fixture preflight retry corrected TIME_WAIT handling after confirming no active listener;
+all product assertions were preserved.
+
+This partially adapts801fb0a50524996ef7a1d060e0cdc9f33245c190. Full borrowed-schema
+reconciliation, fail-closed metadata, retained-type migration, identity/unique constraints,
+peer migration idempotence and modern headless construction/cleanup remain unfinished.
+No PostgreSQL support or whole-main parity is claimed. Original checkouts/references
+remain unchanged; no push/PR/final independent readiness gate has occurred.

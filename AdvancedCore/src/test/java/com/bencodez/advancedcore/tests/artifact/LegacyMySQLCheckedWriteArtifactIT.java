@@ -117,7 +117,7 @@ class LegacyMySQLCheckedWriteArtifactIT {
             assertTrue(f.uuids.contains(f.uuid)); assertTrue(f.names.contains("old"));
         }
     }
-    private static class Fixture implements AutoCloseable {
+    static class Fixture implements AutoCloseable {
         final String uuid="00000000-0000-0000-0000-000000000002";
         final Connection connection=mock(Connection.class);
         final PreparedStatement statement=mock(PreparedStatement.class);

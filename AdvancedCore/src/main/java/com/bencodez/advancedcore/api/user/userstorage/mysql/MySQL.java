@@ -127,20 +127,34 @@ public class MySQL {
 	}
 
 	public void addColumn(String column, DataType dataType) {
-		synchronized (object3) {
-			String sql = "ALTER TABLE " + getName() + " ADD COLUMN `" + column + "` text" + ";";
-
-			plugin.debug("Adding column: " + column + " Current columns: "
-					+ ArrayUtils.makeStringList((ArrayList<String>) getColumns()));
-			try {
-				Query query = new Query(mysql, sql);
-				query.executeUpdate();
-
-				getColumns().add(column);
-			} catch (Exception e) {
-				e.printStackTrace();
+		// Resolve extension-defined types outside the column-add lock. Missing
+		// registered keys must expand using the same definition as initial CREATE.
+		String sqlType = "text";
+		for (UserDataKey key : plugin.getUserManager().getDataManager().getRegisteredKeysSnapshot()) {
+			if (key.getKey().equalsIgnoreCase(column)) {
+				sqlType = key.getColumnType();
+				if (sqlType == null || sqlType.trim().isEmpty()) {
+					throw new IllegalArgumentException("Registered SQL column has no type: " + column);
+				}
+				break;
 			}
-
+		}
+		synchronized (object3) {
+			String sql = "ALTER TABLE " + getName() + " ADD COLUMN `" + column.replace("`", "``") + "` " + sqlType + ";";
+			plugin.debug("Adding column: " + column);
+			try {
+				if (mysql == null || mysql.getConnectionManager() == null) throw new SQLException("MySQL user storage is unavailable");
+				try (Connection connection = mysql.getConnectionManager().getConnection()) {
+					if (connection == null) throw new SQLException("MySQL connection is unavailable");
+					if (!connection.getAutoCommit()) throw new SQLException("Checked schema changes require auto-commit");
+					try (PreparedStatement statement = connection.prepareStatement(sql)) {
+						statement.executeUpdate();
+					}
+				}
+				getColumns().add(column);
+			} catch (SQLException failure) {
+				throw new IllegalStateException("Failed to initialize registered SQL column: " + column, failure);
+			}
 		}
 	}
 
