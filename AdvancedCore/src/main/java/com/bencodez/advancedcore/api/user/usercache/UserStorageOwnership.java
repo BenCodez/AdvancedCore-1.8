@@ -20,6 +20,7 @@ public final class UserStorageOwnership {
     private final Object admission = new Object();
     private final ThreadLocal<Integer> depth = ThreadLocal.withInitial(() -> 0);
     private final ThreadLocal<Boolean> finalFlush = ThreadLocal.withInitial(() -> false);
+    private final ThreadLocal<Boolean> maintenance = ThreadLocal.withInitial(() -> false);
     private final ThreadLocal<Boolean> replacementPublication = ThreadLocal.withInitial(() -> false);
     private int accepted;
     private boolean retiring;
@@ -38,7 +39,7 @@ public final class UserStorageOwnership {
     }
 
     private void requireAdmission() {
-        if (closed || (retiring && depth.get() == 0 && !finalFlush.get())) {
+        if (closed || (retiring && depth.get() == 0 && !finalFlush.get() && !maintenance.get())) {
             throw new IllegalStateException("User storage is retiring or closed");
         }
     }
@@ -47,7 +48,7 @@ public final class UserStorageOwnership {
     public void submit(java.util.concurrent.Executor executor, Runnable work) {
         Objects.requireNonNull(executor, "executor");
         Objects.requireNonNull(work, "work");
-        if (finalFlush.get()) throw new IllegalStateException("Final storage flush cannot submit asynchronous work");
+        if (finalFlush.get() || maintenance.get()) throw new IllegalStateException("Storage maintenance or final flush cannot submit asynchronous work");
         synchronized (admission) { requireAdmission(); accepted++; }
         java.util.concurrent.atomic.AtomicBoolean claimed = new java.util.concurrent.atomic.AtomicBoolean();
         Runnable acceptedWork = () -> {
@@ -101,10 +102,27 @@ public final class UserStorageOwnership {
         transition(timeout, unit, flush, publish, false);
     }
 
+    /** Drain/flush once, then keep other callers sealed through synchronous maintenance.
+     * Failure remains sealed; callers must reconcile any partially committed work
+     * before explicitly retrying. Maintenance cannot enqueue untracked continuations.
+     */
+    public void maintain(long timeout, java.util.concurrent.TimeUnit unit, Runnable flush, Runnable work) {
+        Objects.requireNonNull(work, "work");
+        replace(timeout, unit, flush, () -> {
+            maintenance.set(true);
+            try {
+                work.run();
+                synchronized (admission) {
+                    if (accepted != 0) throw new IllegalStateException("Storage maintenance has not settled; admission remains sealed");
+                }
+            } finally { maintenance.remove(); }
+        });
+    }
+
     private void transition(long timeout, java.util.concurrent.TimeUnit unit, Runnable flush, Runnable close, boolean permanent) {
         Objects.requireNonNull(unit, "unit"); Objects.requireNonNull(flush, "flush"); Objects.requireNonNull(close, "close");
         if (timeout < 0) throw new IllegalArgumentException("timeout");
-        if (depth.get() != 0 || finalFlush.get()) throw new IllegalStateException("Cannot retire from admitted storage work");
+        if (depth.get() != 0 || finalFlush.get() || maintenance.get()) throw new IllegalStateException("Cannot retire from admitted storage work");
         long remaining = unit.toNanos(timeout);
         long started = System.nanoTime();
         synchronized (admission) {

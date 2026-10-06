@@ -1269,3 +1269,48 @@ SimpleAPI constructors/schema helpers may swallow failures before a candidate is
 returned; this is not strict schema-initialization acknowledgement. The complete
 upstream ledger, remaining features and fresh independent final review remain
 unfinished. No source push or PR creation is authorized yet.
+
+### Conversion maintenance admission and provider reuse
+
+Native `convertDataStorage` now drains accepted work and flushes old pending cache
+batches once, then keeps the same storage owner sealed through provider setup,
+source enumeration and the complete copy loop. Only the current synchronous
+maintenance thread may enter nested storage operations. It cannot enqueue async
+work or recursively retire the owner. Leaked admissions prevent reopening. Failure
+removes thread privileges and leaves admission sealed; reconcile partial committed
+work before explicit retry. This is not a transactional rollback of copied rows.
+Open source/destination providers are reused, avoiding recreation/closure of the
+active MySQL source. Public provider initialization remains independently supported.
+No configuration, schema, release version, dependency or proxy format changes.
+
+Unchanged native baseline: 2 tests / 2 assertion failures / 0 errors, proving source
+recreation and foreign writer admission during enumeration. Extended focus: 26 pass,
+including 5 native conversion and 4 maintenance regressions plus retained replacement
+and SQLite lifecycle tests. Source/copy failure retains the original exception;
+final retirement, queued-work drain, nested sync writes, rejected async work and
+leaked scope recovery are covered. `conversion-maintenance-baseline-test.log` and
+`conversion-maintenance-extended-test.log` retain exact results.
+
+Actual Java 8 clean install/consumer clean verify with the same explicit workspace
+Maven repository/tmp/wagon flags documented above: AC288unit+16artifact,
+VP45unit+1artifact; all0fail/errors/skips. Baseclasses1822/2439, maxmajor52.
+AC SHA256 f468ce7994efadbc607c5bd383f96db8a8325f63708d2b19707e9e6cce8c9601;
+VP SHA256 10f16ea3c522772df55828a542c35fcccd89308a7b5e1ec3c3d839c547ef3c04.
+See `conversion-maintenance-build-results.json` and clean-build logs.
+
+Exact consumer Java8/Spigot1.8.8/MariaDB11.8.6 fixture d435184d5d: native conversion
+flushes pending points19, retains the original main MySQL provider, copies points19
+to SQLite, then pending points20 persist on clean disable/restart. Existing global
+borrowed/owned-pool, setter and config-reload checks also pass. Independent offline
+SQLite integrity and target-row points19 verification pass. Both final server logs
+contain no tested runtime failure markers or fixture credentials. ConnectorJ5.1.14
+remains fixture-classpath-only. Evidence `conversion-maintenance-live-results.json`
+and `conversion-maintenance-mysql-live.log`.
+
+Still incomplete: strict full-source SQL enumeration (legacy queries can return
+partial maps after failure), explicit FLAT-source enumeration, asynchronous
+completion/server-thread API behavior, transactional/partial-copy recovery,
+inactive-provider configuration drift, raw APIs that bypass admission, and borrowed
+global readers during direct external parent replacement. Do not claim full migration
+safety, whole upstream runtime parity or PR readiness from this cohort. The full
+remaining ledger/features/runtime matrix and final independent review remain required.

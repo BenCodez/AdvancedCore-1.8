@@ -309,12 +309,15 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	}
 
 	public void convertDataStorage(UserStorage from, UserStorage to) {
+		if (from == null || to == null) throw new RuntimeException("Invalid Storage Method");
+		getUserStorageOwnership().maintain(5, TimeUnit.SECONDS, this::flushStorageForReplacement,
+				() -> convertDataStorageOwned(from, to));
+	}
+
+	private void convertDataStorageOwned(UserStorage from, UserStorage to) {
 		debug("Starting convert process");
-		if (to == null) {
-			throw new RuntimeException("Invalid Storage Method");
-		}
-		loadUserAPI(from);
-		loadUserAPI(to);
+		if (!hasStorageProvider(from)) loadUserAPI(from);
+		if (!hasStorageProvider(to)) loadUserAPI(to);
 
 		if (getMysql() != null) {
 			getMysql().clearCacheBasic();
@@ -337,6 +340,12 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 		}
 		debug("Convert finished!");
 
+	}
+
+	private boolean hasStorageProvider(UserStorage storage) {
+		if (storage == UserStorage.MYSQL) return getMysql() != null;
+		if (storage == UserStorage.SQLITE) return database != null;
+		return storage == UserStorage.FLAT;
 	}
 
 	public void debug(DebugLevel debugLevel, String debug) {
