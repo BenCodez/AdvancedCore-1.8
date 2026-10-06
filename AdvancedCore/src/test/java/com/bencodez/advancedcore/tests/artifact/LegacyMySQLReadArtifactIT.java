@@ -51,11 +51,11 @@ class LegacyMySQLReadArtifactIT {
                     statement.executeUpdate("INSERT INTO users VALUES ('00000000-0000-0000-0000-000000000001', 'O''Brien')");
                 }
                 Class<?> storeType=loader.loadClass("com.bencodez.advancedcore.api.user.userstorage.mysql.MySQL");
-                Object store=mock(storeType,withSettings().mockMaker("mock-maker-subclass").defaultAnswer(CALLS_REAL_METHODS));
+                Object store=mock(storeType,withSettings().defaultAnswer(CALLS_REAL_METHODS));
                 Class<?> driverType=loader.loadClass("com.bencodez.simpleapi.sql.mysql.MySQL");
-                Object driver=mock(driverType,withSettings().mockMaker("mock-maker-subclass"));
+                Object driver=mock(driverType,withSettings());
                 Object manager=mock(loader.loadClass("com.bencodez.simpleapi.sql.mysql.ConnectionManager"),
-                        withSettings().mockMaker("mock-maker-subclass"));
+                        withSettings());
                 when(driverType.getMethod("getConnectionManager").invoke(driver)).thenReturn(manager);
                 when((Connection)manager.getClass().getMethod("getConnection").invoke(manager)).thenReturn(connection);
                 set(storeType,store,"name","users");

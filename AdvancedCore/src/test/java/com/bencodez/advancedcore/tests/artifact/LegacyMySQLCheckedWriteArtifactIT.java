@@ -7,6 +7,7 @@ import java.net.*;
 import java.nio.file.Paths;
 import java.sql.*;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import com.bencodez.advancedcore.AdvancedCorePlugin;
 import com.bencodez.simpleapi.sql.Column;
@@ -55,7 +56,7 @@ class LegacyMySQLCheckedWriteArtifactIT {
     }
     @Test void unavailableConnectionProducesCheckedFailureWithoutPublishingIdentity() throws Exception {
         try (Fixture f=new Fixture()) {
-            when((Connection)f.manager.getClass().getMethod("getConnection").invoke(f.manager)).thenReturn(null);
+            f.borrowed.set(null);
             InvocationTargetException result=assertThrows(InvocationTargetException.class,
                 ()->f.write(Collections.singletonList(new Column("PlayerName",new DataValueString("LegacyPlayer")))));
             assertTrue(result.getCause() instanceof SQLException);
@@ -74,6 +75,7 @@ class LegacyMySQLCheckedWriteArtifactIT {
         final Class<?> storeType;
         final Object store;
         final Object manager;
+        final AtomicReference<Connection> borrowed=new AtomicReference<>(connection);
         Fixture() throws Exception {
             URL artifact=Paths.get(System.getProperty("advancedcore.jar")).toUri().toURL();
             loader=new URLClassLoader(new URL[]{artifact},getClass().getClassLoader()) {
@@ -95,13 +97,13 @@ class LegacyMySQLCheckedWriteArtifactIT {
                 }
             };
             storeType=loader.loadClass("com.bencodez.advancedcore.api.user.userstorage.mysql.MySQL");
-            store=mock(storeType,withSettings().mockMaker("mock-maker-subclass").defaultAnswer(CALLS_REAL_METHODS));
+            store=mock(storeType,withSettings().defaultAnswer(CALLS_REAL_METHODS));
             Class<?> driverType=loader.loadClass("com.bencodez.simpleapi.sql.mysql.MySQL");
-            Object driver=mock(driverType,withSettings().mockMaker("mock-maker-subclass"));
             manager=mock(loader.loadClass("com.bencodez.simpleapi.sql.mysql.ConnectionManager"),
-                withSettings().mockMaker("mock-maker-subclass"));
-            when(driverType.getMethod("getConnectionManager").invoke(driver)).thenReturn(manager);
-            when((Connection)manager.getClass().getMethod("getConnection").invoke(manager)).thenReturn(connection);
+                withSettings().defaultAnswer(call ->
+                    call.getMethod().getName().equals("getConnection") ? borrowed.get() : RETURNS_DEFAULTS.answer(call)));
+            Object driver=mock(driverType,withSettings().defaultAnswer(call ->
+                call.getMethod().getName().equals("getConnectionManager") ? manager : RETURNS_DEFAULTS.answer(call)));
             when(connection.getAutoCommit()).thenReturn(true);when(connection.prepareStatement(anyString())).thenReturn(statement);
             set("name","users");set("plugin",mock(AdvancedCorePlugin.class));set("mysql",driver);
             set("object2",new Object());set("object4",new Object());set("columns",new ArrayList<>(Arrays.asList("PlayerName","Enabled")));

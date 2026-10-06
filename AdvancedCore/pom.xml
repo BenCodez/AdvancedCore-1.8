@@ -75,6 +75,11 @@
                     <execution><goals><goal>integration-test</goal><goal>verify</goal></goals></execution>
                 </executions>
                 <configuration>
+                    <!-- Artifact fixtures need only core subclass mocks; mixing inline/subclass
+                         makers makes Mockito 4 handler lookup ambiguous on Java 8. -->
+                    <classpathDependencyExcludes>
+                        <classpathDependencyExclude>org.mockito:mockito-inline</classpathDependencyExclude>
+                    </classpathDependencyExcludes>
                     <systemPropertyVariables>
                         <advancedcore.jar>${project.build.directory}/AdvancedCore.jar</advancedcore.jar>
                     </systemPropertyVariables>
