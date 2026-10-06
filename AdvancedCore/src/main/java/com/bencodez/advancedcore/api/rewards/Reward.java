@@ -682,7 +682,169 @@ public class Reward {
 				? inject.runSynchronizedAsync(request) : request.get();
 	}
 
+    /** Await preparation, native effects and replay checkpoints without blocking the Bukkit owner. */
+    public CompletionStage<Void> giveRewardAsync(AdvancedCoreUser user, RewardOptions rewardOptions) {
+        RewardOptions options=rewardOptions==null?new RewardOptions():rewardOptions.copyForDispatch();
+        ReplayState state=replayStateFor(options);state.captureRuntime(plugin);options.setAsyncReplayState(state);
+        ServerThreadRewardDispatch owner=state.getActionDispatchOwner();
+        return owner.dispatchOffPrimary(()->giveRewardAsyncOffPrimary(user,options,owner),getServerThreadDispatchTimeoutMillis());
+    }
+
+	private CompletionStage<Void> giveRewardAsyncOffPrimary(AdvancedCoreUser user, RewardOptions rewardOptions, ServerThreadRewardDispatch owner) {
+		if (!plugin.getOptions().isProcessRewards()) {
+			plugin.debug("Processing rewards is disabled");
+			if (isDurableReplay(rewardOptions)) {
+				return failedStage(
+						new IllegalStateException("Reward processing was disabled before queued delivery"));
+			}
+			return CompletableFuture.completedFuture(null);
+		}
+
+		rewardOptions = rewardOptions == null ? new RewardOptions() : rewardOptions.copyForDispatch();
+		if (!rewardOptions.getPlaceholders().containsKey("ExecDate")) {
+			rewardOptions.addPlaceholder("ExecDate", "" + System.currentTimeMillis());
+		}
+		if (!rewardOptions.getPlaceholders().containsKey("date")) {
+			try {
+				LocalDateTime ldt = LocalDateTime.now();
+				Date date = Date.from(ldt.atZone(ZoneId.systemDefault()).toInstant());
+				rewardOptions.addPlaceholder("Date", "" + new SimpleDateFormat(
+						plugin.getOptions().getFormatRewardTimeFormat()).format(date));
+			} catch (Exception e) {
+				return failedStage(e);
+			}
+		}
+
+		PlayerRewardEvent event = new PlayerRewardEvent(this, user, rewardOptions);
+		Bukkit.getPluginManager().callEvent(event);
+		if (event.isCancelled()) {
+			plugin.debug("Reward " + name + " was cancelled for " + user.getPlayerName());
+			return CompletableFuture.completedFuture(null);
+		}
+		if (rewardOptions.isCheckTimed() && (checkDelayed(user, rewardOptions.getPlaceholders())
+				|| checkTimed(user, rewardOptions.getPlaceholders()))) {
+			return CompletableFuture.completedFuture(null);
+		}
+		RewardOptions stableOptions = rewardOptions;
+		return owner.dispatch(() -> evaluateLiveRewardDecision(user, stableOptions),getServerThreadDispatchTimeoutMillis())
+                .thenCompose(decision -> owner.dispatchOffPrimary(
+                    () -> finishRewardAsync(user, stableOptions, decision, owner),getServerThreadDispatchTimeoutMillis()));
+	}
+
+	private CompletionStage<LiveRewardDecision> evaluateLiveRewardDecision(AdvancedCoreUser user,
+			RewardOptions rewardOptions) {
+		boolean liveOnline = rewardOptions.isLivePlayerStateSet() ? rewardOptions.isOnline() : user.isOnline();
+		boolean vanished = plugin.getOptions().isTreatVanishAsOffline()
+				&& (rewardOptions.isLivePlayerStateSet() ? rewardOptions.isLivePlayerVanished() : user.isVanished());
+		if (!rewardOptions.isLivePlayerStateSet()) rewardOptions.captureLivePlayerState(liveOnline, vanished);
+		for (RewardPlaceholderHandle handle : plugin.getRewardHandler().getPlaceholders()) {
+			if (handle.isPreProcess()) rewardOptions.addPlaceholder(handle.getKey(), handle.getValue(this, user));
+		}
+
+		boolean allowOffline = false;
+		boolean canGive = true;
+		if (!rewardOptions.isIgnoreRequirements()) {
+			for (RequirementInject inject : plugin.getRewardHandler().getInjectedRequirements()) {
+				try {
+					if (!inject.onRequirementRequest(this, user, getConfig().getConfigData(), rewardOptions)) {
+						canGive = false;
+						if (!inject.isAllowReattempt()) {
+							return CompletableFuture.completedFuture(
+									new LiveRewardDecision(false, false, vanished, false, true));
+						}
+						allowOffline = true;
+					}
+				} catch (Exception e) {
+					plugin.debug("Failed to check requirement " + inject.getPath());
+					e.printStackTrace();
+					if (isDurableReplay(rewardOptions)) {
+						return failedStage(
+								new IllegalStateException("Failed to evaluate reward requirement " + inject.getPath(), e));
+					}
+					canGive = false;
+				}
+			}
+		}
+		boolean verifyOnline = !rewardOptions.isOnline() || rewardOptions.getServer() != null;
+		boolean liveOffline = verifyOnline && !liveOnline;
+		return CompletableFuture.completedFuture(
+				new LiveRewardDecision(canGive, allowOffline, vanished, liveOffline, false));
+	}
+
+	private CompletionStage<Void> finishRewardAsync(AdvancedCoreUser user, RewardOptions rewardOptions,
+			LiveRewardDecision decision, ServerThreadRewardDispatch owner) {
+		if (decision.terminalDenied()) return CompletableFuture.completedFuture(null);
+		boolean vanished = decision.vanished();
+		if (plugin.getOptions().isPauseRewards() || vanished) {
+			return deferRewardWithoutBlockingOwner(user, rewardOptions, owner);
+		}
+		if ((decision.liveOffline() || decision.allowOffline()) && !isForceOffline()
+				&& !rewardOptions.isForceOffline()) {
+			if (rewardOptions.isGiveOffline()) {
+				return deferRewardWithoutBlockingOwner(user, rewardOptions, owner);
+			}
+			return CompletableFuture.completedFuture(null);
+		}
+		if (decision.canGive() || isForceOffline() || rewardOptions.isForceOffline()) {
+			plugin.debug(name + ": Passed requirements, attempting to give to " + user.getPlayerName() + "/"
+					+ user.getUUID());
+			return giveRewardUserAsync(user, rewardOptions.getPlaceholders(), rewardOptions);
+		}
+		return CompletableFuture.completedFuture(null);
+	}
+
+    private CompletionStage<Void> deferRewardWithoutBlockingOwner(AdvancedCoreUser user,
+            RewardOptions options,ServerThreadRewardDispatch owner) {
+        // Durable replay keeps its admitted occurrence in the original queue. The queue
+        // adapter recognizes this signal and releases the claim without deleting it.
+        if(isDurableReplay(options))return failedStage(new OfflineReplayDeferredException());
+        return owner.dispatchOffPrimary(()->{
+            checkRewardFile();user.addOfflineRewards(this,options.getPlaceholders());
+            return CompletableFuture.<Void>completedFuture(null);
+        },getServerThreadDispatchTimeoutMillis());
+    }
+
+    private static final class LiveRewardDecision {
+        private final boolean canGive,allowOffline,vanished,liveOffline,terminalDenied;
+        private LiveRewardDecision(boolean canGive,boolean allowOffline,boolean vanished,boolean liveOffline,boolean terminalDenied) {
+            this.canGive=canGive;this.allowOffline=allowOffline;this.vanished=vanished;
+            this.liveOffline=liveOffline;this.terminalDenied=terminalDenied;
+        }
+        private boolean canGive(){return canGive;}
+        private boolean allowOffline(){return allowOffline;}
+        private boolean vanished(){return vanished;}
+        private boolean liveOffline(){return liveOffline;}
+        private boolean terminalDenied(){return terminalDenied;}
+    }
+
+	private static final class OfflineReplayDeferredException extends IllegalStateException {
+		private static final long serialVersionUID = 1L;
+		private OfflineReplayDeferredException() {
+			super("Persisted offline reward remains deferred");
+		}
+	}
+
+	public static boolean isOfflineReplayDeferred(Throwable failure) {
+		for (Throwable current = failure; current != null; current = current.getCause()) {
+			if (current instanceof OfflineReplayDeferredException) return true;
+		}
+		return false;
+	}
+
+	public static void preserveReplayState(RewardOptions options) {
+		if (options == null || options.getAsyncReplayState() == null) return;
+		options.getAsyncReplayState().copyTo(options);
+	}
+
 	public void giveReward(AdvancedCoreUser user, RewardOptions rewardOptions) {
+        if (hasAsyncRewardInjection() || isDurableReplay(rewardOptions)) {
+            giveRewardAsync(user,rewardOptions).exceptionally(failure->{
+                plugin.getLogger().log(java.util.logging.Level.WARNING,"Failed asynchronous reward dispatch",failure);
+                return null;
+            });
+            return;
+        }
+
 		if (!AdvancedCorePlugin.getInstance().getOptions().isProcessRewards()) {
 			AdvancedCorePlugin.getInstance().debug("Processing rewards is disabled");
 			return;
@@ -821,8 +983,9 @@ public class Reward {
 			RewardOptions rewardOptions) {
 		HashMap<String, String> requested = phs == null ? new HashMap<>() : new HashMap<>(phs);
 		RewardOptions options = rewardOptions == null ? new RewardOptions() : rewardOptions.copyForDispatch();
-		ServerThreadRewardDispatch owner = plugin.getRewardDispatch();
         ReplayState replayState=replayStateFor(options);
+        replayState.captureRuntime(plugin);
+        ServerThreadRewardDispatch owner=replayState.getActionDispatchOwner();
         String key=options.getAsyncReplayKey();String parent=ACTIVE_REPLAY_KEY.get();
         final String replayKey=key==null?(parent==null?getRewardName():parent+"/"+getRewardName()):key;
         String occurrence=options.getAsyncReplayOccurrenceId();

@@ -2287,3 +2287,50 @@ under batch ownership before publishing the acknowledged direct value. Reuse tha
 contract rather than adding a new queue/cache owner or treating a queued write as
 completed. Full upstream classification, remaining features/runtime matrix and
 fresh independent final review are unfinished. No source push or PR authorized.
+
+## Complete awaited reward preparation entry point
+
+The Java8 giveRewardAsync API now retains its captured root runtime through
+asynchronous PlayerRewardEvent, delayed/timed admission, server-owner live-player
+and requirement evaluation, off-owner decision/deferral work, native effect
+completion and root checkpoints. Existing void giveReward routes explicitly
+asynchronous or durable work through that full entry point. Ordinary synchronous
+injections retain their legacy void path. Options are copied before handoff.
+LiveRewardDecision uses a Java8 class rather than main's record; admission uses
+the existing lifecycle-bound dispatcher instead of Java9 orTimeout/delayedExecutor.
+Disabled reward processing remains an ordinary no-op but fails retained replay;
+requirement exceptions likewise fail retained replay. Cancellation and terminal
+requirement denial remain intentional completion. Paused/vanished durable work
+returns a recognizable deferral signal, retaining its original queue occurrence
+rather than adding another copy. The forthcoming queue adapter must consume that
+signal by releasing its claim without removing the entry. Ordinary deferral still
+uses the existing configured queue API off the Bukkit owner.
+
+Seven regressions cover asynchronous event/owner requirements/effect ordering and
+caller option isolation, cancellation, disabled ordinary/durable behavior, paused
+retained replay, requirement exceptions, retired async-event admission and the
+existing void wrapper's awaited path. The first focused run had one Mockito nested
+stubbing error; fetching PluginManager before constructing its stub fixed the
+fixture. Six new plus existing tests then pass (46 focused), and the seventh void
+wrapper regression passes in the full Java8 build. Final clean install:449 unit
++18 artifact tests(467); exact VotingPlugin clean verify:45 unit+1 artifact(46),
+zero failures/errors/skips. Base classes1824/2441,maxmajor52. SHA256:
+
+- AdvancedCore: `867feaea302b85954643c8fcd25fe547672bdfc6bea3bb601afde097ed938796`
+- VotingPlugin: `eee571f4b861c2556a38201cb774297c3174e2b42718ae89d00e72cad2aee46b`
+
+Real Java8/Spigot1.8.8 fixture `2b06e1614f` runs the complete production entry point
+for a real VotingPlugin user, awaits native experience/potion/item actions and the
+off-owner fixture checkpoint, and proves overflow diamonds survive disable/restart
+and reach the connected protocol client. SQLite integrity/clean shutdown pass.
+An earlier runtime fixture `e87327ef0f` is honestly recorded FAIL: the copied
+harness expected a renamed marker that its helper still emitted under the old
+name, after native work had settled. The corrected helper rerun passes without
+changing product code or weakening the assertion.
+
+This is not the completed offline/timed queue recovery adapter. Queue provenance,
+protected-entry occurrence migration, bounded per-user claims, checked mutation,
+completion deletion, retries, nested snapshots/choices, and crash acceptance
+remain unfinished. No queue metadata/storage/wire format was changed here.
+Complete upstream classification, other features/platform matrix and independent
+final review remain required. No source push or PR opening is authorized.

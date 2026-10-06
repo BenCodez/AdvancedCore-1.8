@@ -343,6 +343,79 @@ class LegacyOrderedRewardPipelineTest {
         });
     }
 
+    @Test void completeEntryPointFiresAsyncEventAndEvaluatesRequirementsBeforeEffects() {
+        fixture(f -> {
+            fullSetup(f);AdvancedCoreUser user=onlineUser();when(user.isOnline()).thenAnswer(ignored->{assertTrue(Bukkit.isPrimaryThread());return true;});repeat(f.reward);
+            List<String> phases=new ArrayList<>();CompletableFuture<Object> physical=new CompletableFuture<>();
+            org.bukkit.plugin.PluginManager manager=Bukkit.getPluginManager();doAnswer(call->{assertFalse(Bukkit.isPrimaryThread());assertTrue(((org.bukkit.event.Event)call.getArgument(0)).isAsynchronous());phases.add("event");return null;}).when(manager).callEvent(any());
+            com.bencodez.advancedcore.api.rewards.injectedrequirement.RequirementInject requirement=new com.bencodez.advancedcore.api.rewards.injectedrequirement.RequirementInject("required") {
+                @Override public boolean onRequirementRequest(Reward reward,AdvancedCoreUser target,ConfigurationSection config,RewardOptions options){assertTrue(Bukkit.isPrimaryThread());phases.add("requirement");return true;}
+            };
+            when(f.dispatch.plugin.getRewardHandler().getInjectedRequirements()).thenReturn(new ArrayList<>(Arrays.asList(requirement)));
+            f.injections.add(async("effect",p->{phases.add("effect");assertEquals("before",p.get("input"));return physical;}));
+            RewardOptions options=new RewardOptions().setCheckRepeat(false).addPlaceholder("input","before");
+            CompletionStage<Void> result=f.reward.giveRewardAsync(user,options);options.addPlaceholder("input","after");drain(f);
+            assertEquals(Arrays.asList("event","requirement","effect"),phases);assertFalse(result.toCompletableFuture().isDone());physical.complete(null);drain(f);result.toCompletableFuture().join();
+        });
+    }
+    @Test void cancelledCompleteEntryPointDoesNotRunRequirementsOrEffects() {
+        fixture(f -> {
+            fullSetup(f);AdvancedCoreUser user=onlineUser();List<String> effects=new ArrayList<>();
+            org.bukkit.plugin.PluginManager manager=Bukkit.getPluginManager();
+            doAnswer(call->{((com.bencodez.advancedcore.listeners.PlayerRewardEvent)call.getArgument(0)).setCancelled(true);return null;}).when(manager).callEvent(any());
+            f.injections.add(async("effect",p->{effects.add("bad");return CompletableFuture.completedFuture(null);}));
+            CompletionStage<Void> result=f.reward.giveRewardAsync(user,new RewardOptions());drain(f);result.toCompletableFuture().join();assertTrue(effects.isEmpty());verify(user,never()).isOnline();
+        });
+    }
+    @Test void disabledProcessingIsNoOpForOrdinarySendButFailureForRetainedReplay() {
+        fixture(f -> {
+            fullSetup(f);when(f.dispatch.plugin.getOptions().isProcessRewards()).thenReturn(false);AdvancedCoreUser user=onlineUser();
+            f.reward.giveRewardAsync(user,new RewardOptions()).toCompletableFuture().join();
+            RewardOptions replay=new RewardOptions();replay.setAsyncReplayCheckpointConsumer(checkpoint->fail("disabled replay checkpoint"));
+            assertThrows(CompletionException.class,()->f.reward.giveRewardAsync(user,replay).toCompletableFuture().join());verifyNoInteractions(Bukkit.getPluginManager());
+        });
+    }
+    @Test void pausedDurableReplayRemainsDeferredWithoutAnotherQueueInsertion() {
+        fixture(f -> {
+            fullSetup(f);when(f.dispatch.plugin.getOptions().isPauseRewards()).thenReturn(true);AdvancedCoreUser user=onlineUser();when(user.isOnline()).thenReturn(true);
+            RewardOptions replay=new RewardOptions();replay.setAsyncReplayCheckpointConsumer(checkpoint->fail("paused checkpoint"));
+            CompletionStage<Void> result=f.reward.giveRewardAsync(user,replay);drain(f);
+            Throwable failure=assertThrows(CompletionException.class,()->result.toCompletableFuture().join());assertTrue(Reward.isOfflineReplayDeferred(failure));verify(user,never()).addOfflineRewards(any(),any());
+        });
+    }
+    @Test void requirementExceptionRetainsDurableOccurrenceInsteadOfAcknowledgingIt() {
+        fixture(f -> {
+            fullSetup(f);AdvancedCoreUser user=onlineUser();when(user.isOnline()).thenReturn(true);
+            com.bencodez.advancedcore.api.rewards.injectedrequirement.RequirementInject requirement=new com.bencodez.advancedcore.api.rewards.injectedrequirement.RequirementInject("broken") {
+                @Override public boolean onRequirementRequest(Reward reward,AdvancedCoreUser target,ConfigurationSection config,RewardOptions options){assertTrue(Bukkit.isPrimaryThread());throw new IllegalStateException("requirement unavailable");}
+            };
+            when(f.dispatch.plugin.getRewardHandler().getInjectedRequirements()).thenReturn(new ArrayList<>(Arrays.asList(requirement)));
+            RewardOptions replay=new RewardOptions();replay.setAsyncReplayCheckpointConsumer(checkpoint->fail("failed requirement checkpoint"));
+            CompletionStage<Void> result=f.reward.giveRewardAsync(user,replay);drain(f);assertThrows(CompletionException.class,()->result.toCompletableFuture().join());verify(user,never()).addOfflineRewards(any(),any());
+        });
+    }
+    @Test void completeEntryPointFromServerOwnerRejectsRetiredQueuedAsyncEvent() {
+        fixture(f -> {
+            fullSetup(f);f.dispatch.primary.set(true);CompletionStage<Void> result=f.reward.giveRewardAsync(onlineUser(),new RewardOptions());f.dispatch.primary.set(false);
+            assertFalse(result.toCompletableFuture().isDone());f.dispatch.owner.close();drain(f);assertThrows(CompletionException.class,()->result.toCompletableFuture().join());verifyNoInteractions(Bukkit.getPluginManager());
+        });
+    }
+    @Test void voidRewardDispatchUsesCompleteAwaitedPathForOptedInInjection() {
+        fixture(f -> {
+            fullSetup(f);AdvancedCoreUser user=onlineUser();when(user.isOnline()).thenReturn(true);RepeatHandle repeat=repeat(f.reward);CompletableFuture<Object> physical=new CompletableFuture<>();
+            f.injections.add(async("effect",p->physical));
+            f.reward.giveReward(user,new RewardOptions());drain(f);verify(repeat,never()).giveRepeat(any(),any());verify(Bukkit.getPluginManager()).callEvent(any());
+            physical.complete(null);drain(f);verify(repeat).giveRepeat(f.dispatch.plugin,user);
+        });
+    }
+
+    private void fullSetup(Fixture f) {
+        com.bencodez.advancedcore.AdvancedCoreConfigOptions config=mock(com.bencodez.advancedcore.AdvancedCoreConfigOptions.class);when(f.dispatch.plugin.getOptions()).thenReturn(config);
+        when(config.isProcessRewards()).thenReturn(true);when(config.getFormatRewardTimeFormat()).thenReturn("yyyy-MM-dd");
+        when(f.dispatch.plugin.getRewardHandler().getInjectedRequirements()).thenReturn(new ArrayList<>());
+        when(Bukkit.getPluginManager()).thenReturn(mock(org.bukkit.plugin.PluginManager.class));
+    }
+
     private void drain(Fixture f) {
         int iterations=0;
         while(!f.dispatch.queued.isEmpty() || !f.dispatch.asyncQueued.isEmpty()) {
