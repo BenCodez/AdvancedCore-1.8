@@ -359,7 +359,7 @@ public class UserDataManager {
 		return getOrPopulate(uuid);
 	}
 
-	public boolean isBoolean(String str) {
+	public synchronized boolean isBoolean(String str) {
 		return booleanColumns.contains(str);
 	}
 
@@ -368,7 +368,7 @@ public class UserDataManager {
 		return cache != null && cache.hasCache();
 	}
 
-	public boolean isInt(String str) {
+	public synchronized boolean isInt(String str) {
 		return intColumns.contains(str);
 	}
 

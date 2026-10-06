@@ -3630,3 +3630,32 @@ schema reconciliation are not established by that SQLite acceptance. Cache-defau
 population and wider registration/type-reader ownership remain separate pending audits.
 All167 original checkout states and both pinned reference states are verified unchanged.
 This cohort does not establish whole-main parity or final PR readiness.
+
+
+## Cache population and registered-type publication
+
+The native cache's additional-key/default population now uses the registered membership
+snapshot, including the reread path after an intervening canonical storage write.
+Default callbacks execute after releasing the registration monitor. A key registered
+by a default callback is available on the next population pass, without invalidating
+the current iterator. `isInt` and `isBoolean` share the registration monitor so supported
+addKey registration publishes the typed indexes coherently to these readers.
+
+Two failing regressions reproduced the live-list ConcurrentModificationException and
+unowned type lookup. All25 registration/cache snapshot/canonical ownership checks pass
+on Java8. Existing writer-versus-refresh, failed physical write and uncertain commit
+assertions remain; their fixture pause point now targets detached membership capture.
+The raw public ArrayList/key setter contracts remain unchanged; external raw collection
+mutation has no newly promised thread-safety. No SQL or extension callback is performed
+inside the registration monitor. No configuration/schema/data/wire/version changes.
+
+ActualJava8 clean install621 unit +18 artifact =639 PASS; exact locally installed
+producer consumer clean verify45 unit +1 artifact =46 PASS, zero failures/errors/skips.
+Both packaged artifacts retain base class major<=52. Producer SHA256
+`a166d66b28c4e5ec9d8e9206ccefe7be6f177790f71f79b27e13f1d9706f7186`;
+consumer SHA256 `dac99c13a1bad430aa204083eb83efb282c5b210847591eb802ed77fa82a1c4b`.
+Eight native Java8/Spigot1.8.8 checks pass on that exact consumer: the six SQL membership,
+existing-user/integrity/linkage checks plus registration during default population and
+late-default availability on the next cache pass. This is not MySQL live migration
+acceptance or whole-main parity. Full schema reconciliation and remaining ledger work
+are still pending; the final independent review and PR readiness gate have not run.

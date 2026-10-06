@@ -63,6 +63,39 @@ class LegacySchemaRegistrationTest {
             assertTrue(table.getQuery().contains("late_projection"));
         }
     }
+    @Test void cacheDefaultPopulationUsesDetachedMembershipAndRunsDefaultsOutsideRegistrationLock() throws Exception {
+        Fixture f=new Fixture();UUID id=UUID.randomUUID();
+        com.bencodez.advancedcore.api.user.AdvancedCoreUser user=mock(com.bencodez.advancedcore.api.user.AdvancedCoreUser.class);
+        com.bencodez.advancedcore.api.user.UserData data=mock(com.bencodez.advancedcore.api.user.UserData.class);
+        when(f.plugin.getUserStorageOwnership()).thenReturn(new com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership());
+        when(f.plugin.getUserManager().getUser(id,false)).thenReturn(user);when(user.getUserData()).thenReturn(data);
+        when(data.getValuesStrict()).thenAnswer(c->new HashMap<>());
+        AtomicBoolean registered=new AtomicBoolean();
+        f.manager.addKey(new UserDataKeyString("register-on-default") {
+            @Override public com.bencodez.simpleapi.sql.data.DataValue getDefault() {
+                assertFalse(Thread.holdsLock(f.manager),"Extension defaults run outside registration monitor");
+                if(registered.compareAndSet(false,true))f.manager.addKey(new UserDataKeyInt("late-default"));
+                return super.getDefault();
+            }
+        });
+        com.bencodez.advancedcore.api.user.usercache.UserDataCache cache=new com.bencodez.advancedcore.api.user.usercache.UserDataCache(f.manager,id);
+        cache.cache();assertTrue(registered.get());assertNull(cache.getCachedValue("late-default"));
+        cache.cache();assertEquals(0,cache.getCachedValue("late-default").getInt());
+    }
+    @Test void registeredTypeReadsShareRegistrationMonitor() throws Exception {
+        Fixture f=new Fixture();f.manager.addKey(new UserDataKeyInt("typed-int"));f.manager.addKey(new UserDataKeyBoolean("typed-boolean"));
+        for(boolean integer:new boolean[]{true,false}) {
+            AtomicBoolean value=new AtomicBoolean();Thread reader=new Thread(()->value.set(integer?f.manager.isInt("typed-int"):f.manager.isBoolean("typed-boolean")),"registered-type-reader");
+            try {
+                synchronized(f.manager) {
+                    reader.start();long bound=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);
+                    while(reader.getState()!=Thread.State.BLOCKED && reader.isAlive() && System.nanoTime()<bound)Thread.yield();
+                    assertEquals(Thread.State.BLOCKED,reader.getState(),"Type lookup shares registration monitor");
+                }
+            } finally {reader.join(2000);}
+            assertFalse(reader.isAlive());assertTrue(value.get());
+        }
+    }
     private static class Fixture {
         final AdvancedCorePlugin plugin=mock(AdvancedCorePlugin.class);final UserDataManager manager;
         Fixture() throws Exception {manager=new UserDataManager(plugin);manager.getTimer().shutdownNow();assertTrue(manager.getTimer().awaitTermination(2,TimeUnit.SECONDS));UserManager users=mock(UserManager.class);when(plugin.getUserManager()).thenReturn(users);when(users.getDataManager()).thenReturn(manager);}

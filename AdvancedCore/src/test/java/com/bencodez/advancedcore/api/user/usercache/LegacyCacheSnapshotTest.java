@@ -121,7 +121,7 @@ class LegacyCacheSnapshotTest {
         final UserDataCache cache;
         Fixture() {
             when(plugin.getUserStorageOwnership()).thenReturn(new UserStorageOwnership());when(manager.getPlugin()).thenReturn(plugin);when(manager.getTimer()).thenReturn(mock(ScheduledExecutorService.class));
-            when(manager.getKeys()).thenReturn(new ArrayList<>(Collections.singletonList(new UserDataKeyString("Points"))));
+            when(manager.getRegisteredKeysSnapshot()).thenReturn(new ArrayList<>(Collections.singletonList(new UserDataKeyString("Points"))));
             when(plugin.getUserManager()).thenReturn(users);when(user.getUserData()).thenReturn(data);
             when(users.getUser(any(UUID.class),eq(false))).thenReturn(user);
             when(data.getKeys()).thenAnswer(call->new ArrayList<>(Arrays.asList("Points","Dynamic")));

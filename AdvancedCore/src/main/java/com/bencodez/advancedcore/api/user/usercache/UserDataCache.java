@@ -129,7 +129,7 @@ public class UserDataCache {
 
 	private ArrayList<String> additionalKeysAndDefaults(HashMap<String, DataValue> refreshed) {
 		ArrayList<String> keys = new ArrayList<>(refreshed.keySet());
-		for (UserDataKey dataKey : manager.getKeys()) {
+		for (UserDataKey dataKey : manager.getRegisteredKeysSnapshot()) {
 			keys.remove(dataKey.getKey());
 			if (!refreshed.containsKey(dataKey.getKey())) refreshed.put(dataKey.getKey(), dataKey.getDefault());
 		}

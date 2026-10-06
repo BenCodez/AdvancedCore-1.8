@@ -48,8 +48,8 @@ class LegacyCanonicalStorageOwnerTest {
             if (Thread.currentThread().getName().equals("private-population") && paused.compareAndSet(false, true)) {
                 prepared.countDown(); assertTrue(release.await(5, TimeUnit.SECONDS));
             }
-            return f.keys;
-        }).when(f.manager).getKeys();
+            return new ArrayList<>(f.keys);
+        }).when(f.manager).getRegisteredKeysSnapshot();
         ExecutorService worker = Executors.newSingleThreadExecutor(task -> new Thread(task, "private-population"));
         try {
             Future<UserDataCache> candidate = worker.submit(() -> f.manager.getCache(f.id));
@@ -70,8 +70,8 @@ class LegacyCanonicalStorageOwnerTest {
             if (Thread.currentThread().getName().equals("snapshot-refresh") && paused.compareAndSet(false, true)) {
                 prepared.countDown(); assertTrue(release.await(5, TimeUnit.SECONDS));
             }
-            return f.keys;
-        }).when(f.manager).getKeys();
+            return new ArrayList<>(f.keys);
+        }).when(f.manager).getRegisteredKeysSnapshot();
         ExecutorService worker = Executors.newSingleThreadExecutor(task -> new Thread(task, "snapshot-refresh"));
         try {
             Future<?> refreshing = worker.submit(cache::cache);
@@ -115,8 +115,8 @@ class LegacyCanonicalStorageOwnerTest {
             if (Thread.currentThread().getName().equals("uncertain-reader") && paused.compareAndSet(false, true)) {
                 prepared.countDown(); assertTrue(release.await(5, TimeUnit.SECONDS));
             }
-            return f.keys;
-        }).when(f.manager).getKeys();
+            return new ArrayList<>(f.keys);
+        }).when(f.manager).getRegisteredKeysSnapshot();
         doAnswer(call -> { f.stored.set(9); throw new java.sql.SQLException("post-commit cleanup failure"); })
             .when(f.mysql).updateStrict(anyString(), anyList());
         ExecutorService worker = Executors.newSingleThreadExecutor(task -> new Thread(task, "uncertain-reader"));
