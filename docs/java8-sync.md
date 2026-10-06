@@ -483,3 +483,30 @@ and restart persistence. No checkedwrite/event/linkage errors observed.
 Fixture-only plugin removed, no escape probe created, owned server stopped.
 Evidence reward-names-build-results.json and RewardNamesSQL runtime JSON/logs.
 Live MySQL/proxy/quarantine/shutdown-failure acceptance remains unverified.
+
+## Additive asynchronous reward-injection contract
+
+RewardInject now exposes Java 8 CompletionStage hooks and ordered async
+admission adapted from upstream923e741a90ad87d3ae1717301ded125f6749fc43.
+Existing injections remain synchronous by default; their abstract callback
+and public signatures remain available. The default async bridge observes
+only the synchronous callback, not hidden scheduled work. Opted-in requests
+can return their actual completion stage. Stage settlement, including failure,
+releases ordered admission; cancelling an observer does not release unfinished
+physical work. User callbacks run outside the injection monitor. Nested reward
+injectors must opt out of shared serialization to avoid waiting on themselves.
+The replay-checkpoint hook defaults to a no-op, not a durability claim.
+
+Seven focused regressions cover defaults, failure propagation, stage ordering,
+failed/null/rejected requests, concurrent submission and observer cancellation.
+Actual Java8 clean install:143unit+12artifact tests; exact consumer clean
+verify:19unit+1artifact tests. All pass with zero failures/errors/skips. Both
+packaged base class sets remain major<=52. Evidence:async-inject-build-results.json.
+
+This is a prerequisite API, not the complete upstream async dispatcher port.
+Integer adapters, scheduler ownership, execution/checkpoint integration and
+queue replay remain under implementation. Existing queue formats are unchanged.
+Generated DirectlyDefined snapshots retain current lookup behavior: legacy
+replay clears pending entries before void asynchronous dispatch, so hiding
+snapshots before completion-aware replay could lose pending rewards. No
+quarantine or durable replay claim is made by this API-only cohort.
