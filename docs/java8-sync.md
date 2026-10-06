@@ -3821,3 +3821,61 @@ Declared numeric precision/unsigned changes, nonstandard declarations, all-regis
 reconciliation, UUID constraints, headless lifecycle/paging and remaining upstream changes
 still require work. PostgreSQL and a separate real MySQL server are not runtime-verified.
 No whole-main parity, independent final review, push or PR readiness is claimed.
+
+
+## Retained numeric declarations and exact decimal migration checkpoint
+
+Pinned comparison remains AdvancedCore main `6390c1cab41bd4d7683c7df88dd36537c8c7861e`.
+This continues the partial native-store adaptation of `5ef372ddea971d00aa92ec9f6c61803b2ce9bd65`
+and `5198b9615dae66ff57021a66c7d933f3cf57f4d9`; it does not complete their whole scope.
+Registered string APIs can intentionally use numeric SQL types. Physical numeric types now
+compare aliases, integer display widths, unsigned/zerofill, BOOLEAN/TINYINT(1), decimal
+precision/scale and BIT length rather than always retaining a narrower numeric column.
+INT-to-BIGINT reconciles without converting to TEXT and retains values, nullability, default
+and comment. Equivalent numeric defaults such as 7.000 and 7.0000 count as the same value.
+Extension declarations are resolved once outside both schema monitors for check and direct ADD.
+
+Strict SQL mode alone did not reject DECIMAL scale rounding in the live fixture. Decimal
+scale reduction therefore validates rows and the retained default under an owned WRITE lock
+before its one ALTER. The query returns at most one loss witness and uses JDBC query timeouts;
+metadata, session-mode, lock, default and DDL statements also set five-second query timeouts.
+Source attributes are inspected again after acquiring ownership. A missing result or rounding
+risk rejects migration before DDL. The scope owns a fresh auto-commit connection, switches
+it to the InnoDB lock pattern, releases locks/restores auto-commit, and always evicts its
+modified physical connection through the existing pool API. Cleanup failures stay visible,
+including unchecked rollback faults, and cannot publish acknowledged schema membership.
+A fenced DDL failure cannot be reinterpreted as a successful peer migration.
+
+The current narrow driver bridge supports Connector/J5's public connection contract. Its
+setAutoReconnect(false) does not clear the driver's cached initialization flag: a live kill/
+reconnect counterexample changed the physical session despite that setter. Connections
+created with automatic reconnect enabled are rejected before taking the lock. Only fixed
+boolean option names are read; connection properties and credentials are never logged.
+The scope requires LOCK TABLES privileges and InnoDB table-lock evidence; Galera/wsrep nodes
+are rejected. Additional driver contracts and floating/BIT/cross-family exact conversion
+remain unfinished, with visible guards rather than an unsafe conversion. These are current
+implementation limits, not a claim that the remaining upstream requirements are complete.
+
+Actual Java8 commands used the workspace-local Maven repository and JDK8u504 with
+`mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon
+-Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository
+-Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install`.
+Final producer: 630 unit +63 artifact =693 PASS, zero failures/errors/skips.
+Producer SHA256 `e98bb86cdb45a45b482f867e260c63b0755b0709956e7d58152fcb4c74ddc2b2`;
+all1841 base classes have major<=52. Connector/J5.1.14 is a test-only dependency and is absent
+from the production jar. Exact installed producer consumer clean verify:45 unit +1 artifact
+=46 PASS; consumer SHA256 `3292145dda2552d62117fa42ee2316f56c7f58e4e664d315ee0b653228566de7`,
+all2458 base classes major<=52. The consumer used the same Maven flags with
+`-f VotingPlugin/pom.xml clean verify`.
+
+RealJava8/MariaDB11.8.6 native packaged-code fixtures passed exact DECIMAL12,3-to12,2 with
+1.230/default7 preserved, rejected source1.234 and default7.001 rounding without changing
+source schema/values/attributes, blocked a competing writer through validation/DDL until
+release, and failed visibly after connection loss before ALTER while retaining source data.
+These fixtures use the existing pool eviction boundary with a fixture adapter that closes
+the owned connection; they do not independently prove every Hikari/driver combination.
+Nine exact-consumer Java8/Spigot1.8.8 SQLite/schema/cache/startup/shutdown acceptance checks
+pass; this is not a claim of MySQL user-cache runtime or full vote/proxy acceptance.
+Public explicit alterColumnType compatibility, all-registry schema reconciliation, UUID
+constraints, headless lifecycle/paging, additional numeric families/driver/pool acceptance,
+remaining ledger entries and the final independent review are still required.

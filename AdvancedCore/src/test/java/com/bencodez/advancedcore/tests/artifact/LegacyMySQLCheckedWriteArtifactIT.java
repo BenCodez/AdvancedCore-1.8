@@ -134,6 +134,8 @@ class LegacyMySQLCheckedWriteArtifactIT {
                 private boolean child(String name) {
                     return name.startsWith("com.bencodez.advancedcore.api.user.userstorage.mysql.MySQL")
                         ||name.startsWith("com.bencodez.advancedcore.api.user.userstorage.mysql.RetainedStringColumn")
+                        ||name.startsWith("com.bencodez.advancedcore.api.user.userstorage.mysql.RetainedNumericType")
+                        ||name.startsWith("com.bencodez.advancedcore.api.user.userstorage.mysql.RetainedDecimalMigration")
                         ||name.startsWith("com.bencodez.advancedcore.api.user.userstorage.SqlColumnNames")
                         ||name.startsWith("com.bencodez.advancedcore.api.user.userstorage.CompleteUserRows")
                         ||name.startsWith("com.bencodez.simpleapi.sql.mysql.")

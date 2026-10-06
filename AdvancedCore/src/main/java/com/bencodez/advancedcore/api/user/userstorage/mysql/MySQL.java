@@ -129,22 +129,34 @@ public class MySQL {
 		plugin.debug("UseBatchUpdates: " + isUseBatchUpdates());
 	}
 
-	public void addColumn(String column, DataType dataType) {
-		// Resolve extension-defined types outside the column-add lock. Missing
-		// registered keys must expand using the same definition as initial CREATE.
-		String sqlType = "text";
-		boolean registeredString = false;
+	private static final class ColumnDeclaration {
+		final String sqlType;
+		final boolean registeredString;
+		ColumnDeclaration(String sqlType, boolean registeredString) {
+			this.sqlType = sqlType; this.registeredString = registeredString;
+		}
+	}
+
+	private ColumnDeclaration resolveColumnDeclaration(String column) {
 		for (UserDataKey key : plugin.getUserManager().getDataManager().getRegisteredKeysSnapshot()) {
 			if (key.getKey().equalsIgnoreCase(column)) {
-				sqlType = key.getColumnType();
-				registeredString = key instanceof com.bencodez.advancedcore.api.user.usercache.keys.UserDataKeyString
-					&& !plugin.getUserManager().getDataManager().isBoolean(key.getKey());
-				if (sqlType == null || sqlType.trim().isEmpty()) {
-					throw new IllegalArgumentException("Registered SQL column has no type: " + column);
-				}
-				break;
+				String sqlType = key.getColumnType();
+				if (sqlType == null || sqlType.trim().isEmpty()) throw new IllegalArgumentException("Registered SQL column has no type: " + column);
+				return new ColumnDeclaration(sqlType,
+					key instanceof com.bencodez.advancedcore.api.user.usercache.keys.UserDataKeyString
+					&& !plugin.getUserManager().getDataManager().isBoolean(key.getKey()));
 			}
 		}
+		return new ColumnDeclaration("text", false);
+	}
+
+	public void addColumn(String column, DataType dataType) {
+		addResolvedColumn(column, resolveColumnDeclaration(column));
+	}
+
+	private void addResolvedColumn(String column, ColumnDeclaration declaration) {
+		String sqlType = declaration.sqlType;
+		boolean registeredString = declaration.registeredString;
 		synchronized (object3) {
 			String sql = "ALTER TABLE " + getName() + " ADD COLUMN `" + column.replace("`", "``") + "` " + sqlType + ";";
 			plugin.debug("Adding column: " + column);
@@ -206,15 +218,8 @@ public class MySQL {
 	}
 
 	public void checkColumn(String column, DataType dataType) {
-		String registeredType = null;
-		for (UserDataKey key : plugin.getUserManager().getDataManager().getRegisteredKeysSnapshot()) {
-			if (key.getKey().equalsIgnoreCase(column) && key instanceof com.bencodez.advancedcore.api.user.usercache.keys.UserDataKeyString
-					&& !plugin.getUserManager().getDataManager().isBoolean(key.getKey())) {
-				registeredType = key.getColumnType();
-				if (registeredType == null || registeredType.trim().isEmpty()) throw new IllegalArgumentException("Registered SQL column has no type: " + column);
-				break;
-			}
-		}
+		ColumnDeclaration declaration = resolveColumnDeclaration(column);
+		String registeredType = declaration.registeredString ? declaration.sqlType : null;
 		synchronized (object4) {
 			List<String> known = columns;
 			if (known != null) {
@@ -225,7 +230,7 @@ public class MySQL {
 			}
 			// addColumn owns checked live inspection and peer-race reconciliation.
 			// The legacy getColumnsQueury helper converts SQL failures to empty.
-			addColumn(column, dataType);
+			addResolvedColumn(column, declaration);
 		}
 	}
 
