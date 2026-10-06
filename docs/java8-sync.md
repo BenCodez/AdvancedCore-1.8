@@ -116,7 +116,7 @@ The full comparison ledger remains incomplete; these changes must not be describ
 Existing failure contracts elsewhere in the legacy storage layer have not been globally rewritten.
 A strict delete API is not a claim that every legacy caller now uses strict storage operations.
 
-Latest coordinated validation: AdvancedCore Java 8 `clean install`: **49 unit tests + 1 artifact
+Latest coordinated validation: AdvancedCore Java 8 `clean install`: **54 unit tests + 3 artifact
 integration test**, all pass. VotingPlugin Java 8 `clean verify`: **11 unit tests + 1 artifact
 integration test**, all pass, using that exact isolated AdvancedCore installation.
 
@@ -154,3 +154,20 @@ legacy SKULL_ITEM data value 3 and the existing owner metadata. Bundled GUI defa
 SIGN/WATCH rather than OAK_SIGN/CLOCK. Configuration keys and item purposes remain the
 same; existing operator files are not replaced or automatically rewritten. Operators with
 modern material names in old custom GUI files must select their 1.8 equivalents.
+
+## MySQL bound-value backport
+
+Upstream `f468b485e8ba17729f8288d3464df6aa0bff5097` is adapted to the fork's
+existing MySQL-only table and Query APIs. Player-name/exact-row lookup, delete,
+insert, and both synchronous/asynchronous update overloads bind values before
+execution. Empty updates no longer execute an invalid SET statement. Table/column
+identities and existing cache eviction/error-return behavior are unchanged.
+
+Unlike newer database abstractions, this fork stores boolean values in TEXT columns
+and reads them through Boolean.valueOf(String). Bound booleans therefore retain
+`"true"`/`"false"` text rather than JDBC numeric boolean representation. This avoids
+a data-format regression during the backport. Five focused write/dispatch tests
+and two packaged read regressions cover apostrophes, SQL-looking names, boolean
+format and empty updates. The read regressions execute JDBC queries through the
+actual shaded Java8 dependency layout, with SQLite used for SELECT-compatible
+fixtures; that is not a claim of exercising MySQL-specific write SQL on SQLite.
