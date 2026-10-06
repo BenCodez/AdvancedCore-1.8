@@ -432,7 +432,7 @@ final class JdbcSqlUserStorage implements SqlUserStorage {
     }
     private boolean startsType(String sqlType, String type) { if (!sqlType.startsWith(type)) return false; if (sqlType.length() == type.length()) return true; char next = sqlType.charAt(type.length()); return Character.isWhitespace(next) || next == '('; }
     // Java 8 equivalent of String.strip(): preserve Unicode whitespace semantics.
-    private static String stripWhitespace(String value) {
+    static String stripWhitespace(String value) {
         int start = 0;
         int end = value.length();
         while (start < end) {

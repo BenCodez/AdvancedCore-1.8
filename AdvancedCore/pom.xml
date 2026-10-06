@@ -17,6 +17,8 @@
 		<maven.compiler.source>8</maven.compiler.source>
 		<maven.compiler.target>8</maven.compiler.target>
 		<maven.compiler.release>8</maven.compiler.release>
+        <!-- Default matches Spigot 1.8.8; override only for additional driver tests. -->
+        <sqlite.test.version>3.7.2</sqlite.test.version>
 	</properties>
 	<build>
 		<resources>
@@ -257,7 +259,7 @@
         <dependency>
             <groupId>org.xerial</groupId>
             <artifactId>sqlite-jdbc</artifactId>
-            <version>3.7.2</version>
+            <version>${sqlite.test.version}</version>
             <scope>test</scope>
         </dependency>
         <dependency>
