@@ -1572,3 +1572,53 @@ so no storedformat migration is claimed. Damage sampling/breakage upstream
 7d9297a5228629a1bbd0d2aa67ad670540702aa4 and dcc9b1ea7de6d39ac777dac5826c6c93abb282b9
 remain pending separately. Fullscope ledger/lifecycle/features/runtime/freshfinal
 independentreview unfinished. No release/dependency/schema/wire change or sourcepush/PR.
+
+
+### Portable item serialization completes upstream158 disposition (2026-10-06)
+
+Upstream158dec28c7be447b57882a78c64c7a1aaa0bb826 now has a recorded disposition
+for every changed file/hunk. The previous partial record is superseded by this
+PORT_WITH_BUKKIT_1_8_ADAPTATION, not a claim of full pinned-main equivalence.
+
+- ItemBuilder serializers share the typed legacy configuration representation;
+  getConfigurationData(boolean) alias is added, true retains Bukkit full data.
+- Legacy Durability/Data and createConfigurationData's empty Skull default remain.
+  Damage, regular/stored book enchants, flags, names/copied lore, leatherRGB,
+  custom potion duration/amplifier, fireworkpower and named skull owner are added.
+- Spigot1.8 unbreakable metadata reads/writes use its actual extension. A plain
+  Bukkit base placeholder is omitted on reads, and requested unsupported writes
+  still throw; no broad exception swallowing. Missing config leaves state alone.
+- Enchantment/potion identifiers retain legacy getName, and skull getOwner replaces
+  unavailable modern getOwningPlayer. Stored/regular enchants merge as upstream.
+- Modern custom models, ItemModelHandler.hasItemModel guard, potion bottle colors
+  and native full-tooltip flag are omitted: javap of the actual1.8 API shows those
+  methods absent; ItemModelHandler is absent from the fork. Existing ItemFlags
+  preserve supported tooltip details without inventing a full-tooltip state.
+- Upstream example comments are adapted for Damage/leather/unbreakable on1.8.
+  Parsed YAML defaults before/after are identical; no operator config replacement.
+
+Baseline2assertfail/0errors; final18focused tests pass (8serialization+10retained).
+Intermediate test fixtures initially used unsupported baseSpigot and inline mock
+class identity; corrected to model actual implementations and retain the explicit
+base-placeholder countertest. Real runtime validates supported metadata separately.
+Java8 finalcleaninstall AC329unit+18artifact; cleanverify VP45unit+1artifact,
+all0fail/errors/skips; baseclasses1823/2440 maxmajor52. ActualTemurin1.8.0_504/
+Maven3.9.9, explicit modulePOM/workspace .m2/tmp/wagon. SHA256:
+AC75e41e7116234b7eff71ed84a2476cae6c0b0212c9c9746904a07d8882b2cbbd;
+VP8780ce4fd38882e1cefdac0dc1c9095e4da4e7d4ad71761dd63030a4ad55a0cc.
+
+RealSpigot1.8.8 fixturef6c11804c6 compares exact original/restored item equality
+following YAML save/load for each of getConfiguration(false),
+createConfigurationData(), getConfigurationData(false), and the fulltrue lane.
+Cases: damaged/named/lore/flagged/unbreakable/enchanted leather armor, coloredwool,
+stored-enchant book, custompotion, fireworkpower. AllPASS on server-owner thread.
+Retaineditem/damage/tooltip/storageconversionretry/commands/disable/restart20PASS.
+SQLiteintegrity and two log error/credential auditsPASS. Skullowner strings are
+unit-tested; remote skull resolution has not been exercised and is not claimed.
+Simplified serialization does not promise all arbitraryNBT; exact Bukkit lane is
+retained. No dependency/schema/wire/releaseversion or existing serializedformat
+replacement. Evidence item-serialization-build-results.json,
+item-serialization-live-results.json, item-serialization-api-contract.txt.
+
+Full goal active: pending ledger/features/lifecycle/proxy/upgradematrix and fresh
+independentfinalreview remain; no sourcepush or PR opening authorized.

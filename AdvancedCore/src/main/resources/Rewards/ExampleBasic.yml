@@ -35,7 +35,9 @@ Items:
     Material: 'DIAMOND'
     # Will only give Amount if min and max amounts are 0
     Amount: 1
-    # Set item durability
+    # Damage for tools/armor: 0-32767; overrides legacy Durability when present
+    #Damage: 100
+    # Legacy durability/material variant data remains supported
     # Set to 0 or remove line for no durability
     #Durability: 100
     
@@ -84,6 +86,14 @@ Items:
     # Item models, 1.21.5+ only
     #ItemModel: "custom:modelname"
       
+    # Leather armor color (RGB components 0-255)
+    #LeatherColor:
+      #Red: 0
+      #Green: 0
+      #Blue: 0
+    # Spigot 1.8 unbreakable metadata
+    #Unbreakable: true
+
     # Set power of firework
     #Power: 1
     

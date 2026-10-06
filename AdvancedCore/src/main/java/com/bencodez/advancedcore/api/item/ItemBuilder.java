@@ -294,6 +294,8 @@ public class ItemBuilder {
 							addGlow();
 						}
 
+						if (data.contains("Unbreakable")) setUnbreakable(data.getBoolean("Unbreakable", false));
+
 						checkLoreLength = data.getBoolean("CheckLoreLength", true);
 						loreLength = data.getInt("LoreLength", -1);
 
@@ -612,35 +614,10 @@ public class ItemBuilder {
 		return new ItemBuilder(is);
 	}
 
-	@SuppressWarnings("deprecation")
 	public LinkedHashMap<String, Object> createConfigurationData() {
-		LinkedHashMap<String, Object> data = new LinkedHashMap<>();
-		data.put("Material", is.getType().toString());
-		data.put("Amount", getAmount());
-		if (hasCustomDisplayName()) {
-			data.put("Name", getName());
-		}
-		if (hasCustomLore()) {
-			data.put("Lore", getLore());
-		}
-		data.put("Durability", is.getDurability());
-		data.put("Data", is.getData().getData());
-
-		for (Entry<Enchantment, Integer> en : is.getItemMeta().getEnchants().entrySet()) {
-			data.put("Enchants." + en.getKey().getName(), en.getValue());
-		}
-
-		ArrayList<String> flags = new ArrayList<>();
-		for (ItemFlag fl : is.getItemMeta().getItemFlags()) {
-			flags.add(fl.toString());
-		}
-
-		data.put("ItemFlags", flags);
-
-		data.put("Skull", getSkull());
-
+		LinkedHashMap<String, Object> data = new LinkedHashMap<>(getConfiguration(false));
+		if (!data.containsKey("Skull")) data.put("Skull", getSkull());
 		return data;
-
 	}
 
 	public ItemBuilder dontCheckLoreLength() {
@@ -668,28 +645,58 @@ public class ItemBuilder {
 
 	@SuppressWarnings("deprecation")
 	public Map<String, Object> getConfiguration(boolean deseralize) {
-		if (deseralize) {
-			return is.serialize();
-		}
-		HashMap<String, Object> map = new HashMap<>();
+		if (deseralize) return is.serialize();
+		LinkedHashMap<String, Object> map = new LinkedHashMap<>();
 		map.put("Material", is.getType().toString());
 		map.put("Amount", is.getAmount());
-		if (hasCustomDisplayName()) {
-			map.put("Name", getName());
+		// Keep legacy variant/durability fields readable by existing 1.8 consumers.
+		map.put("Durability", is.getDurability());
+		map.put("Data", is.getData().getData());
+		ItemMeta meta = is.getItemMeta();
+		if (meta == null) return map;
+		if (meta.hasDisplayName()) map.put("Name", meta.getDisplayName());
+		if (meta.hasLore() && meta.getLore() != null) map.put("Lore", new ArrayList<>(meta.getLore()));
+		if (is.getType().getMaxDurability() > 0 && is.getDurability() > 0) {
+			map.put("Damage", (int) is.getDurability());
 		}
-		if (hasCustomLore()) {
-			map.put("Lore", getLore());
+		Map<Enchantment, Integer> enchants = new LinkedHashMap<>(meta.getEnchants());
+		if (meta instanceof EnchantmentStorageMeta) {
+			enchants.putAll(((EnchantmentStorageMeta) meta).getStoredEnchants());
 		}
-		ItemMeta im = is.getItemMeta();
-
-		ArrayList<String> flagList = new ArrayList<>();
-		for (ItemFlag flag : im.getItemFlags()) {
-			flagList.add(flag.toString());
+		for (Entry<Enchantment, Integer> entry : enchants.entrySet()) {
+			map.put("Enchants." + entry.getKey().getName(), entry.getValue());
 		}
-		map.put("ItemFlags", flagList);
-
+		ArrayList<String> flags = new ArrayList<>();
+		for (ItemFlag flag : meta.getItemFlags()) flags.add(flag.toString());
+		map.put("ItemFlags", flags);
+		ItemMeta.Spigot spigot = meta.spigot();
+		// Plain Bukkit exposes an unimplemented base extension; omit its unavailable flag.
+		if (spigot.getClass() != ItemMeta.Spigot.class && spigot.isUnbreakable()) map.put("Unbreakable", true);
+		if (meta instanceof SkullMeta && ((SkullMeta) meta).hasOwner()) {
+			map.put("Skull", ((SkullMeta) meta).getOwner());
+		}
+		if (meta instanceof LeatherArmorMeta) {
+			Color color = ((LeatherArmorMeta) meta).getColor();
+			map.put("LeatherColor.Red", color.getRed());
+			map.put("LeatherColor.Green", color.getGreen());
+			map.put("LeatherColor.Blue", color.getBlue());
+		}
+		if (meta instanceof PotionMeta) {
+			for (PotionEffect effect : ((PotionMeta) meta).getCustomEffects()) {
+				String name = effect.getType().getName();
+				map.put("Potions." + name + ".Duration", effect.getDuration());
+				map.put("Potions." + name + ".Amplifier", effect.getAmplifier());
+			}
+		}
+		if (meta instanceof FireworkMeta && ((FireworkMeta) meta).getPower() > 0) {
+			map.put("Power", ((FireworkMeta) meta).getPower());
+		}
 		return map;
+	}
 
+	/** Alias retained for current callers; true returns Bukkit's full item data. */
+	public Map<String, Object> getConfigurationData(boolean deserialize) {
+		return getConfiguration(deserialize);
 	}
 
 	public boolean hasGetItemModel(ItemMeta meta) {
@@ -924,6 +931,16 @@ public class ItemBuilder {
 
 	public ItemBuilder setHeadFromBase64(String value) {
 		is = SkullCache.getSkullBase64(value);
+		return this;
+	}
+
+	/** Sets legacy Spigot unbreakable metadata and publishes the modified copy. */
+	public ItemBuilder setUnbreakable(boolean unbreakable) {
+		ItemMeta meta = is.getItemMeta();
+		if (meta != null) {
+			meta.spigot().setUnbreakable(unbreakable);
+			is.setItemMeta(meta);
+		}
 		return this;
 	}
 
