@@ -1904,3 +1904,93 @@ pending-write disable and restart persistence in fixture `374e6c657d`. The two-
 connected-viewer repeat is `2c820ec022`. Evidence is retained in
 `listener-final-live-results.json` and the build/live logs. Test helpers and
 generated artifacts remain outside implementation repositories.
+
+## Full-inventory queue, scheduling and snapshot backport
+
+Backported the full-inventory series through
+`d5c804f280bd8985ad6459660d185c9a680c0b21`, including the required brace fix
+`7d5ac81b2a26f6aac5f0219df78a9ea15f6a667a`. It incorporates the UUID merge,
+owner scheduling, isolated timer and single-save snapshot changes from
+`4133360d10188dd71f5dc604430b8d9849640305`,
+`335be4b1f948aa321ca1b2b13b898c591842034e`,
+`360ba12b7faf65ded5c7adba7337806fa8f0c367`,
+`740f6c843ed4adba7b246ee3f141610bf3051700`,
+`162518b8bace1182eaa27ebff5631b7ccf281332`, and
+`786ec78e4a211299b6ee9c244964cd0f8e54d610`.
+The ordinary-check shutdown guards from
+`cc4f71d54e09a9c5075f3a346dc167acb4976675` are ported; its replay-specific
+flush work is still partial and is not represented as complete in the ledger.
+
+Appending a list for an existing UUID no longer puts a null key into the
+ConcurrentHashMap. Accepted lists are copied and merged per UUID. Offline
+sweeps no longer dereference a missing player to expire message state. Native
+player inventory checks and delivery use the existing Bukkit player scheduler;
+sweeps resolve players on the Bukkit scheduler. The handler keeps its own
+executor, so external callers stopping its timer do not stop GUI updates.
+Repeated timer loads are idempotent; an externally stopped private executor can
+be recreated. A handler that has undergone final shutdown keeps ordinary checks
+fenced; recreating an executor is not a claim that final shutdown reopens delivery.
+
+Saving builds a complete FullInventory replacement under the delivery/snapshot
+lock and performs one ServerData save. A failed save restores the previous
+in-memory section, retains accepted pending items and propagates failure for an
+explicit retry. Inspection of the actual SimpleAPI 0.0.7 bytecode confirmed that
+its inherited void save method swallowed IOException after printing it.
+ServerData preserves that void API but now propagates the I/O failure as an
+IllegalStateException. AdvancedCore disable retires this handler and saves its
+pending snapshot. Existing FullInventory UUID/Items/Time keys, item serialization
+and one-day retention remain readable. Release metadata, commands, permissions,
+configuration defaults, proxy payloads and public void item APIs are unchanged.
+
+Two merge assertions fail on the baseline with zero test errors. Eight retained
+upstream tests use Arrays.asList instead of Java 9 List.of. Ten additional merge,
+queue/snapshot overlap, shutdown-fence, input ownership, retention and actual
+filesystem failure/readback tests cover the changes. A first recovery fixture
+assertion incorrectly assumed a mocked setData applied its mutation; the fixture
+now models that established method's side effect without changing assertions or
+production behavior. Final Java 8 clean install passes 395 unit plus 18 artifact
+AdvancedCore tests. Exact-dependent VotingPlugin clean verify passes 45 unit plus
+one artifact test. All failures, errors and skips are zero.
+
+Commands actually run with workspace Temurin 8u504 and the dedicated Maven cache:
+
+```shell
+mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install
+mvn -B -f VotingPlugin/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean verify
+```
+
+Artifact SHA-256:
+
+- AdvancedCore: `583de453f8d3bdb2dc0e81c989799fdca503db095e5204ba878f2008b33f1a05`
+- VotingPlugin: `8ef58b541377afa5afc70eacca05285b671017163432439d459728c3b00b7808`
+
+There are 1815/2432 base classes, maximum major version 52. The one-class decrease
+is the replaced anonymous timer callback, not removal of a compatibility API.
+Real Java 8/Spigot 1.8.8 fixture `190b528a2e` fills a connected player's native
+inventory, parks exactly three overflow diamonds, saves and disables, restarts
+with that legacy snapshot, frees one native slot, and delivers the recovered
+three diamonds. The connected protocol client observes the amount; final disable
+removes the delivered snapshot. SQLite integrity and both startup/shutdowns pass.
+Repeated packets showing the same slot are observations, not additional rewards.
+This is protocol-client acceptance, not graphical visual inspection or a proof
+of exactly-once delivery through arbitrary crashes.
+
+The same artifact passes real native item/pagination, MySQL/global pool,
+conversion/repaired retry, console completion and restart acceptance in
+`09285ff502`, plus connected listener navigation and sync/async callback acceptance
+in `c1edab0eb3`. Evidence is `full-inventory-final-results.json` and retained
+build/live logs. Helpers, clients, dependencies and generated artifacts remain
+outside source commits.
+
+Remaining work includes replay-aware item completion/reservations and root reward
+checkpoints, queued legacy delivery retirement, full queue bounds and mutable
+getItems bypasses. The current snapshot write lock includes disk I/O and needs
+further owner-latency work. Atomic filesystem publication, arbitrary native
+partial failures, crash recovery, failed shutdown and the full remaining upstream
+ledger/runtime matrix are not proven. The full goal remains active and incomplete;
+fresh independent final review and PR readiness have not been reached. No source
+push or PR opening is authorized.

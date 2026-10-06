@@ -1046,7 +1046,7 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 			closeSQLiteProvider(database);
 		});
 		if (skullCacheHandler != null) skullCacheHandler.close();
-		if (fullInventoryHandler != null) fullInventoryHandler.save();
+		if (fullInventoryHandler != null) fullInventoryHandler.shutdown();
 		unRegisterValueRequest();
 		if (permissionHandler != null) permissionHandler.shutDown();
 		javaPlugin = null;
