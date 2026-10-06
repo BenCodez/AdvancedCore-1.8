@@ -1622,3 +1622,52 @@ item-serialization-live-results.json, item-serialization-api-contract.txt.
 
 Full goal active: pending ledger/features/lifecycle/proxy/upgradematrix and fresh
 independentfinalreview remain; no sourcepush or PR opening authorized.
+
+
+### Legacy held-item damage API and bounded breakage (2026-10-06)
+
+Upstream7d9297a5228629a1bbd0d2aa67ad670540702aa4 and
+dcc9b1ea7de6d39ac777dac5826c6c93abb282b9 complete production/test patches are
+ported with Java8 adaptation. The original public API introduction
+8c26aa69d71310ebe8166d93e01c83391b677928 predates the identified main release-copy
+ancestor, but damageItemInHand was absent from the fork's baseline. A presence
+regression fails1assertion/0errors before this change; the supported API is added.
+No existing public method, config, schema, wire or release metadata is replaced.
+
+Java8 Random replaces RandomGenerator; legacy hand access/durability replaces
+modern main-hand/Damageable calls. Callers must use the Bukkit owner thread.
+Normal updates explicitly publish the held slot; exact material limit removes the
+item and returnsfalse. Missing/non-tool/protected items returnfalse; nonpositive
+damage leaves eligible items alone. ImplementedSpigot unbreakable metadata is
+required; unsupported base protection throws instead of damaging a possibly
+protected item. Long arithmetic avoids enchantment/damage overflow. Geometric
+sampling bounds work by remaining durability; original integer-percentage chance
+semantics are retained, including zero chance at extreme enchantment levels.
+Nonpositive internal sampler caps returnzero rather than negative damage.
+
+Ten focusedtests pass, retaining all six upstream cases/statistical assertions
+and adding APIpresence, capwork/invalidcaps, extremelevels and unsupportedflag
+coverage. FinalJava8 cleaninstall AC339unit+18artifact; cleanverify VP45unit+
+1artifact, all0fail/errors/skips; base1823/2440 maxmajor52. ExplicitmodulePOM,
+workspace .m2/tmp/wagon, Temurin1.8.0_504/Maven3.9.9. SHA256:
+AC06faaf57f4c5c18f9bb0ead00b2e2af519a53936b1f49bac84a2593c00f30e50;
+VP1c90b84dbdd43ca8afe330eea9c03bf3927092204f9d558d175ed579f916b773.
+
+RealSpigot1.8.8 fixture1169d40353 uses an unregistered CraftPlayer/native inventory
+on the server owner, checking actual slot readbacks for damage58, exact-limit
+removal, Integer.MAX_VALUE damage with Unbreaking, protection/non-tool/no-op.
+No connectedclient, world/player-list registration or join event is claimed.
+Version-specific NMS exists only in the workspace fixture, not production.
+The initial dynamicproxy fixture failed on legacy incompatible health-method
+signatures. The native fixture then caught a real callee adaptation error:
+legacyMiscUtils.getEnchant compares toString instead of name and returnsnull.
+The new API now directly uses the supported DURABILITY constant; shared helper
+behavior is not changed. Both failed terminal attempts are retained, assertions
+unchanged. Exact finalconsumer also passes retaineditem/YAML/storageconversion/
+retry/commands/disable/restart20; SQLiteintegrity and two log error/credential
+auditsPASS. Evidence item-damage-api-final-build-results.json and
+item-damage-api-final-live-results.json plus focused/build/failed/live logs.
+
+Connectedclient slot acknowledgment remains unverified. Full upstream ledger,
+remainingfeatures/lifecycle/runtime matrix and freshindependentfinalreview are
+unfinished. No sourcepush or PR opening authorized; full goal remains active.

@@ -3,13 +3,19 @@ package com.bencodez.advancedcore.api.misc;
 import java.nio.charset.StandardCharsets;
 import java.util.Map.Entry;
 import java.util.UUID;
+import java.util.Random;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.ConcurrentHashMap;
 
 import org.bukkit.Bukkit;
+import org.bukkit.Material;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
+import org.bukkit.enchantments.Enchantment;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.inventory.meta.ItemMeta;
 
 import com.bencodez.advancedcore.AdvancedCorePlugin;
 import com.bencodez.advancedcore.api.user.AdvancedCoreUser;
@@ -31,6 +37,81 @@ public class PlayerManager {
 	}
 
 	
+
+	/**
+	 * Applies the current damage API to a legacy held tool/armor item. Call on the
+	 * Bukkit owner thread. Requires an implemented Spigot unbreakable extension;
+	 * unavailable protection must not silently become a damaged item.
+	 * @return true when the item remains usable, false when absent/protected/broken
+	 */
+	public boolean damageItemInHand(Player player, int damage) {
+		if (player == null || player.getInventory() == null) {
+			return false;
+		}
+		PlayerInventory inventory = player.getInventory();
+		ItemStack itemInHand = inventory.getItemInHand();
+		if (itemInHand == null || itemInHand.getType() == Material.AIR) {
+			return false;
+		}
+		ItemMeta meta = itemInHand.getItemMeta();
+		if (meta == null || itemInHand.getType().getMaxDurability() <= 0) {
+			return false;
+		}
+		boolean isUnbreakable = meta.spigot().isUnbreakable();
+		if (!isUnbreakable) {
+			if (damage <= 0) {
+				return true;
+			}
+			int level = itemInHand.getEnchantmentLevel(Enchantment.DURABILITY);
+			int chance = (int) (100L / (Math.max(0, (long) level) + 1));
+			long currentDamage = Math.max(0L, itemInHand.getDurability());
+			long hitsToBreak = Math.max(1L, (long) itemInHand.getType().getMaxDurability() - currentDamage);
+			int addedDamage = sampleDamage(damage, chance, hitsToBreak, ThreadLocalRandom.current());
+			if (addedDamage > 0) {
+				if (addedDamage >= hitsToBreak) {
+					inventory.setItemInHand(new ItemStack(Material.AIR));
+					return false;
+				}
+				itemInHand.setDurability((short) (currentDamage + addedDamage));
+				inventory.setItemInHand(itemInHand);
+			}
+			return true;
+		}
+		return false;
+	}
+
+	// The cap is the number of successful hits needed to remove the item.
+	static int sampleDamage(int attempts, int chance, long cap, Random random) {
+		if (attempts <= 0 || chance <= 0 || cap <= 0) {
+			return 0;
+		}
+		int limit = (int) Math.min(cap, (long) attempts);
+		if (chance >= 100) {
+			return limit;
+		}
+		int hits = 0;
+		if (attempts <= 256) {
+			for (int i = 0; i < attempts && hits < limit; i++) {
+				if (random.nextInt(100) < chance) {
+					hits++;
+				}
+			}
+			return hits;
+		}
+		// Geometric gaps count failures before each success. Work is bounded by the
+		// item's remaining durability rather than the attacker supplied attempts.
+		double logFailure = Math.log1p(-chance / 100.0);
+		long remaining = attempts;
+		while (hits < limit && remaining > 0) {
+			long failures = (long) Math.floor(Math.log1p(-random.nextDouble()) / logFailure);
+			if (failures >= remaining) {
+				break;
+			}
+			remaining -= failures + 1;
+			hits++;
+		}
+		return hits;
+	}
 
 	public String getPlayerName(AdvancedCoreUser user, String uuid) {
 		return getPlayerName(user, uuid, true);
