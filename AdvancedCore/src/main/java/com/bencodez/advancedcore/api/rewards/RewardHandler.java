@@ -3249,6 +3249,14 @@ public class RewardHandler {
 	}
 
 	public void updateReward(Reward reward) {
+        RewardFileData config=reward==null?null:reward.getConfig();
+        if(config!=null && config.isDirectlyDefinedReward()) {
+            File folder=config.getRewardFolder();
+            if(folder!=null && folder.getName().equalsIgnoreCase("DirectlyDefined")) {
+                plugin.extraDebug("Keeping generated queued reward snapshot out of public registry: "+reward.getName());
+                return;
+            }
+        }
 		reward.validate();
 		for (int i = getRewards().size() - 1; i >= 0; i--) {
 			if (getRewards().get(i).getFile().getPath().equals(reward.getFile().getPath())) {

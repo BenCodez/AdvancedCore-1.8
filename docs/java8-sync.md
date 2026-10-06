@@ -3024,3 +3024,78 @@ reward. Acknowledged native effects remain once, unfinished list work completes,
 occurrence identity and physical queue cleanup survive, and SQLite/linkage/clean
 shutdown checks pass. These are acknowledged-checkpoint tests with explicitly
 saved player state, not unacknowledged-effect or arbitrary inline-mutation proof.
+
+
+## Generated queued snapshots stay outside the public registry (2026-10-06)
+
+Ported the complete bounded behavior of pinned upstream commits
+`6dfb241004d67babc12b9667b1016bad8e9aed07` (registry exclusion) and
+`db1673135f7de00ebe6f4e2e4d324219ca465818` (null-safe guard), in the existing
+legacy RewardHandler rather than copying the modern RewardRegistry refactor.
+updateReward excludes a reward only when both its generated marker is true and
+its backing folder is DirectlyDefined, case-insensitively. Ordinary/default-file
+registration and file-identity replacement remain unchanged. Unmarked files in
+that folder and marked files elsewhere preserve their established validation
+path. Null configuration is safe for the new guard; a null reward still follows
+the established invalid-input behavior after the guard.
+
+Generated queue files remain available through getQueuedGeneratedReward, which
+captures validated YAML and constructs a reward restricted to the
+requested user. Persisted snapshot provenance keeps using that explicit loader;
+strict normal provenance cannot borrow a generated snapshot. Existing direct/sub
+handles, legacy persisted fallback and normal named/default-file resolution are
+unchanged. The active VotingPlugin VoteTester uses public named lookup and does
+not call the snapshot publisher or explicit loader. The inactive src.main.java
+tree remains untouched. No API signature, release/configuration default, database
+schema or serialized proxy/queue format changed.
+
+Six new regression tests cover exclusion and public lookup fallback, same-named
+ordinary reward retention, ordinary file replacement, exact folder/marker
+boundaries, requested-user snapshot loading, and the null-config guard. Three
+exclusion assertions failed against the preceding source; all six pass after the
+port. The focused registry/resolution/publication suite passed 34 tests with zero
+failures, errors or skips.
+
+Actual Spigot 1.8.8 case `2077bf8783` passed five checks using the exact consumer
+below. It retains the malformed-target failure/no-mutation checks, then verifies
+successful detached publication is retrieved through the explicit loader while
+the public predecessor remains unchanged. The loaded snapshot is restricted to
+exactly the requested fixture user. Header/merge/provenance values, SQLite
+integrity, Java 8 linkage and clean shutdown pass. The new fixture preserves the
+previous publication fixture/evidence and updates the lookup assertion specifically
+for the proven upstream exclusion; it does not weaken failure or persistence
+assertions.
+
+Validation with Temurin 8u504 first on PATH and Maven 3.9.9:
+
+```shell
+mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install
+mvn -B -f VotingPlugin/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean verify
+```
+
+AdvancedCore: 547 unit + 18 artifact checks = 565 passed; producer SHA-256
+`47cb1e433a7458a0318241d849bb248fdca848b6a6d0af34b9836af3ae1a94bb`. VotingPlugin: 45 unit + 1 artifact check = 46 passed against that
+exact installed workspace-local producer; consumer SHA-256 `4617acfd7b77237f1cf71be4be61c1721e6164a594035ff17b96e202983b6249`.
+Zero failures, errors or skips. All 1,834 producer and 2,451 consumer base classes
+remain <=52.
+
+Only these two bounded upstream changes are fully dispositioned by this cohort.
+Other nested injectors, prepared inline-definition freezing, clear/wipe/lifecycle
+races, the remaining ledger/platform matrix and final independent review remain
+in scope. No power-loss, arbitrary-effect guarantee or full-main equivalence is
+claimed. No PR readiness, push, PR, release or deployment is claimed.
+
+
+On the exact consumer above, all five Random/AdvancedRandomReward completion
+forms passed again. Four acknowledged-child SIGKILL cases also passed 12 checks
+each: Random offline `35cebe0499`, Random timed `072878ce9a`, nested-list offline
+`ec6647b7eb`, nested-list timed `1fb576451b`. Opposite random candidate lists and
+removed nested lists do not change the acknowledged replay selection/cursor;
+completed native effects remain once and unfinished list work completes. Queue
+removal, occurrence retention, SQLite integrity, native saved-player state,
+Java 8 linkage and clean shutdown pass. These acknowledged-checkpoint tests do
+not prove arbitrary mutated inline definitions or unacknowledged external effects.
