@@ -3459,3 +3459,61 @@ before its acknowledgement fails, power-loss durability, every transport or
 storage backend, or the complete upstream backport. Mixed upstream commits
 remain PARTIAL. Original167 checkouts remain unchanged. Runtime fixtures,
 logs, artifacts and Maven caches stay outside tracked sources. No push/PR.
+
+## Permission and delayed-login backport
+
+Permanent and timed grants reuse the existing UUID handler. Consecutive offline grants
+merge instead of replacing pending state. Existing public seconds-based APIs and
+HashMap getter signatures remain unchanged. Fresh offline durations start on login;
+already timed/restored grants preserve absolute epoch-millisecond deadlines, including
+across real disconnect/reconnect. The legacy `permission%line%epochMillis` persistence
+format remains readable and release versions are unchanged. No modern ParsedDuration
+dependency or Folia dispatch contract is introduced into this Bukkit1.8 artifact.
+
+Expiry timers submit Bukkit-owner work; expected-deadline and handler/session identity
+checks fence stale callbacks after renewal, permanent conversion, logout, and shutdown.
+The quitting Player's attachment is detached while tracked state moves offline. Stale
+quit events cannot detach a replacement session. Repeated login for the same Player
+reuses its attachment; successor attachment creation precedes predecessor retirement.
+Failed detachment/handoff preserves ownership for retry. Expiry admission precedes
+renewal metadata replacement, and successful offline grant prefixes are consumed
+individually so retry cannot reset their deadlines.
+
+Delayed joins capture the existing owner dispatcher and pending Player identity.
+Permission attachment and vanish metadata checks run on the Bukkit owner, while
+AdvancedCoreLoginEvent retains its declared asynchronous contract. The optional
+SuperVanish show callback also validates live Player identity and admits permission
+work on the owner. Authentication/vanish suppression and existing login delays remain.
+No optional integration is made mandatory. Failures are reported rather than silently
+continuing past failed preparation.
+
+Shutdown fences callbacks, saves active and pending timed state, and checks actual
+expiry executor termination. Failed publication remains retryable. Malformed legacy
+UUID/timestamp restoration fails visibly, retires its owned executor, and preserves
+source evidence. Retained PlayerPermissionHandler grant/login/attachment methods
+share manager-before-player locking and reject after close; bounded concurrency tests
+prove shutdown cannot overtake admitted direct grants. Explicit removal remains
+available for revocation after close. Legacy raw mutable getters do not gain a claim
+of arbitrary external mutation safety. Fresh offline relative grants are not claimed
+durable across restart; persistence retains already timed/restored absolute grants.
+
+Verification used the actual Java8 JDK and workspace-local Maven repository:
+`mvn -B -f AdvancedCore/pom.xml clean install` with explicit Java8/local-repo flags
+passed604 unit +18 artifact tests (**622**); `mvn -B -f VotingPlugin/pom.xml clean verify`
+with the same flags passed45 unit +1 artifact tests (**46**) against the byte-identical
+installed producer. Focused permission/login tests passed31. Failures/errors/skips
+are zero. Both shaded artifacts have base class major<=52. Producer SHA256:
+`505ec249da440ec13fe39168950961a60611032d8255662f066a30ab58ad3ef4`;
+consumer SHA256:
+`36174fc3e462b93b14a59fe6fdb23305c00b844ae6f24201658c1eb8dfa8b407`.
+Exact full commands and terminal logs are retained in isolated evidence.
+
+Ten real Java8/Spigot1.8.8 native permission checks and five representative legacy
+TimedPermissions upgrade checks pass on that exact consumer. Native acceptance covers
+physical grants, expiry/renewal, repeated login, real logout/reconnect, a3-second fresh
+grant queued during a4-second disconnect, original active deadline preservation,
+SQLite integrity and clean shutdown/linkage. Upgrade acceptance preserves the original
+stored epoch deadline through automatic login and physical expiry. Native SuperVanish
+integration and the full compatibility matrix remain unverified. Cache cleanup
+lifecycle and complete upstream patch/caller classification remain separate work;
+this cohort does not establish whole-main parity or PR readiness.

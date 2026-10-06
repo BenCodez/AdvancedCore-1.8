@@ -31,6 +31,7 @@ public class PlayerShowListener implements Listener {
 	@EventHandler(priority = EventPriority.MONITOR)
 	public void onJoin(PlayerShowEvent event) {
 		if (plugin != null && plugin.isEnabled()) {
+            final com.bencodez.advancedcore.api.rewards.ServerThreadRewardDispatch owner=plugin.getRewardDispatch();
 			plugin.getBukkitScheduler().runTaskLaterAsynchronously(plugin, new Runnable() {
 
 				@Override
@@ -45,16 +46,19 @@ public class PlayerShowListener implements Listener {
 						if (player != null) {
 							plugin.debug("Vanish Login: " + event.getPlayer().getName() + " ("
 									+ event.getPlayer().getUniqueId() + ")");
-							if (plugin.getPermissionHandler() != null) {
-								plugin.getPermissionHandler().login(player);
-							}
-
-							AdvancedCoreLoginEvent login = new AdvancedCoreLoginEvent(player);
-							Bukkit.getPluginManager().callEvent(login);
-
-							if (login.isCancelled()) {
-								return;
-							}
+                            owner.dispatch(()->{
+                                if(!plugin.isEnabled() || !player.isOnline() || Bukkit.getPlayer(player.getUniqueId())!=player)return java.util.concurrent.CompletableFuture.completedFuture(false);
+                                if(plugin.getPermissionHandler()!=null)plugin.getPermissionHandler().login(player);
+                                return java.util.concurrent.CompletableFuture.completedFuture(true);
+                            },30000).thenCompose(accepted->{
+                                if(!accepted)return java.util.concurrent.CompletableFuture.<Void>completedFuture(null);
+                                return owner.dispatchOffPrimary(()->{
+                                    if(plugin.isEnabled())Bukkit.getPluginManager().callEvent(new AdvancedCoreLoginEvent(player));
+                                    return java.util.concurrent.CompletableFuture.<Void>completedFuture(null);
+                                },30000);
+                            }).whenComplete((unused,failure)->{
+                                if(failure!=null)plugin.getLogger().log(java.util.logging.Level.SEVERE,"Vanish login failed",failure);
+                            });
 						}
 
 					}
