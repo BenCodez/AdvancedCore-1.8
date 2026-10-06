@@ -326,12 +326,6 @@ public class RewardHandler {
 		 * && !suffix.equals("")) { reward += "_" + suffix; } }
 		 */
 
-		for (Reward rewardFile : getRewards()) {
-			if (rewardFile.getName().equalsIgnoreCase(reward)) {
-				return rewardFile;
-			}
-		}
-
 		if (reward.equals("")) {
 			plugin.getLogger().warning("Tried to get any empty reward file name, renaming to EmptyName");
 			reward = "EmptyName";
@@ -349,10 +343,15 @@ public class RewardHandler {
 		}
 
 		for (SubDirectlyDefinedReward direct : getSubDirectlyDefinedRewards()) {
-			if (direct.getFullPath().equalsIgnoreCase(reward)
-					|| direct.getFullPath().equalsIgnoreCase(reward.replaceAll("_", "."))) {
+			if (matchesSubDirectlyDefined(direct, reward)) {
 				plugin.debug("Using subdirectlydefined reward for: " + reward);
 				return direct.getReward();
+			}
+		}
+
+		for (Reward rewardFile : getRewards()) {
+			if (rewardFile.getName().equalsIgnoreCase(reward)) {
+				return rewardFile;
 			}
 		}
 
@@ -445,8 +444,7 @@ public class RewardHandler {
 
 	public SubDirectlyDefinedReward getSubDirectlyDefined(String path) {
 		for (SubDirectlyDefinedReward direct : getSubDirectlyDefinedRewards()) {
-			if (direct.getFullPath().equalsIgnoreCase(path)
-					|| direct.getFullPath().equalsIgnoreCase(path.replaceAll("_", "."))) {
+			if (matchesSubDirectlyDefined(direct, path)) {
 				return direct;
 			}
 		}
@@ -587,12 +585,17 @@ public class RewardHandler {
 		}
 
 		for (SubDirectlyDefinedReward direct : getSubDirectlyDefinedRewards()) {
-			if (direct.getFullPath().equalsIgnoreCase(reward)
-					|| direct.getFullPath().equalsIgnoreCase(reward.replaceAll("_", "."))) {
+			if (matchesSubDirectlyDefined(direct, reward)) {
 				return true;
 			}
 		}
 		return false;
+	}
+
+	private boolean matchesSubDirectlyDefined(SubDirectlyDefinedReward direct, String reward) {
+		return direct.getFullPath().equalsIgnoreCase(reward)
+				|| direct.getFullPath().replace(".", "_").equalsIgnoreCase(reward)
+				|| direct.getFullPath().equalsIgnoreCase(reward.replaceAll("_", "."));
 	}
 
 	public boolean hasRewards(FileConfiguration data, String path) {
