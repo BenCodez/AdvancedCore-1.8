@@ -138,3 +138,46 @@ removal, completed-prefix round-trip through the public deferred queue API,
 explicit force override, and clean linkage/shutdown. Evidence:
 `fresh-child-runtime.log` and `offline-affinity-runtime-b398f37f34.json`.
 This run is not a process-crash, MySQL or timed recovery test.
+
+## Claimed queue entries under capacity pressure
+
+`e6b1a80e6ce8c3a35c0c9f133dc409ff415e44e6`:
+`PORT_WITH_JAVA8_ADAPTATION`.
+The complete production and test patch was reviewed. The retained public
+`setOfflineRewards` still trimmed the oldest entry even if it was running or
+admitted to the serial backlog. Its new shared trimming helper also serves the
+checked new-reward admission path. It snapshots claims without creating registry
+entries, protects versioned occurrence IDs, counts removable copies of identical
+legacy entries, and measures the existing 65535-byte limit with explicit UTF-8.
+Unclaimed entries retain oldest-first removal. The appended entry is protected.
+If only admitted entries remain above capacity, admission fails visibly instead
+of deleting the durable record; the checked mutation does not publish that edit.
+The public setter retains its existing queued-write API and intentional full-list
+replacement semantics; this fix does not make stale caller snapshots atomic.
+No format, storage column, public signature or configuration change.
+
+A red-before-fix regression starts actual asynchronous queue replay, holds the
+first effect pending, and verifies both active and serial backlog occurrences
+survive a public setter's trimming. After publication both still complete and
+are removed normally. Further tests verify two claimed identical legacy copies
+survive while an excess third copy is removed, and multibyte queue size is bounded.
+Focused queue tests: 40 PASS before the added legacy-count regression. Full
+Java 8 producer/consumer and runtime evidence is recorded separately below.
+
+Final Java 8 `clean install`: 728 unit + 78 artifact = 806 PASS.
+Exact dependent `clean verify`: 45 unit + one artifact = 46 PASS.
+Zero failures, errors or skips. Producer SHA-256:
+`db38ffddb7640db965fc842ea60f270450bfe389bc49a66b4ce682d8693ce1c3`.
+Consumer SHA-256:
+`bdccb6a4e3fa91d5dc748322f078b7177caa74128db4f9a6a20f036050401235`.
+Base classes remain major 52 (1867 producer, 2484 consumer). Evidence:
+`claimed-trimming-red.log`, `claimed-trimming-focused.log`,
+`claimed-trimming-clean-install.log`,
+`claimed-trimming-consumer-clean-verify.log`,
+`claimed-trimming-build-results.json`.
+
+Actual Java 8/Spigot 1.8.8 acceptance passes five existing offline recovery,
+completed-prefix queue round-trip, explicit-force and linkage/shutdown checks
+against this exact consumer. Evidence: `claimed-trimming-runtime.log`.
+The new capacity-pressure behavior is exercised deterministically, not presented
+as a live-server capacity or crash test.

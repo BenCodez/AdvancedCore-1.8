@@ -34,6 +34,51 @@ class LegacyOfflineQueueReplayTest {
         Fixture(LegacyDirectUserDataTest.Fixture f,RewardHandler rewards,AdvancedCoreConfigOptions options){this.f=f;this.rewards=rewards;this.options=options;}
         String pending(){return f.cache.getCachedValue("OfflineRewards").getString();}
     }
+    @Test void publicQueueTrimmingRetainsActiveAndSerialBacklogOccurrences() {
+        String first="first%asyncoccurrence%"+UUID.randomUUID(),second="second%asyncoccurrence%"+UUID.randomUUID();
+        fixture(Arrays.asList(first,second),x->{
+            CompletableFuture<Void> effect=new CompletableFuture<>();
+            when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenReturn(effect);
+            CompletionStage<Void> replay=x.f.user.checkOfflineRewardsAsync();
+            assertFalse(replay.toCompletableFuture().isDone());verify(x.rewards,times(1)).givePersistedQueueRewardAsync(any(),any(),any());
+            attachPublicQueueSetter(x);
+            char[] oversized=new char[70000];Arrays.fill(oversized,'x');
+            ArrayList<String> replacement=new ArrayList<>(Arrays.asList(first,second,new String(oversized)));
+            x.f.user.setOfflineRewards(replacement);
+            assertEquals(Arrays.asList(first,second),replacement,"Both running and admitted backlog entries must survive trimming");
+            x.f.cache.processChanges();assertEquals(first+"%line%"+second,x.pending());
+            effect.complete(null);replay.toCompletableFuture().join();assertEquals("",x.pending());
+        });
+    }
+    @Test void trimmingRetainsOnlyTheClaimedCountOfIdenticalLegacyEntries() {
+        char[] text=new char[30000];Arrays.fill(text,'x');String legacy=new String(text);
+        fixture(Arrays.asList(legacy,legacy),x->{
+            CompletableFuture<Void> effect=new CompletableFuture<>();when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenReturn(effect);
+            CompletionStage<Void> replay=x.f.user.checkOfflineRewardsAsync();
+            ArrayList<String> replacement=new ArrayList<>(Arrays.asList(legacy,legacy,legacy));
+            try {
+                java.lang.reflect.Method trim=AdvancedCoreUser.class.getDeclaredMethod("trimOfflineEntries",ArrayList.class,String.class);trim.setAccessible(true);
+                trim.invoke(x.f.user,replacement,null);
+            } catch(Exception failure){throw new AssertionError(failure);}
+            assertEquals(Arrays.asList(legacy,legacy),replacement,"Only the unclaimed duplicate may be removed");
+            effect.complete(null);replay.toCompletableFuture().join();assertEquals("",x.pending());
+        });
+    }
+
+    @Test void publicQueueCapacityCountsUtf8Bytes() {
+        fixture(Collections.emptyList(),x->{
+            attachPublicQueueSetter(x);
+            char[] oversized=new char[30000];Arrays.fill(oversized,'\u20ac');
+            ArrayList<String> replacement=new ArrayList<>(Arrays.asList(new String(oversized),"retained"));
+            x.f.user.setOfflineRewards(replacement);assertEquals(Collections.singletonList("retained"),replacement);
+        });
+    }
+    private void attachPublicQueueSetter(Fixture x) {
+        doCallRealMethod().when(x.f.user).setOfflineRewards(any());
+        try {java.lang.reflect.Field data=AdvancedCoreUser.class.getDeclaredField("data");data.setAccessible(true);data.set(x.f.user,x.f.data);}
+        catch(Exception failure){throw new AssertionError(failure);}
+    }
+
     @Test void explicitDeferredOptionsRoundTripOccurrenceProgressAndNestedMetadata() {
         fixture(Collections.emptyList(),x->{
             doCallRealMethod().when(x.f.user).addOfflineRewards(any(),any(),any());

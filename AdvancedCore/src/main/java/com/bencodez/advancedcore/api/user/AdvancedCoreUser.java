@@ -731,21 +731,34 @@ public class AdvancedCoreUser {
     /** Preserve legacy oldest-first trimming, while retaining all admitted occurrences. */
     private ArrayList<String> appendOfflineEntry(ArrayList<String> pending,String added) {
         pending.add(added);
+        trimOfflineEntries(pending,added);
+        return pending;
+    }
+
+    private void trimOfflineEntries(ArrayList<String> pending,String protectedEntry) {
+        HashSet<String> admitted=new HashSet<>();
+        HashMap<String,Integer> removableLegacy=new HashMap<>();
+        for(String entry:pending)if(occurrenceId(entry)==null)removableLegacy.merge(entry,1,Integer::sum);
+        synchronized(REPLAY_CLAIMS_LOCK) {
+            HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);
+            PersistedReplayClaims claims=users==null?null:users.get(getUUID());
+            if(claims!=null) {
+                admitted.addAll(claims.occurrences);
+                for(Entry<String,Integer> claim:claims.legacy.entrySet())
+                    removableLegacy.computeIfPresent(claim.getKey(),(entry,count)->Math.max(0,count-claim.getValue()));
+            }
+        }
         while(String.join("%line%",pending).getBytes(StandardCharsets.UTF_8).length>65535) {
             int removable=-1;
-            synchronized(REPLAY_CLAIMS_LOCK) {
-                HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);
-                PersistedReplayClaims claims=users==null?null:users.get(getUUID());
-                for(int i=0;i<pending.size()-1;i++) {
-                    String candidate=pending.get(i),id=occurrenceId(candidate);
-                    boolean active=claims!=null && (id==null?claims.legacy.getOrDefault(candidate,0)>0:claims.occurrences.contains(id));
-                    if(!active){removable=i;break;}
-                }
+            for(int i=0;i<pending.size();i++) {
+                String candidate=pending.get(i),id=occurrenceId(candidate);
+                boolean active=id==null?removableLegacy.getOrDefault(candidate,0)<=0:admitted.contains(id);
+                if(!active && !candidate.equals(protectedEntry)){removable=i;break;}
             }
             if(removable<0)throw new IllegalStateException("Offline queue capacity cannot discard an admitted occurrence");
-            pending.remove(removable);
+            String removed=pending.remove(removable);
+            if(occurrenceId(removed)==null)removableLegacy.computeIfPresent(removed,(entry,count)->Math.max(0,count-1));
         }
-        return pending;
     }
 
 	private String queuedRewardReference(Reward reward) {
@@ -2221,18 +2234,9 @@ public class AdvancedCoreUser {
 	}
 
 	public void setOfflineRewards(ArrayList<String> offlineRewards) {
-		// MySQL TEXT max length is 65535 bytes
-		int maxLength = 65535;
-		String str = String.join("%line%", offlineRewards);
-
-		// Remove oldest rewards until within limit
-		while (str.getBytes().length > maxLength && !offlineRewards.isEmpty()) {
-			offlineRewards.remove(0);
-			str = String.join("%line%", offlineRewards);
-		}
-
-		data.setStringList(plugin.getUserManager().getOfflineRewardsPath(), offlineRewards);
-	}
+        trimOfflineEntries(offlineRewards,null);
+        data.setStringList(plugin.getUserManager().getOfflineRewardsPath(),offlineRewards);
+    }
 
 	public void setPlayerName(String playerName) {
 		this.playerName = playerName;
