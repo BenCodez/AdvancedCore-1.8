@@ -12,6 +12,43 @@ import org.mockito.MockedStatic;
 import com.bencodez.advancedcore.api.user.AdvancedCoreUser;
 
 class LegacyUserActionCompletionTest {
+    @Test void conclusivelyUnstartedActionReleasesReservationBeforeChangedPayloadRetry() {
+        fixture(f->{
+            java.util.List<Reward.ReplayCheckpoint> writes=new java.util.ArrayList<>();
+            RewardOptions options=new RewardOptions();options.setAsyncReplayCheckpointConsumer(writes::add);
+            Reward.ReplayState state=Reward.replayStateFor(options);java.util.HashMap<String,String> metadata=new java.util.HashMap<>();
+            AdvancedCoreUser.AsyncActionCollection first=f.user.beginAsyncActionCollection(state,metadata,"native-exp");
+            f.user.giveExp(7);CompletionStage<Void> rejected=f.user.endAsyncActionCollection(first);
+            when(f.player.isOnline()).thenReturn(false);f.dispatch.runNext();drain(f);
+            assertTrue(AdvancedCoreUser.isReplayActionNotStarted(failure(rejected)));verify(f.player,never()).giveExp(7);
+            assertEquals(2,writes.size(),"Admission and reservation release must both be checkpointed");
+            when(f.player.isOnline()).thenReturn(true);
+            AdvancedCoreUser.AsyncActionCollection retry=f.user.beginAsyncActionCollection(state,metadata,"native-exp");
+            f.user.giveExp(9);CompletionStage<Void> result=f.user.endAsyncActionCollection(retry);drain(f);result.toCompletableFuture().join();
+            verify(f.player).giveExp(9);verify(f.player,never()).giveExp(7);
+        });
+    }
+    @Test void startedFailureRetainsReservationAndCannotRerollItsPayload() {
+        fixture(f->{
+            RewardOptions options=new RewardOptions();options.setAsyncReplayCheckpointConsumer(checkpoint->{});
+            Reward.ReplayState state=Reward.replayStateFor(options);java.util.HashMap<String,String> metadata=new java.util.HashMap<>();
+            IllegalStateException uncertain=new IllegalStateException("Native action entered before failure");doThrow(uncertain).when(f.player).giveExp(7);
+            AdvancedCoreUser.AsyncActionCollection first=f.user.beginAsyncActionCollection(state,metadata,"native-exp");
+            f.user.giveExp(7);CompletionStage<Void> failed=f.user.endAsyncActionCollection(first);drain(f);
+            assertSame(uncertain,failure(failed));assertFalse(AdvancedCoreUser.isReplayActionNotStarted(uncertain));
+            AdvancedCoreUser.AsyncActionCollection retry=f.user.beginAsyncActionCollection(state,metadata,"native-exp");
+            f.user.giveExp(9);CompletionStage<Void> result=f.user.endAsyncActionCollection(retry);drain(f);
+            assertInstanceOf(IllegalStateException.class,failure(result));verify(f.player,times(1)).giveExp(7);verify(f.player,never()).giveExp(9);
+        });
+    }
+    private void drain(Fixture f) {
+        int count=0;
+        while(!f.dispatch.queued.isEmpty() || !f.dispatch.asyncQueued.isEmpty()) {
+            assertTrue(count++<100,"Action scope did not settle");
+            if(!f.dispatch.queued.isEmpty())f.dispatch.runNext();else f.dispatch.runAsyncNext();
+        }
+    }
+
     @Test void experienceWaitsForNativeOwnerExecution() {
         fixture(f -> {
             AdvancedCoreUser.AsyncActionCollection scope=f.user.beginAsyncActionCollection();f.user.giveExp(7);

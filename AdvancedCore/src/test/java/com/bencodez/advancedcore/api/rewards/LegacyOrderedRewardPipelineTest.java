@@ -389,7 +389,8 @@ class LegacyOrderedRewardPipelineTest {
             CompletionStage<Void> first=f.reward.giveRewardUserAsync(user,new HashMap<>(),shared);drain(f);first.toCompletableFuture().join();
             assertNull(Reward.currentReplayState());assertNull(Reward.currentReplayKey());assertNull(Reward.currentReplayOccurrenceId());
             CompletionStage<Void> second=f.reward.giveRewardUserAsync(user,new HashMap<>(),shared);drain(f);second.toCompletableFuture().join();
-            assertEquals(2,occurrences.size());assertNotEquals(occurrences.get(0),occurrences.get(1));assertTrue(shared.getAsyncReplayProgress().isEmpty());assertNull(shared.getAsyncReplayState());
+            assertEquals(2,occurrences.size());assertNotEquals(occurrences.get(0),occurrences.get(1));assertTrue(shared.getAsyncReplayProgress().isEmpty());assertNull(shared.getAsyncReplayState());assertNull(shared.getAsyncReplayKey());assertNull(shared.getAsyncReplayOccurrenceId());
+            assertNotSame(Reward.replayStateFor(shared),Reward.replayStateFor(shared));
         });
     }
     @Test void queuedRootAndDeferredItemActionsKeepTheirAdmittedInventoryHandler() {

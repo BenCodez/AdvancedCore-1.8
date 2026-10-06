@@ -592,7 +592,7 @@ public class RewardHandler {
                 java.util.List<String> configured=data.isList(path)?new ArrayList<>(data.getStringList(path)):java.util.Collections.emptyList();
                 return Reward.replayNestedRewardSequence(plugin,options.getPlaceholders(),lane,configured,state,parentKey,(name,index)->{
                     RewardOptions child=options.copyForNestedDispatch(parentKey+"/"+name+":"+index);child.setAsyncReplayState(state);
-                    state.mergeReplayMetadataInto(child.getPlaceholders());
+                    if(Reward.isDurableReplay(options))state.mergeReplayMetadataInto(child.getPlaceholders());
                     return giveRewardAsync(user,name,child);
                 });
             }

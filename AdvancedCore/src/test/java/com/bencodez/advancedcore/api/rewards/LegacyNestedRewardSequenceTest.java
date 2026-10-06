@@ -15,6 +15,44 @@ import com.bencodez.advancedcore.AdvancedCorePlugin;
 import com.bencodez.advancedcore.api.user.AdvancedCoreUser;
 
 class LegacyNestedRewardSequenceTest {
+    @Test void listSharesFrozenMetadataThroughStateWithoutExposingItToFreshChildPlaceholders() {
+        for(boolean durable:Arrays.asList(false,true))fixture(f->{
+            Reward first=f.reward("first"),second=f.reward("second");
+            String marker="__advancedcore_replay_commands_child_snapshot";
+            RewardOptions parent=durable?f.options():new RewardOptions();parent.addPlaceholder("ordinary","parent");
+            when(first.giveRewardAsync(eq(f.user),any())).thenAnswer(call->{
+                RewardOptions child=call.getArgument(1);child.addPlaceholder("ordinary","child-only");
+                child.getAsyncReplayState().recordReplayMetadata(marker,"frozen");
+                return CompletableFuture.completedFuture(null);
+            });
+            when(second.giveRewardAsync(eq(f.user),any())).thenAnswer(call->{
+                RewardOptions child=call.getArgument(1);
+                assertEquals("parent",child.getPlaceholders().get("ordinary"));
+                assertEquals("frozen",child.getAsyncReplayState().replayMetadata(marker));
+                if(durable)assertEquals("frozen",child.getPlaceholders().get(marker));
+                else assertTrue(child.getPlaceholders().keySet().stream().noneMatch(k->k.startsWith("__advancedcore_replay_")),
+                        "Fresh child placeholders must not contain internal cursors or frozen selections");
+                return CompletableFuture.completedFuture(null);
+            });
+            YamlConfiguration config=new YamlConfiguration();config.set("Rewards",Arrays.asList("first","second"));
+            CompletionStage<Void> result=f.handler.giveRewardAsync(f.user,config,"Rewards",parent);f.drain();await(result);
+            assertEquals(Collections.singletonMap("ordinary","parent"),parent.getPlaceholders());
+        });
+    }
+    @Test void reusedFreshListOptionsExecuteEachCommandAndRetainNoCursor() {
+        fixture(f->{
+            org.bukkit.Server server=mock(org.bukkit.Server.class);
+            org.bukkit.command.ConsoleCommandSender sender=mock(org.bukkit.command.ConsoleCommandSender.class);
+            when(Bukkit.getServer()).thenReturn(server);when(Bukkit.getConsoleSender()).thenReturn(sender);
+            YamlConfiguration config=new YamlConfiguration();config.set("Rewards",Arrays.asList("/once-per-send"));
+            RewardOptions reused=new RewardOptions().addPlaceholder("ordinary","parent");
+            for(int i=0;i<2;i++) {CompletionStage<Void> result=f.handler.giveRewardAsync(f.user,config,"Rewards",reused);f.drain();await(result);}
+            verify(server,times(2)).dispatchCommand(sender,"once-per-send");
+            assertEquals(Collections.singletonMap("ordinary","parent"),reused.getPlaceholders());
+            assertNull(reused.getAsyncReplayState());assertNull(reused.getAsyncReplayKey());assertNull(reused.getAsyncReplayOccurrenceId());
+        });
+    }
+
     @Test void duplicateNamesAreSequentialDistinctOccurrencesAndAwaitBothEffects() {
         fixture(f -> {
             Reward child=f.reward("same");CompletableFuture<Void> first=new CompletableFuture<>(),second=new CompletableFuture<>();List<RewardOptions> calls=new ArrayList<>();
