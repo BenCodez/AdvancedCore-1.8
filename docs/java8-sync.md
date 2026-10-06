@@ -3410,3 +3410,52 @@ or exactly-once external effects from these API tests. Sibling failed-publicatio
 retry and lifecycle/admin queue ownership still need audit. No schema, existing
 signature, release metadata or proxy payload is changed. No push, PR or final
 review; the complete backport remains in progress.
+
+## Awaited builtin command replay
+
+The actual Command, Commands list/section, NumberCommand and RandomCommand
+registrations now use completion-aware command APIs for asynchronous reward
+replay. Existing synchronous callbacks, public void methods, configuration
+keys/defaults, priority and placeholder registration stay unchanged. Numeric
+selection and random selection are frozen with existing replay metadata;
+concrete command expansions and per-lane cursors use the existing command
+snapshot format. Console/player mixed sections capture replay context before
+the availability continuation, preserve console-before-player ordering and
+check required player availability before console side effects. Player chat
+commands retain their slash prefix and validate the captured live player on
+Bukkit owner admission. No wire/schema or release metadata changes.
+
+Six regression methods exercise actual registrations, awaited failures,
+player availability/disconnect fencing, frozen numeric result/random choice
+and expanded substitution on retry, empty lists and malformed list elements.
+Focused nested suite:33 PASS. Java8 clean install:573 unit +18 artifact =591
+AdvancedCore PASS. Exact workspace-local producer identity verified before
+consumer clean verify:45 unit +1 artifact =46 VotingPlugin PASS. All tests
+have zero failures/errors/skips. Both artifacts have base class major <=52.
+
+AdvancedCore SHA256:
+5cc34dff475fd8ea4acaaa46959745fc20303cd7aca59b3ce0ff7a1c0c01d245.
+VotingPlugin SHA256:
+0517d3039e8f53c73343acd02c5247d4ef1e8f1a5c4960fff12e9f2d161fa0e2.
+Build commands use actual JDK8u504, Maven clean install/clean verify,
+-Dmaven.resolver.transport=wagon, the explicit isolated .m2/repository and
+runtime/tmp paths, as established earlier. Exact evidence commands/logs:
+command-final-clean-install.log and command-final-consumer-clean-verify.log.
+
+Real Java8/Spigot1.8.8 acceptance covers seven command forms (28 checks),
+completed command checkpoint SIGKILL recovery offline/timed (22 checks), and
+partial-list SIGKILL recovery offline/timed (22 checks). Partial-list tests
+physically confirm the first command cursor in SQLite, deliberately reject
+the second command before any effect, kill without plugin disable, clear the
+configured list and automatically resume. Only the unacknowledged second
+command executes; native totals are6 diamonds/14 experience, the original
+occurrence survives and the queue clears. Completed-sequence tests retain
+3 diamonds/7 experience without redispatch. Native player data is explicitly
+saved by the acceptance fixture. The rebuilt consumer's complete base-class
+contents match the live-tested consumer byte-for-byte; ZIP hashes differ.
+
+These tests do not prove exactly-once effects when an external command acts
+before its acknowledgement fails, power-loss durability, every transport or
+storage backend, or the complete upstream backport. Mixed upstream commits
+remain PARTIAL. Original167 checkouts remain unchanged. Runtime fixtures,
+logs, artifacts and Maven caches stay outside tracked sources. No push/PR.

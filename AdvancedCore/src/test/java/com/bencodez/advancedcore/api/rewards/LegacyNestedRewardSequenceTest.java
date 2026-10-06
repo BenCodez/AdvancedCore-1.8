@@ -271,6 +271,69 @@ class LegacyNestedRewardSequenceTest {
             assertTrue(commands.isEmpty());f.dispatch.runNext();assertTrue(commands.isEmpty());f.dispatch.runNext();assertEquals(Arrays.asList("first player"),commands);assertFalse(result.toCompletableFuture().isDone());verify(f.dispatch.scheduler).runTaskLater(eq(f.dispatch.plugin),any(Runnable.class),eq(1L));f.dispatch.runNext();await(result);assertEquals(Arrays.asList("first player","second"),commands);
         });
     }
+    @Test void actualConsoleCommandBuiltinsAwaitDispatchAndPropagateFailure() {
+        for(String path:Arrays.asList("Command","Commands","NumberCommand","RandomCommand"))fixture(f->{
+            when(f.user.getPlayerName()).thenReturn("player");YamlConfiguration config=new YamlConfiguration();
+            if(path.equals("Command"))config.set(path,"probe");else if(path.equals("NumberCommand")){config.set(path+".Min",5);config.set(path+".Max",5);config.set(path+".Command","probe %number%");}else config.set(path,Arrays.asList("probe"));
+            CompletableFuture<Void> effect=new CompletableFuture<>();com.bencodez.advancedcore.api.misc.MiscUtils misc=mock(com.bencodez.advancedcore.api.misc.MiscUtils.class);when(misc.executeConsoleCommandsAsync(eq("player"),anyString(),any())).thenReturn(effect);when(misc.executeConsoleCommandsAsync(eq("player"),any(ArrayList.class),any(),anyBoolean())).thenReturn(effect);
+            try(MockedStatic<com.bencodez.advancedcore.api.misc.MiscUtils> global=mockStatic(com.bencodez.advancedcore.api.misc.MiscUtils.class)) {
+                global.when(com.bencodez.advancedcore.api.misc.MiscUtils::getInstance).thenReturn(misc);CompletionStage<Object> result=f.builtin(path).onRewardRequestAsync(mock(Reward.class),f.user,config,new HashMap<>());f.drain();assertFalse(result.toCompletableFuture().isDone(),path);effect.completeExceptionally(new IllegalStateException("command failure"));f.drain();assertThrows(CompletionException.class,()->await(result));
+            }
+        });
+    }
+    @Test void numericAndRandomBuiltinsKeepChoiceAndExpandedCommandAfterFailureAndConfigMutation() {
+        for(String path:Arrays.asList("NumberCommand","RandomCommand"))fixture(f->{
+            com.bencodez.advancedcore.AdvancedCoreConfigOptions settings=mock(com.bencodez.advancedcore.AdvancedCoreConfigOptions.class);when(settings.isDisableJavascript()).thenReturn(true);when(f.dispatch.plugin.getOptions()).thenReturn(settings);when(f.user.getPlayerName()).thenReturn("player");
+            org.bukkit.Server server=mock(org.bukkit.Server.class);when(Bukkit.getServer()).thenReturn(server);List<String> calls=new ArrayList<>();
+            when(server.dispatchCommand(any(),anyString())).thenAnswer(c->{assertTrue(Bukkit.isPrimaryThread());calls.add(c.getArgument(1));if(calls.size()==1)throw new IllegalStateException("physical command failed");return true;});
+            YamlConfiguration config=new YamlConfiguration();if(path.equals("NumberCommand")){config.set(path+".Min",5);config.set(path+".Max",5);config.set(path+".Command","probe %number% %value%");}else config.set(path,Arrays.asList("probe original %value%"));
+            com.bencodez.advancedcore.api.rewards.injected.RewardInject inject=f.builtin(path);RewardOptions options=f.options();options.getPlaceholders().put("value","old");Reward.ReplayState state=Reward.replayStateFor(options);state.captureRuntime(f.dispatch.plugin);
+            try(MockedStatic<Reward> replay=mockStatic(Reward.class,CALLS_REAL_METHODS)) {
+                replay.when(Reward::currentReplayState).thenReturn(state);replay.when(Reward::currentReplayKey).thenReturn("root");
+                CompletionStage<Object> initial=inject.onRewardRequestAsync(mock(Reward.class),f.user,config,options.getPlaceholders());f.drain();assertThrows(CompletionException.class,()->await(initial));assertFalse(f.writes.isEmpty());assertEquals(1,calls.size());
+                Reward.ReplayCheckpoint saved=f.writes.get(f.writes.size()-1);RewardOptions retry=f.options();retry.getPlaceholders().putAll(saved.getPlaceholders());retry.getPlaceholders().put("value","new");Reward.ReplayState restored=Reward.replayStateFor(retry);restored.captureRuntime(f.dispatch.plugin);replay.when(Reward::currentReplayState).thenReturn(restored);
+                if(path.equals("NumberCommand")){config.set(path+".Min",99);config.set(path+".Max",99);config.set(path+".Command","changed %number% %value%");}else config.set(path,Collections.emptyList());
+                CompletionStage<Object> resumed=inject.onRewardRequestAsync(mock(Reward.class),f.user,config,retry.getPlaceholders());f.drain();Object value=await(resumed);assertEquals(Arrays.asList(path.equals("NumberCommand")?"probe 5 old":"probe original old",path.equals("NumberCommand")?"probe 5 old":"probe original old"),calls);if(path.equals("NumberCommand"))assertEquals("5",value);else assertNull(value);
+            }
+        });
+    }
+    @Test void emptyRandomCommandIsNoOpAndMalformedRandomElementDoesNotDispatch() {
+        fixture(f->{
+            YamlConfiguration config=new YamlConfiguration();config.set("RandomCommand",Collections.emptyList());com.bencodez.advancedcore.api.rewards.injected.RewardInject inject=f.builtin("RandomCommand");
+            com.bencodez.advancedcore.api.misc.MiscUtils misc=mock(com.bencodez.advancedcore.api.misc.MiscUtils.class);
+            try(MockedStatic<com.bencodez.advancedcore.api.misc.MiscUtils> global=mockStatic(com.bencodez.advancedcore.api.misc.MiscUtils.class)) {
+                global.when(com.bencodez.advancedcore.api.misc.MiscUtils::getInstance).thenReturn(misc);assertNull(await(inject.onRewardRequestAsync(mock(Reward.class),f.user,config,new HashMap<>())));config.set("RandomCommand",Arrays.asList(7));assertThrows(ClassCastException.class,()->inject.onRewardRequestAsync(mock(Reward.class),f.user,config,new HashMap<>()));verifyNoInteractions(misc);
+            }
+        });
+    }
+    @Test void mixedCommandBuiltinValidatesPlayerBeforeConsoleAndAwaitsBothLanes() {
+        fixture(f->{
+            when(f.user.getPlayerName()).thenReturn("player");CompletableFuture<Void> available=new CompletableFuture<>(),console=new CompletableFuture<>(),player=new CompletableFuture<>();when(f.user.validatePlayerCommandAvailabilityAsync()).thenReturn(available);when(f.user.preformCommandAsync(any(),any(),any(),any())).thenReturn(player);
+            com.bencodez.advancedcore.api.misc.MiscUtils misc=mock(com.bencodez.advancedcore.api.misc.MiscUtils.class);when(misc.executeConsoleCommandsAsync(eq("player"),any(ArrayList.class),any(),eq(true),any(),any())).thenReturn(console);YamlConfiguration config=new YamlConfiguration();config.set("Commands.Console",Arrays.asList("console"));config.set("Commands.Player",Arrays.asList("player"));f.builtin("Commands");
+            com.bencodez.advancedcore.api.rewards.injected.RewardInject mixed=f.handler.getInjectedRewards().stream().filter(i->i.getPath().equals("Commands") && i instanceof com.bencodez.advancedcore.api.rewards.injected.RewardInjectConfigurationSection).findFirst().get();
+            try(MockedStatic<com.bencodez.advancedcore.api.misc.MiscUtils> global=mockStatic(com.bencodez.advancedcore.api.misc.MiscUtils.class)) {
+                global.when(com.bencodez.advancedcore.api.misc.MiscUtils::getInstance).thenReturn(misc);CompletionStage<Object> result=mixed.onRewardRequestAsync(mock(Reward.class),f.user,config,new HashMap<>());verifyNoInteractions(misc);assertFalse(result.toCompletableFuture().isDone());available.complete(null);assertFalse(result.toCompletableFuture().isDone());verify(f.user,never()).preformCommandAsync(any(),any(),any(),any());console.complete(null);verify(f.user).preformCommandAsync(any(),any(),any(),any());assertFalse(result.toCompletableFuture().isDone());player.complete(null);await(result);
+            }
+        });
+    }
+    @Test void unavailablePlayerPreventsMixedConsoleSideEffects() {
+        fixture(f->{
+            CompletableFuture<Void> unavailable=new CompletableFuture<>();unavailable.completeExceptionally(new IllegalStateException("offline"));when(f.user.validatePlayerCommandAvailabilityAsync()).thenReturn(unavailable);YamlConfiguration config=new YamlConfiguration();config.set("Commands.Console",Arrays.asList("console"));config.set("Commands.Player",Arrays.asList("player"));f.builtin("Commands");
+            com.bencodez.advancedcore.api.rewards.injected.RewardInject mixed=f.handler.getInjectedRewards().stream().filter(i->i.getPath().equals("Commands") && i instanceof com.bencodez.advancedcore.api.rewards.injected.RewardInjectConfigurationSection).findFirst().get();com.bencodez.advancedcore.api.misc.MiscUtils misc=mock(com.bencodez.advancedcore.api.misc.MiscUtils.class);
+            try(MockedStatic<com.bencodez.advancedcore.api.misc.MiscUtils> global=mockStatic(com.bencodez.advancedcore.api.misc.MiscUtils.class)) {
+                global.when(com.bencodez.advancedcore.api.misc.MiscUtils::getInstance).thenReturn(misc);CompletionStage<Object> result=mixed.onRewardRequestAsync(mock(Reward.class),f.user,config,new HashMap<>());assertThrows(CompletionException.class,()->await(result));verifyNoInteractions(misc);verify(f.user,never()).preformCommandAsync(any(),any(),any(),any());
+            }
+        });
+    }
+    @Test void realPlayerAsyncCommandUsesChatAndFencesDisconnectedPlayer() {
+        for(boolean disconnected:Arrays.asList(false,true))fixture(f->{
+            com.bencodez.advancedcore.AdvancedCoreConfigOptions options=mock(com.bencodez.advancedcore.AdvancedCoreConfigOptions.class);when(options.isDisableJavascript()).thenReturn(true);when(f.dispatch.plugin.getOptions()).thenReturn(options);
+            try{java.lang.reflect.Field field=AdvancedCoreUser.class.getDeclaredField("plugin");field.setAccessible(true);field.set(f.user,f.dispatch.plugin);}catch(Exception failure){throw new AssertionError(failure);}
+            doCallRealMethod().when(f.user).preformCommandAsync(any(),any(),any(),any());org.bukkit.entity.Player player=mock(org.bukkit.entity.Player.class);UUID id=UUID.randomUUID();when(player.getUniqueId()).thenReturn(id);when(player.isOnline()).thenReturn(true);when(f.user.getPlayer()).thenReturn(player);when(Bukkit.getPlayer(id)).thenReturn(player);
+            HashMap<String,String> placeholders=new HashMap<>();placeholders.put("value","expanded");CompletionStage<Void> result=f.user.preformCommandAsync(new ArrayList<>(Arrays.asList("probe %value%")),placeholders,null,null);f.dispatch.runNext();if(result.toCompletableFuture().isDone())await(result);assertFalse(result.toCompletableFuture().isDone());verify(player,never()).chat(anyString());
+            if(disconnected)when(Bukkit.getPlayer(id)).thenReturn(null);f.dispatch.runNext();if(disconnected){assertThrows(CompletionException.class,()->await(result));verify(player,never()).chat(anyString());}else{await(result);verify(player).chat("/probe expanded");}
+        });
+    }
     private Object await(CompletionStage<?> stage) {
         try{return stage.toCompletableFuture().get(2,TimeUnit.SECONDS);}
         catch(ExecutionException failure){throw new CompletionException(failure.getCause());}

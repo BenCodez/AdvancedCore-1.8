@@ -1471,6 +1471,18 @@ public class RewardHandler {
 
 		injectedRewards.add(new RewardInjectConfigurationSection("NumberCommand") {
 
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplayCommandSnapshot(placeholders,"console");}
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if(section==null && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                ConfigurationSection configured=section==null?new org.bukkit.configuration.file.YamlConfiguration():section;
+                String number=Reward.replaySelection(placeholders,()->String.valueOf(ThreadLocalRandom.current().nextInt(configured.getInt("Min",0),configured.getInt("Max",100)+1)));
+                String command=configured.getString("Command","").replace("%number%",number);
+                return MiscUtils.getInstance().executeConsoleCommandsAsync(user.getPlayerName(),command,placeholders).thenApply(ignored->(Object)number);
+            }
+
 			@Override
 			public String onRewardRequested(Reward reward, AdvancedCoreUser user, ConfigurationSection section,
 					HashMap<String, String> placeholders) {
@@ -1726,6 +1738,15 @@ public class RewardHandler {
 
 		injectedRewards.add(new RewardInjectString("Command") {
 
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplayCommandSnapshot(placeholders,"console");}
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                if(!data.isString(getPath()) && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                String command=data.getString(getPath(),"");
+                return MiscUtils.getInstance().executeConsoleCommandsAsync(user.getPlayerName(),command,placeholders).thenApply(ignored->(Object)command);
+            }
+
 			@Override
 			public String onRewardRequest(Reward reward, AdvancedCoreUser user, String value,
 					HashMap<String, String> placeholders) {
@@ -1795,6 +1816,15 @@ public class RewardHandler {
 
 		injectedRewards.add(new RewardInjectStringList("Commands") {
 
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplayCommandSnapshot(placeholders,"console");}
+            @Override @SuppressWarnings("unchecked") public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                if(!data.isList(getPath()) && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                ArrayList<String> commands=new ArrayList<>((java.util.List<String>)data.getList(getPath(),new ArrayList<String>()));
+                return MiscUtils.getInstance().executeConsoleCommandsAsync(user.getPlayerName(),commands,placeholders,true).thenApply(ignored->(Object)null);
+            }
+
 			@Override
 			public String onRewardRequest(Reward reward, AdvancedCoreUser user, ArrayList<String> list,
 					HashMap<String, String> placeholders) {
@@ -1833,6 +1863,23 @@ public class RewardHandler {
 		}));
 
 		injectedRewards.add(new RewardInjectConfigurationSection("Commands") {
+
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplayCommandSnapshot(placeholders,"console") || Reward.hasReplayCommandSnapshot(placeholders,"player");}
+            @Override @SuppressWarnings("unchecked") public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if(section==null && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                ConfigurationSection configured=section==null?new org.bukkit.configuration.file.YamlConfiguration():section;
+                ArrayList<String> console=new ArrayList<>((java.util.List<String>)configured.getList("Console",new ArrayList<String>()));
+                ArrayList<String> player=new ArrayList<>((java.util.List<String>)configured.getList("Player",new ArrayList<String>()));
+                boolean consolePending=Reward.hasReplayCommandSnapshot(placeholders,"console") || !console.isEmpty();
+                boolean playerPending=Reward.hasReplayCommandSnapshot(placeholders,"player")?Reward.hasPendingReplayCommandWork(placeholders,"player"):!player.isEmpty();
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey();
+                java.util.concurrent.CompletionStage<Void> availability=playerPending?user.validatePlayerCommandAvailabilityAsync():java.util.concurrent.CompletableFuture.completedFuture(null);
+                return availability.thenCompose(ignored->consolePending?MiscUtils.getInstance().executeConsoleCommandsAsync(user.getPlayerName(),console,placeholders,configured.getBoolean("Stagger",true),state,key):java.util.concurrent.CompletableFuture.completedFuture(null))
+                        .thenCompose(ignored->user.preformCommandAsync(player,placeholders,state,key)).thenApply(ignored->(Object)null);
+            }
 
 			@SuppressWarnings("unchecked")
 			@Override
@@ -2228,6 +2275,16 @@ public class RewardHandler {
 		}.addLore("Sub rewards"))).priority(5).alwaysForce().postReward());
 
 		injectedRewards.add(new RewardInjectStringList("RandomCommand") {
+
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplayCommandSnapshot(placeholders,"console");}
+            @Override @SuppressWarnings("unchecked") public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                java.util.List<String> commands=(java.util.List<String>)data.getList(getPath(),new ArrayList<String>());
+                if(commands.isEmpty() && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                String command=Reward.replaySelection(placeholders,()->commands.get(ThreadLocalRandom.current().nextInt(commands.size())));
+                return MiscUtils.getInstance().executeConsoleCommandsAsync(user.getPlayerName(),command,placeholders).thenApply(ignored->(Object)null);
+            }
 
 			@Override
 			public String onRewardRequest(Reward r, AdvancedCoreUser user, ArrayList<String> list,

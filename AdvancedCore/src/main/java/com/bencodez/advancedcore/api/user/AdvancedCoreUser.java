@@ -1958,6 +1958,35 @@ public class AdvancedCoreUser {
 		}
 	}
 
+    /** Completion-aware player chat commands; the existing void APIs stay unchanged. */
+    public CompletionStage<Void> preformCommandAsync(ArrayList<String> commands,HashMap<String,String> placeholders) {
+        return preformCommandAsync(commands,placeholders,Reward.currentReplayState(),Reward.currentReplayKey());
+    }
+
+    public CompletionStage<Void> preformCommandAsync(ArrayList<String> commands,HashMap<String,String> placeholders,
+            Reward.ReplayState state,String key) {
+        if(state!=null)state.captureRuntime(plugin);
+        ServerThreadRewardDispatch owner=state==null?plugin.getRewardDispatch():state.getActionDispatchOwner();
+        ArrayList<String> templates=commands==null?new ArrayList<>():new ArrayList<>(commands);
+        return owner.dispatch(()->{
+            ArrayList<String> expanded=templates.isEmpty()?new ArrayList<>():PlaceholderUtils.replaceJavascript(getPlayer(),PlaceholderUtils.replacePlaceHolder(templates,placeholders));
+            return Reward.replayCommandSequence(plugin,placeholders,"player",templates,expanded,state,key,(command,index)->{
+                Player player=getPlayer();
+                if(player==null)return failedStage(new IllegalStateException("Player command requires an available player"));
+                return owner.dispatchAfterTicks(()->{
+                    validateLiveScheduledPlayer(player);player.chat("/"+command);return CompletableFuture.<Void>completedFuture(null);
+                },0,30000);
+            });
+        },30000);
+    }
+
+    /** Fail before mixed console/player sections issue any side effect. */
+    public CompletionStage<Void> validatePlayerCommandAvailabilityAsync() {
+        Reward.ReplayState state=Reward.currentReplayState();if(state!=null)state.captureRuntime(plugin);
+        ServerThreadRewardDispatch owner=state==null?plugin.getRewardDispatch():state.getActionDispatchOwner();
+        return owner.dispatch(()->getPlayer()==null?failedStage(new IllegalStateException("Player command requires an available player")):CompletableFuture.<Void>completedFuture(null),30000);
+    }
+
 	public void preformCommand(String command, HashMap<String, String> placeholders) {
 		if (command != null && !command.isEmpty()) {
 			final String cmd = PlaceholderUtils.replaceJavascript(getPlayer(),

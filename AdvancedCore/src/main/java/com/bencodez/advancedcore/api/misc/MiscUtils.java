@@ -244,8 +244,20 @@ public class MiscUtils {
 
     private java.util.concurrent.CompletionStage<Void> executeConsoleCommandsAwaited(String playerName,ArrayList<String> input,
             HashMap<String,String> placeholders,boolean stagger,boolean single) {
-        com.bencodez.advancedcore.api.rewards.Reward.ReplayState state=com.bencodez.advancedcore.api.rewards.Reward.currentReplayState();
-        String key=com.bencodez.advancedcore.api.rewards.Reward.currentReplayKey();
+        return executeConsoleCommandsAwaited(playerName,input,placeholders,stagger,single,
+                com.bencodez.advancedcore.api.rewards.Reward.currentReplayState(),com.bencodez.advancedcore.api.rewards.Reward.currentReplayKey());
+    }
+
+    /** Explicit context for a mixed-command continuation after player admission. */
+    public java.util.concurrent.CompletionStage<Void> executeConsoleCommandsAsync(String playerName,ArrayList<String> commands,
+            HashMap<String,String> placeholders,boolean stagger,
+            com.bencodez.advancedcore.api.rewards.Reward.ReplayState state,String key) {
+        return executeConsoleCommandsAwaited(playerName,commands,placeholders,stagger,false,state,key);
+    }
+
+    private java.util.concurrent.CompletionStage<Void> executeConsoleCommandsAwaited(String playerName,ArrayList<String> input,
+            HashMap<String,String> placeholders,boolean stagger,boolean single,
+            com.bencodez.advancedcore.api.rewards.Reward.ReplayState state,String key) {
         if(state!=null)state.captureRuntime(plugin);
         com.bencodez.advancedcore.api.rewards.ServerThreadRewardDispatch owner=state==null?plugin.getRewardDispatch():state.getActionDispatchOwner();
         ArrayList<String> templates=input==null?new ArrayList<>():new ArrayList<>(input);
