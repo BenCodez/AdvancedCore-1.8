@@ -2434,3 +2434,76 @@ The full upstream ledger/platform matrix and independent review remain incomplet
 No push or PR opening is authorized. Original CRLF sources remain CRLF; whitespace
 validation uses git -c core.whitespace=cr-at-eol diff --check without changing Git
 configuration.
+
+## Production offline occurrence recovery
+
+Offline dispatch now keeps its persisted entry throughout awaited reward execution.
+It reserves a per-plugin/per-UUID occurrence shared by user wrappers, migrates a
+legacy entry to a durable UUID before effects, and serializes distinct queued
+occurrences. Identical legacy entries are still distinct legitimate rewards.
+Ordinary/forced entry points retain the fork's force-offline options; the new
+checkOfflineRewardsAsync receipt covers admission, effects/checkpoints and removal.
+The void entry points observe/report failure. Queued work retains the dispatcher
+and inventory runtime captured before storage work instead of rebinding on reload.
+
+Checkpoints atomically rewrite only the current occurrence using the existing
+checked mutation owner. Completion removes only that current entry after all
+promised effects settle. Failed effects retain the occurrence/progress for retry;
+failed storage publication leaves the last acknowledged predecessor. Physically
+committed edits with notification failure advance their local reference and report
+the notification failure without replaying the edit. New additions carry the
+pinned-main normal/snapshot provenance and occurrence envelopes. Legacy oldest-first
+capacity trimming remains, protecting claimed entries and refusing a new admission
+if active work is the only possible victim. Owner-thread void admission schedules
+the write off-owner and logs rejection; off-owner admission propagates failures.
+
+The codec is adapted from pinned main AdvancedCoreUser: v3 progress/fingerprints,
+v2 and count-only legacy checkpoint classification, placeholders and occurrence
+markers. Malformed/negative/duplicate progress and duplicate occurrence identities
+fail instead of becoming fresh work. Occurrence parsing excludes placeholder values.
+Existing storage keys, %line% serialization, schema and proxy wire payloads remain.
+Old plain reward entries migrate on admission. Pre-port binaries cannot interpret
+new protected queue envelopes; downgrade requires preserving/restoring compatible
+queue data rather than assuming they can replay new entries.
+
+Eighteen focused production-boundary tests cover pending retention, repeated polls
+and separate wrappers, forced dispatch, serial identical entries, admission/effect/
+checkpoint/completion failures, appends and replay metadata, committed notification
+failure, malformed/duplicate identities/progress, runtime replacement, disabled
+processing and capacity preservation. Initial integration compilation caught a
+package-private isRetired call (use the existing public UUID retirement identity).
+The first test run lacked the static plugin fixture; later second-wrapper stubbing
+nested another mock invocation. Both fixture errors were corrected; no assertion
+was weakened. The runtime helper initially had a Java8 shadowed-variable compile
+error and was corrected before execution.
+
+Actual Temurin8u504 commands retain the dedicated repository and temporary directory:
+
+- mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install
+- mvn -B -f VotingPlugin/pom.xml with the same properties clean verify
+- same producer properties, -Dtest=LegacyOfflineQueueReplayTest test; related focused
+  resolver/mutation run:33 tests before the additional wrapper/capacity regressions
+
+Final builds:489 unit+18 artifact(507) AdvancedCore tests;45 unit+1 artifact(46)
+VotingPlugin tests, zero failures/errors/skips. Base classes1829/2446,maxmajor52.
+SHA256: AdvancedCore `2d93b3fd84fc654e5dbbbf7eb148b682266825a593f9900f618b8049e318fbea`;
+VotingPlugin `47f795acd204e36e1f16caff53287bc84f2626ce937d607ab06de009ccd13c8c`.
+
+Native Java8/Spigot1.8.8 fixture e7b798affa uses addOfflineRewards and
+checkOfflineRewardsAsync on an actual VotingPlugin user. An injection checkpoint
+notification performs an independent checked SQL read before queue completion and
+proves the occurrence/v3 progress is physically present; completion checks its
+physical removal. Generated UUID restriction, experience/potion/native items,
+overflow persistence/restart and connected-client recovery all pass(10 checks),
+with clean enable/disable and SQLite integrity. Earlier fixture79f81b25fe also passed
+on its earlier candidate; the final result above belongs to the final candidate.
+
+Not complete: timed queue adaptation, offline crash/restart recovery, nested choices,
+rolling storage generations/shutdown acceptance and public explicit queue-clear/
+bulk-wipe concurrency. VotingPlugin.clearOfflineVotes intentionally clears the
+queue and has not been redesigned; disappearance now rejects a checkpoint instead
+of silently permitting the next effect. No claim of end-to-end exactly-once effects.
+The complete upstream ledger, other platform matrix and independent final review
+remain unfinished. No source push or PR opening is authorized.

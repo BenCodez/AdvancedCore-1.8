@@ -571,6 +571,24 @@ public class UserData {
         return decodeStringList(committed);
     }
 
+    /** Checked observational queue snapshot; admission still performs an atomic mutation. */
+    public ArrayList<String> getStringListStrict(String key) {
+        java.util.Objects.requireNonNull(key,"key");
+        if(key.isEmpty() || key.contains(" "))throw new IllegalArgumentException("Invalid queue key");
+        try(com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Scope admission=user.getPlugin().getUserStorageOwnership().admit()) {
+            com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot owner=storageOwner();
+            owner.getLock().lock();
+            try {
+                if(owner.isWriting())throw new IllegalStateException("Queue snapshot requested during a storage write");
+                UserDataCache cache=user.getPlugin().getUserManager().getDataManager().getUserDataCache().get(java.util.UUID.fromString(user.getUUID()));
+                DataValue value=cache==null || cache.getUuid()==null?null:cache.getCachedValue(key);
+                if(value==null)value=readValuesStrictOwned().get(key);
+                return value==null?new ArrayList<>():decodeStringList(value);
+            }catch(SQLException | IOException failure){throw new IllegalStateException("Queue snapshot could not be read",failure);}
+            finally {owner.getLock().unlock();}
+        }
+    }
+
     private static ArrayList<String> decodeStringList(DataValue value) {
         if(!value.isString())throw new IllegalStateException("Queue predecessor is not a string");
         String stored=value.getString();

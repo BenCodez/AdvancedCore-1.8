@@ -119,6 +119,17 @@ public class Reward {
             if (!runtimeCaptured) bindOwner(plugin.getRewardDispatch(), plugin.getFullInventoryHandler());
         }
 
+        /** New queued occurrences retain the runtime admitted before storage work. */
+        public void captureAdmittedRuntime(ReplayState admitted) {
+            ServerThreadRewardDispatch owner;
+            com.bencodez.advancedcore.api.item.FullInventoryHandler inventory;
+            synchronized(admitted) {
+                if(!admitted.runtimeCaptured)throw new IllegalStateException("Queue runtime has not been admitted");
+                owner=admitted.checkpointOwner;inventory=admitted.inventoryOwner;
+            }
+            bindOwner(owner,inventory);
+        }
+
         public synchronized ServerThreadRewardDispatch getActionDispatchOwner() { return checkpointOwner; }
         public synchronized com.bencodez.advancedcore.api.item.FullInventoryHandler getInventoryOwner() { return inventoryOwner; }
         private synchronized void bindOwner(ServerThreadRewardDispatch owner,
