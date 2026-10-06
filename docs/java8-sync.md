@@ -665,3 +665,47 @@ vote/reward,points10,total1,gracefulstop/restart. Logs have no exception,
 linkage or checked-write failure markers. Fixture-only plugin removed and
 owned processes stopped. Evidence checked-cache-runtime-results-RewardPrepSQL.json.
 This is not liveMySQL/FLAT/proxy/failed-shutdown or durable replay acceptance.
+
+## Checked reward-configuration publication prerequisite
+
+RewardFileData.saveStrict and FilesManager.editFileStrict now publish through
+FileThread.saveConfigurationStrict under the existing file owner. The new
+checked path stages a YAML document beside its target and atomically replaces
+it only after serialization succeeds. Existing modes/owner/group and canonical
+symlink target location are preserved. Malformed or non-file predecessors fail
+without replacement; failed staging/publication cleans the temporary file and
+propagates the original exception. An unsupported atomic move remains a visible
+failure. This is publication acknowledgement, not an fsync/power-loss guarantee.
+
+The audit corrected a prior assumption: FilesManager.editFile calls
+FileThread.getThread().run(Runnable), which executes synchronously under the
+FileThread lock. It is not a queued asynchronous write; its defect for checked
+completion is swallowed IOException, and it may start the deprecated polling
+thread. The additive checked path reuses the same serialization owner without
+calling getThread or starting that thread. Legacy void methods remain available.
+
+Six regressions cover nested YAML/readback, failed serialization/atomic move,
+malformed/non-file predecessors, symlink/POSIX identity preservation and actual
+RewardFileData-to-FilesManager delegation with missing backing-document failure.
+ActualJava8 producer clean install180unit+12artifact and exactconsumer clean
+verify19unit+1artifact pass, all zero failures/errors/skips; base major<=52.
+Evidence checked-configuration-build-results.json and paired clean Maven logs.
+
+This API is a prerequisite for completion-aware snapshot/queue deferral.
+The legacy setRewardFile path has not been replaced: its in-memory mutation
+and public registry publication must be coordinated with checked file success
+and queue persistence before being wired into durable replay. Do not mutate
+a registered snapshot before a failed publication or acknowledge queue creation
+from a void setter. Root async decisions/events/defer, checked queue append,
+native action receipts, provenance/occurrences/checkpoints/replay, generated
+snapshot quarantine, global storage lifecycle and the full ledger remain due.
+No configuration/schema/data/wire/release version change.
+
+Exactconsumerb8bb5a48... passes actualJava8/Spigot1.8.8 CheckedSnapSQL
+checked RewardFileData publication/readback, pending user receipt and
+owner/worker/owner callbacks, realvote/reward,points10,total1,stop/restart.
+Logs contain no exception/linkage/checked-write failure markers. Temporary
+snapshot deleted, fixture-only console jar removed, owned processes stopped.
+Evidence checked-cache-runtime-results-CheckedSnapSQL.json. This validates
+the checked API; generated queue snapshot transaction/replay is not yet wired.
+Not liveMySQL/FLAT/proxy/failed-shutdown acceptance.

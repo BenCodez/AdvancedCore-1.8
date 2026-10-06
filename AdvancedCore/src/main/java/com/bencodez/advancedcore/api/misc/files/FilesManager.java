@@ -44,6 +44,10 @@ public class FilesManager {
 	 * @param file the file
 	 * @param data the data
 	 */
+	public void editFileStrict(File file, FileConfiguration data) throws IOException {
+		FileThread.getInstance().saveConfigurationStrict(file, data);
+	}
+
 	public void editFile(File file, FileConfiguration data) {
 		FileThread.getInstance().run(new Runnable() {
 

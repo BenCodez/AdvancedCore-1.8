@@ -446,6 +446,14 @@ public class RewardFileData {
 		configData = fileData.getConfigurationSection("");
 	}
 
+	/** Checked publication for completion-aware deferral; legacy void saves remain available. */
+	public void saveStrict() throws IOException { saveStrict(fileData); }
+
+	public void saveStrict(FileConfiguration data) throws IOException {
+		if (dataFile == null || data == null) throw new IOException("Reward configuration has no backing document");
+		FilesManager.getInstance().editFileStrict(dataFile, data);
+	}
+
 	public void save() {
 		FilesManager.getInstance().editFile(dataFile, fileData);
 	}

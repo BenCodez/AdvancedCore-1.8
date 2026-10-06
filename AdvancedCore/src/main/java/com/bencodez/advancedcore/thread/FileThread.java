@@ -168,6 +168,48 @@ public class FileThread {
 	private FileThread() {
 	}
 
+	/** Checked configuration replacement under the same owner as legacy FilesManager writes. */
+	public void saveConfigurationStrict(File file, FileConfiguration data) throws IOException {
+		java.util.Objects.requireNonNull(file, "file");
+		java.util.Objects.requireNonNull(data, "data");
+		synchronized (FileThread.getInstance()) {
+			Path target = file.getCanonicalFile().toPath();
+			PosixFileAttributes attributes = null;
+			if (!Files.notExists(target)) {
+				if (!Files.isRegularFile(target)) throw new IOException("Configuration target is not a regular file");
+				try { new YamlConfiguration().load(target.toFile()); }
+				catch (InvalidConfigurationException invalid) { throw new IOException("Existing configuration is malformed", invalid); }
+				if (Files.getFileAttributeView(target, PosixFileAttributeView.class) != null) {
+					attributes = Files.readAttributes(target, PosixFileAttributes.class);
+				}
+			}
+			Files.createDirectories(target.getParent());
+			Path staged = Files.createTempFile(target.getParent(), ".configuration-", ".tmp");
+			Throwable failure = null;
+			try {
+				data.save(staged.toFile());
+				if (attributes != null) {
+					PosixFileAttributeView view = Files.getFileAttributeView(staged, PosixFileAttributeView.class);
+					view.setPermissions(attributes.permissions());
+					view.setOwner(attributes.owner());
+					view.setGroup(attributes.group());
+				}
+				publishStrict(staged, target);
+				staged = null;
+			} catch (IOException | RuntimeException | Error problem) {
+				failure = problem;
+				throw problem;
+			} finally {
+				if (staged != null) {
+					try { Files.deleteIfExists(staged); }
+					catch (IOException cleanup) {
+						if (failure != null) failure.addSuppressed(cleanup); else throw cleanup;
+					}
+				}
+			}
+		}
+	}
+
 	/**
 	 * Publishes one checked legacy user-data batch under the existing file owner.
 	 * Does not start the deprecated polling thread. Malformed/unreadable input is
