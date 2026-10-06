@@ -34,3 +34,6 @@ API used in the plugins developed by BenCodez, can be used in any project.
   Versions:  
   LATEST - latest stable release  
   Check out all tags [on the releases tab](https://github.com/BenCodez/AdvancedCore/tags).
+
+
+Java 8 synchronization decisions and validation: [docs/java8-sync.md](docs/java8-sync.md).
