@@ -2334,3 +2334,53 @@ completion deletion, retries, nested snapshots/choices, and crash acceptance
 remain unfinished. No queue metadata/storage/wire format was changed here.
 Complete upstream classification, other features/platform matrix and independent
 final review remain required. No source push or PR opening is authorized.
+
+## Persisted reward resolution and checked generated snapshots
+
+Added the package-private-origin PersistedQueueReference capability and awaited
+RewardHandler queue resolver. Normal references resolve registered live rewards;
+explicit snapshot references resolve generated snapshots restricted to the
+requesting user UUID. Legacy references prefer registered normal rewards and may
+fall back to marked generated snapshots. Missing/malformed references fail without
+creating an empty reward or interpreting the reference as a command. Generated
+files already in the legacy global registry do not become normal queue rewards.
+
+The generated loader performs a checked YAML read, requires DirectlyDefinedReward,
+and constructs from that captured document. It never reopens the file through the
+legacy auto-creating loader, and checkRewardFile cannot republish a loaded snapshot.
+The file identity remains available through getFile. Snapshot creation now uses the
+existing saveStrict publication API before reporting created provenance or updating
+the registry. No public legacy void reward API was removed.
+
+Eleven focused regressions pass, including a file deletion between validated read
+and construction, malformed YAML, user binding, explicit normal/snapshot precedence,
+unsafe/missing references, disabled runtime and failed checked snapshot publication.
+The publication regression first failed against the unchecked save path. The
+current full Java8 build passes 460 unit +18 artifact tests (478) in AdvancedCore,
+and 45 unit +1 artifact test (46) in VotingPlugin; zero failures/errors/skips.
+Actual commands (Temurin8u504, workspace-local Maven repository):
+
+- mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install
+- mvn -B -f VotingPlugin/pom.xml with the same properties clean verify
+- focused producer test: same properties, -Dtest=LegacyPersistedRewardResolutionTest test
+
+Final artifact SHA256: AdvancedCore
+`310bd4b45d24fdf39e9e6b8c20a4a1e776623f798e65ed8b6aa78e32bd31e839`;
+VotingPlugin `2e501f92f319d656bb8c3827c6fb50db5c284c045a791c028d493945bf68dac3`.
+Base classes1826/2443, maximum class-file major52. Native Java8/Spigot1.8.8
+fixture3962760ba4 passes all9 checks on the exact VotingPlugin candidate:
+generated snapshot refuses unrelated UUID; experience/potion/root actions and
+fixture checkpoint settle; three overflow diamonds survive clean disable/restart
+and reach the connected protocol client; SQLite integrity is healthy.
+The helper initially failed to compile because its command pointed at a nonexistent
+Spigot jar; correcting the fixture classpath compiled successfully before execution.
+
+This remains a resolver/publication foundation. Production offline/timed dispatch
+still needs occurrence migration, shared per-user claims, serial replay, persisted
+checkpoint rewrite, completion-only removal and failure/restart recovery. The
+runtime checkpoint is a fixture file, not production queue persistence. Nested
+replay choices and the remaining upstream ledger/platform matrix are incomplete.
+No queue storage format/config/proxy payload changed in this cohort. No push or PR
+opening; the independent final review remains pending the full scope.

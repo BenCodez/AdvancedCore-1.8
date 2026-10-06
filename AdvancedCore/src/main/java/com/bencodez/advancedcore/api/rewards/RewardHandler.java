@@ -571,6 +571,74 @@ public class RewardHandler {
 
 	}
 
+    /** Await a registered reward without creating a missing reward file. */
+    public java.util.concurrent.CompletionStage<Void> giveRewardAsync(AdvancedCoreUser user, Reward reward,
+            RewardOptions options) {
+        if(reward==null)return failedQueueReward(new IllegalStateException("Reward was not resolved"));
+        if(!plugin.isEnabled())return failedQueueReward(new IllegalStateException("Plugin disabled before asynchronous reward dispatch"));
+        return reward.giveRewardAsync(user,options);
+    }
+
+    /** Persisted queue provenance permits a bounded generated snapshot fallback, never a command. */
+    public java.util.concurrent.CompletionStage<Void> givePersistedQueueRewardAsync(AdvancedCoreUser user,
+            com.bencodez.advancedcore.api.user.PersistedQueueReference reference,RewardOptions options) {
+        if(reference==null)return java.util.concurrent.CompletableFuture.completedFuture(null);
+        RewardOptions captured=options==null?new RewardOptions():options.copyForDispatch();
+        Reward.ReplayState state=Reward.replayStateFor(captured);state.captureRuntime(plugin);captured.setAsyncReplayState(state);
+        return state.getActionDispatchOwner().dispatchOffPrimary(()->{
+            String stored=reference.getReference();
+            if(stored==null || stored.isEmpty())return failedQueueReward(new IllegalStateException("Persisted queue reference is empty"));
+            String name=stored;Boolean snapshot=null;
+            String prefix="\\AdvancedCoreQueue/1/";
+            if(stored.startsWith(prefix)) {
+                String encoded=stored.substring(prefix.length());int separator=encoded.indexOf('/');
+                if(separator<1)return failedQueueReward(new IllegalArgumentException("Malformed persisted queue reference"));
+                String mode=encoded.substring(0,separator);
+                if(!mode.equals("normal") && !mode.equals("snapshot"))return failedQueueReward(new IllegalArgumentException("Unknown persisted queue reference mode"));
+                try {name=new String(java.util.Base64.getUrlDecoder().decode(encoded.substring(separator+1)),java.nio.charset.StandardCharsets.UTF_8);}
+                catch(IllegalArgumentException failure){return failedQueueReward(failure);}
+                snapshot=mode.equals("snapshot");
+            }
+            Reward resolved;
+            if(Boolean.TRUE.equals(snapshot))resolved=getQueuedGeneratedReward(name,user.getUUID());
+            else {
+                resolved=resolveRegisteredQueuedReward(name);
+                if(resolved==null && snapshot==null)resolved=getQueuedGeneratedReward(name,user.getUUID());
+            }
+            if(resolved==null)return failedQueueReward(new IllegalStateException("Persisted queued reward could not be resolved"));
+            return giveRewardAsync(user,resolved,captured);
+        },java.util.concurrent.TimeUnit.SECONDS.toMillis(30));
+    }
+
+    private Reward resolveRegisteredQueuedReward(String name) {
+        if(hasDirectRewardHandle(name))return getReward(name);
+        String normalized=normalizeLookupName(name);
+        List<Reward> registered=getRewards();List<Reward> snapshot;
+        synchronized(registered){snapshot=new ArrayList<>(registered);}
+        for(Reward candidate:snapshot) {
+            if(candidate.getName().equalsIgnoreCase(normalized) && candidate.getConfig()!=null
+                    && !candidate.getConfig().isDirectlyDefinedReward())return candidate;
+        }
+        return null;
+    }
+
+    public Reward getQueuedGeneratedReward(String name,String userUuid) {
+        if(name==null || name.isEmpty() || userUuid==null || userUuid.isEmpty())return null;
+        name=normalizeLookupName(name);validateRewardFileName(name);
+        File folder=new File(getDefaultFolder(),"DirectlyDefined");File file=new File(folder,name+".yml");
+        if(!file.isFile())return null;
+        org.bukkit.configuration.file.YamlConfiguration data=new org.bukkit.configuration.file.YamlConfiguration();
+        try {data.load(file);}catch(java.io.IOException | org.bukkit.configuration.InvalidConfigurationException failure){
+            throw new IllegalStateException("Persisted generated reward snapshot could not be read",failure);
+        }
+        if(!data.getBoolean("DirectlyDefinedReward",false))return null;
+        return new QueuedGeneratedReward(file,name,java.util.Collections.singleton(userUuid),data);
+    }
+
+    private static <T> java.util.concurrent.CompletableFuture<T> failedQueueReward(Throwable failure) {
+        java.util.concurrent.CompletableFuture<T> result=new java.util.concurrent.CompletableFuture<>();result.completeExceptionally(failure);return result;
+    }
+
 	public void giveReward(AdvancedCoreUser user, String reward, RewardOptions rewardOptions) {
 		if (!reward.equals("")) {
 			if (reward.startsWith("/")) {

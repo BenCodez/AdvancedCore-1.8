@@ -1,0 +1,75 @@
+package com.bencodez.advancedcore.api.rewards;
+
+import java.io.File;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+
+import com.bencodez.advancedcore.api.user.AdvancedCoreUser;
+
+/**
+ * A generated directly-defined reward that is still referenced by a persisted
+ * offline or timed queue. These rewards are intentionally restricted to the
+ * users whose persisted queue references the generated reward name.
+ */
+public final class QueuedGeneratedReward extends Reward {
+
+	private final Set<String> allowedUserUuids;
+
+	QueuedGeneratedReward(File file, String reward, Set<String> allowedUserUuids,
+			org.bukkit.configuration.ConfigurationSection validatedData) {
+		super(reward, validatedData);
+		setFile(file);
+		this.allowedUserUuids = Collections.unmodifiableSet(new HashSet<>(allowedUserUuids));
+	}
+
+	@Override
+	public void giveReward(AdvancedCoreUser user, RewardOptions rewardOptions) {
+		if (!isAllowed(user)) return;
+		super.giveReward(user, rewardOptions);
+	}
+
+	@Override
+	public java.util.concurrent.CompletionStage<Void> giveRewardAsync(AdvancedCoreUser user,
+			RewardOptions rewardOptions) {
+		if (!isAllowed(user)) return failedStage(
+				new IllegalStateException("Generated queued reward is not authorized for this user"));
+		return super.giveRewardAsync(user, rewardOptions);
+	}
+
+    private static <T> java.util.concurrent.CompletableFuture<T> failedStage(Throwable failure) {
+        java.util.concurrent.CompletableFuture<T> result=new java.util.concurrent.CompletableFuture<>();
+        result.completeExceptionally(failure);return result;
+    }
+
+	private boolean isAllowed(AdvancedCoreUser user) {
+		if (user != null && user.getUUID() != null && allowedUserUuids.contains(user.getUUID())) return true;
+		plugin.getLogger().warning("Blocked generated queued reward " + getRewardName()
+				+ " for a user without a matching persisted queue entry");
+		return false;
+	}
+
+	@Override
+	public boolean isGeneratedSnapshotCreated() {
+		// A loaded generated snapshot must retain snapshot provenance if execution is
+		// deferred again (paused rewards, vanish-as-offline, or another offline retry).
+		return true;
+	}
+
+	@Override
+	public void checkRewardFile() {
+		// The checked snapshot has already been captured. Never reopen or republish it.
+	}
+
+	@Override
+	public void validate() {
+		// This file is a persisted snapshot created from a reward that was already
+		// validated before it was queued. Revalidating requires the live injected
+		// registries and adds no security boundary; execution is instead restricted
+		// to UUIDs with a matching persisted queue reference.
+	}
+
+	public Set<String> getAllowedUserUuids() {
+		return allowedUserUuids;
+	}
+}

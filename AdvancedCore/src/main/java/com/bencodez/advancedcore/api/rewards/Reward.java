@@ -283,6 +283,7 @@ public class Reward {
 
 	@Getter
 	private boolean needsRewardFile = true;
+    @Getter private boolean generatedSnapshotCreated;
 
 	/** The plugin. */
 	AdvancedCorePlugin plugin = AdvancedCorePlugin.getInstance();
@@ -1133,7 +1134,9 @@ public class Reward {
 		reward.getConfig().getFileData().options()
 				.header("Directly defined reward file. WRONG PLACE TO EDIT THIS! DO NOT EDIT");
 		reward.getConfig().setDirectlyDefinedReward(true);
-		reward.getConfig().save(reward.getConfig().getFileData());
+        try {reward.getConfig().saveStrict(reward.getConfig().getFileData());}
+        catch(java.io.IOException failure){throw new IllegalStateException("Generated reward snapshot publication failed",failure);}
+        generatedSnapshotCreated=true;
 		plugin.getRewardHandler().updateReward(reward);
 	}
 
