@@ -2673,3 +2673,65 @@ effect and durable acknowledgement. Explicit clear/wipe concurrency, startup col
 read repair, same-instance reenable/failed shutdown, partial native-action restart,
 the broader runtime/platform matrix and complete upstream ledger still require work.
 Independent final review remains pending. No push or PR opening is authorized.
+
+
+### Acknowledged root/action checkpoint crash acceptance (2026-10-06)
+
+Four native Java 8/Spigot 1.8.8 cases now pass 10 checks each (40 total) against the
+unchanged consumer SHA256
+`ff7187cb6208f65d66b4106eb30477be91f107f77d6d8108970df1462efc0502`:
+
+- Completed root, offline case626fb307e9: automatic login replay.
+- Completed root, timed case3976f6bfb7: automatic timed startup replay.
+- Partial first item action, offline case8919a0187e: automatic login replay.
+- Partial first item action, timed case4ca02aace4: automatic timed startup replay.
+
+These are actual process crashes: the fixture verifies an independently readable
+SQLite checkpoint, keeps the original receipt pending, kills its owned Java process
+with SIGKILL and observes exit -9 without VotingPlugin disable. The physical queue is
+checked again before restart. The restarted process receives no queue-check/resend
+command: normal login or timed startup drives replay. An inspection-only command
+waits for the resulting checkpoint hook and physical completion removal.
+
+The completed-root cases verify a durable fixture root-call counter stays 1. The
+completed root is skipped after restart and native inventory/experience remain
+exactly 3 diamonds/7 experience. The partial cases pause after the first item action
+checkpoint, with exactly 3 diamonds and 0 experience. On restart the unfinished root
+is reconstructed once (root-call counter 2), its persisted item receipt skips that
+item, and the pending experience action executes once. Final native state is again
+exactly 3 diamonds/7 experience. Both boundaries preserve the same occurrence ID,
+remove the completed queue entry, pass SQLite integrity and clean second-process
+shutdown, and show no Java8 linkage errors.
+
+The partial fixture wraps the existing PlayerRewardEvent checkpoint consumer, calls
+the original checked publication first, and pauses only after independently reading
+its acknowledged one-action receipt. It never substitutes for the acknowledgement
+or directly edits the stored queue. Native player data is explicitly saved through
+Bukkit before each kill. This establishes recovery at these acknowledged boundaries;
+it does not prove atomicity between SQLite and unsaved Minecraft player data, power-
+loss recovery, or a crash between a non-idempotent effect and its acknowledgement.
+Arbitrary injector side effects without replay-aware receipts are not covered.
+
+Commands actually run in workspace-local runtime fixture directories:
+
+- Temurin 8u504 javac -source 8 -target 8 against the exact VotingPlugin candidate and
+  the actual Spigot 1.8.8 jar, output to the fixture classes directory.
+- Java 8 jar packaging of the small fixture helper and descriptor.
+- python3 run.py offline and python3 run.py timed, with the working directory
+  runtime/queue-crash-acceptance.
+- python3 run.py offline and python3 run.py timed, with the working directory
+  runtime/partial-queue-crash-acceptance.
+
+The scripts launch the Java 8 runtime with workspace-local java.io.tmpdir and a loopback
+Minecraft protocol client. Servers, jars, helper sources, data and logs stay under the
+isolated workspace and are not committed. Independent artifact hash checks confirm
+both production candidates are unchanged. The previous full build evidence remains
+AdvancedCore 537/VotingPlugin 46 tests, zero failures/errors/skips, base max major 52;
+there was no production/test-source change requiring another full build this cohort.
+
+These cases supersede the earlier lack of evidence for acknowledged root and first-
+item partial-action crash recovery. Random/nested reward restart, unacknowledged-effect
+boundaries, explicit clear/wipe concurrency, cold-read startup repair, same-instance
+reenable/failed shutdown and the wider upstream/platform matrix remain outstanding.
+No complete-main or globally exactly-once claim is made. Independent final review
+remains pending; no push or PR opening is authorized.
