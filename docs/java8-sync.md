@@ -78,8 +78,13 @@ NuVotifier 2.7.2 initialized; provider test votes exercised offline persistence,
 online processing and rewards. Disabled sites were neither recreated nor counted. `/vote`
 opened its inventory; reload and graceful shutdown completed; SQLite integrity was `ok`.
 
-The archived Bungee runtime initialized on Java 8. Full VotingPlugin proxy routing and
-MySQL acceptance are not verified because the isolated fixture has no MySQL service.
+The archived Bungee runtime enabled VotingPlugin on Java 8 against an isolated loopback
+MariaDB 11.8.6 database using its bundled legacy MySQL JDBC driver. NuVotifier ingress,
+PLUGINMESSAGING delivery and backend rewards succeeded. One offline vote survived a
+graceful proxy shutdown/restart, delivered once on login, and cleared from the JSON cache.
+A backend configured with the documented shared MySQL database read the same totals;
+the fixture recorded three votes and three points. This tests MariaDB interoperability,
+not a separate Oracle MySQL installation or every proxy transport.
 PlaceholderAPI 2.11.6 registered the VotingPlugin expansion and resolved persisted totals
 and points; Vault 1.7.3 registered its permissions hook. An economy provider is absent, so
 economy rewards remain unverified. A broad historical-data upgrade matrix remains unverified. These limitations must not be represented as passed runtime tests.
@@ -111,12 +116,41 @@ The full comparison ledger remains incomplete; these changes must not be describ
 Existing failure contracts elsewhere in the legacy storage layer have not been globally rewritten.
 A strict delete API is not a claim that every legacy caller now uses strict storage operations.
 
-Latest coordinated validation: AdvancedCore Java 8 `clean install`: **42 unit tests + 1 artifact
-integration test**, all pass. VotingPlugin Java 8 `clean verify`: **8 unit tests + 1 artifact
+Latest coordinated validation: AdvancedCore Java 8 `clean install`: **49 unit tests + 1 artifact
+integration test**, all pass. VotingPlugin Java 8 `clean verify`: **11 unit tests + 1 artifact
 integration test**, all pass, using that exact isolated AdvancedCore installation.
 
 Legacy SQLite statements and result sets now close on success, early returns and errors,
-without closing the shared connection or changing query strings and legacy failure returns.
+without closing the shared connection or changing legacy failure returns. SQLite player-name
+lookup and update values are now bound parameters, so apostrophes remain data and SQL-looking
+names cannot select another player (upstream `0f5a0477a2d38fb70732a76e46e15be6d725fe31`).
+The regression tests execute against SQLite 3.7.2 and failed against the previous implementation.
 This is a local old-layout adaptation, rather than adoption of the modern storage abstraction.
 AdvancedCore is a library artifact with no `plugin.yml`; runtime acceptance occurs inside
 VotingPlugin, which shades it, rather than independent Bukkit installation.
+
+## Additional Java 8 runtime adaptations
+
+SimpleAPI 0.0.7's Bungee JSON cache uses a newer static Gson parser API that is absent
+from the Java 8 Bungee acceptance runtime's Gson 2.8.0. A narrow source bridge preserves
+its public methods, nested cache layout and existing parsing behavior while using the
+compatible parser instance methods. The bridge source is pinned to SimpleAPI
+`1617356c3f026f741b5562bf62c8de59345637e1`; Gson 2.8.0 is a provided compile/test API,
+not a new shaded runtime library. Nested existing-cache reload/save/reconstruction tests
+run against that exact Gson API. Non-object/empty existing caches retain the old loud
+initialization failure and remain byte-for-byte untouched; they are not replaced by empty
+state. Malformed JSON recovery remains the inherited behavior and is not a guarantee of
+recovering votes from damaged files. No cache-format migration is required.
+
+VotingPlugin proxy shutdown now tolerates incomplete initialization while still closing
+the initialized database and stopping the proxy. AdvancedCore time-checker shutdown is safe
+before its timer has loaded and still stops an initialized timer. Three proxy tests cover missing proxy,
+missing method/cache initialization, and database closure before the time checker exists.
+This does not suppress startup failures or change normal vote routing.
+
+Hardcoded admin/reward-editor icons use Spigot 1.8 materials. The dragon-head decorative
+icon uses a skull item because 1.8 has no dragon-head material. Player-head items retain
+legacy SKULL_ITEM data value 3 and the existing owner metadata. Bundled GUI defaults use
+SIGN/WATCH rather than OAK_SIGN/CLOCK. Configuration keys and item purposes remain the
+same; existing operator files are not replaced or automatically rewritten. Operators with
+modern material names in old custom GUI files must select their 1.8 equivalents.
