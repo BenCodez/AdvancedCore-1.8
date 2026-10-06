@@ -35,6 +35,10 @@ checkout, or read-only reference is modified.
 - Current Velocity, Paper/Folia, Adventure and modern NMS/platform features.
   Velocity sources are retained but excluded from the Java 8 artifact. Legacy
   Bungee support does not imply current Bungee runtime Java 8 compatibility.
+- Automatic teardown recovery after a producer misses the five-second shutdown
+  grace period. Disable reports failure and retains its provider/accepted work for
+  explicit retry; it does not force cancellation or close beneath active writes.
+  Automatic deferred cleanup after that timeout is not implemented.
 - A complete historical-data upgrade matrix or exactly-once effects across every
   process-crash boundary. Recovery evidence covers the scenarios actually tested.
 - Economy-provider reward acceptance, Oracle MySQL-specific acceptance, and every
@@ -59,6 +63,12 @@ Actual Temurin 8u504, explicit workspace-local Maven repository and temporary pa
 - Real Java 8/Spigot 1.8.8 queue recovery fixture: 12 passing checks for root/native
   rewards, physical timed checkpoint, completion-removal retry and active claim
   fencing, overflow persistence/restart delivery and SQLite integrity.
+
+Additional current-artifact Java 8/Spigot 1.8.8 acceptance: 12 checks passed for
+basic vote/reward processing, checked native storage, point commands, SQLite
+reload/reinitialization and restart persistence (final points/total: 10/1). Ten
+offline reward-checkpoint/item-recovery checks also passed. These fixtures do not
+prove every Votifier socket/provider path or current-artifact proxy transport.
 
 These results do not establish complete main parity. The final independent review
 and candidate-wide readiness assessment remain pending. Exactly one eventual PR
