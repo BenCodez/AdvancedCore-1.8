@@ -1,5 +1,8 @@
 # Java 8 / Spigot 1.8 synchronization
 
+Current iteration: [initial candidate scope](initial-java8-candidate.md). The maintainer
+accepted partial feature coverage; historical full-parity work remains future work.
+
 This is a behavior-aware compatibility backport, not a replacement with current main.
 The legacy public packages, configuration defaults, user data formats and proxy payloads
 remain in use. It does not claim feature parity with main.

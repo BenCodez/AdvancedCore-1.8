@@ -131,6 +131,89 @@ class LegacyTimedQueueReplayTest {
             assertThrows(CompletionException.class,()->x.f.user.checkDelayedTimedRewardsAsync().toCompletableFuture().join());assertTrue(pending(x).contains(note));assertTrue(pending(x).contains("%asyncretry%1%placeholders%"));
         });
     }
+    @Test void initialCachedOccurrenceRetainsRetryDelayAndProgressInEitherOrder() {
+        String id=UUID.randomUUID().toString();long due=System.currentTimeMillis()-1000;
+        String original=entry("daily%asyncoccurrence%"+id+"%placeholders%Server%pair%old",due);
+        long retryAt=System.currentTimeMillis()+60000;
+        String cached=entry("daily%asyncoccurrence%"+id+"%asyncprogress%2%asyncretry%3%placeholders%Server%pair%cached",retryAt);
+        for(List<String> records:Arrays.asList(Arrays.asList(original,cached),Arrays.asList(cached,original)))
+            fixture(records,x->{
+                x.f.user.checkDelayedTimedRewardsAsync().toCompletableFuture().join();
+                assertEquals(cached,pending(x));
+                verify(x.rewards,never()).givePersistedQueueRewardAsync(any(),any(),any());
+                verify(x.f.user).loadTimedDelayedTimer(retryAt);
+            });
+    }
+
+    @Test void duplicateOwnedRecordStartsExactlyOneEffectAfterDurableCollapse() {
+        String id=UUID.randomUUID().toString();String original=entry("daily%asyncoccurrence%"+id,System.currentTimeMillis()-1000);
+        fixture(Arrays.asList(original,original),x->{
+            CompletableFuture<Void> effect=new CompletableFuture<>();
+            when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenAnswer(call->{
+                assertEquals(original,pending(x));return effect;
+            });
+            CompletionStage<Void> result=x.f.user.checkDelayedTimedRewardsAsync();
+            assertFalse(result.toCompletableFuture().isDone());
+            verify(x.rewards,times(1)).givePersistedQueueRewardAsync(any(),any(),any());
+            effect.complete(null);result.toCompletableFuture().join();assertEquals("",pending(x));
+        });
+    }
+
+    @Test void secondPollLeavesActiveCachedRecordsWithTheirOriginalOwner() {
+        String id=UUID.randomUUID().toString();long due=System.currentTimeMillis()-1000;
+        String original=entry("daily%asyncoccurrence%"+id,due);
+        String cached=entry("daily%asyncoccurrence%"+id+"%asyncprogress%2%asyncretry%3",due+60000);
+        fixture(Collections.singletonList(original),x->{
+            CompletableFuture<Void> effect=new CompletableFuture<>();
+            when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenReturn(effect);
+            CompletionStage<Void> first=x.f.user.checkDelayedTimedRewardsAsync();
+            x.f.data.mutateStringListStrict("TimedRewards",list->{list.add(cached);return list;});String before=pending(x);
+            x.f.user.checkDelayedTimedRewardsAsync().toCompletableFuture().join();
+            assertEquals(before,pending(x));verify(x.rewards,times(1)).givePersistedQueueRewardAsync(any(),any(),any());
+            effect.completeExceptionally(new IllegalStateException("temporary"));
+            assertThrows(CompletionException.class,()->first.toCompletableFuture().join());
+            assertEquals(1,pending(x).split("%line%").length);
+            assertTrue(pending(x).contains("%asyncprogress%2%asyncretry%4"));
+        });
+    }
+
+    @Test void conflictingInitialOccurrencesFailBeforeAnyOtherDueReward() {
+        String id=UUID.randomUUID().toString();long due=System.currentTimeMillis()-1000;
+        String original=entry("daily%asyncoccurrence%"+id,due);
+        String conflict=entry("other%asyncoccurrence%"+id,due);
+        List<String> records=Arrays.asList(entry("unrelated",due),original,conflict);
+        fixture(records,x->{
+            assertThrows(CompletionException.class,()->x.f.user.checkDelayedTimedRewardsAsync().toCompletableFuture().join());
+            assertEquals(String.join("%line%",records),pending(x));
+            verify(x.rewards,never()).givePersistedQueueRewardAsync(any(),any(),any());
+        });
+    }
+
+    @Test void equalProgressCannotPickBetweenConflictingInitialContexts() {
+        String id=UUID.randomUUID().toString();long due=System.currentTimeMillis()-1000;
+        List<String> records=Arrays.asList(entry("daily%asyncoccurrence%"+id+"%placeholders%Server%pair%a",due),
+                entry("daily%asyncoccurrence%"+id+"%placeholders%Server%pair%b",due));
+        fixture(records,x->{
+            assertThrows(CompletionException.class,()->x.f.user.checkDelayedTimedRewardsAsync().toCompletableFuture().join());
+            assertEquals(String.join("%line%",records),pending(x));
+            verify(x.rewards,never()).givePersistedQueueRewardAsync(any(),any(),any());
+        });
+    }
+
+    @Test void failedInitialCollapseCannotStartEffectsOrEraseEitherRecord() {
+        String id=UUID.randomUUID().toString();long due=System.currentTimeMillis()-1000;
+        String original=entry("daily%asyncoccurrence%"+id,due);
+        String newer=entry("daily%asyncoccurrence%"+id+"%asyncretry%1",due);
+        List<String> records=Arrays.asList(original,newer);
+        fixture(records,x->{
+            try {doThrow(new SQLException("temporary outage")).when(x.f.mysql).updateStrict(anyString(),anyList());}
+            catch(SQLException failure){throw new AssertionError(failure);}
+            assertThrows(CompletionException.class,()->x.f.user.checkDelayedTimedRewardsAsync().toCompletableFuture().join());
+            assertEquals(String.join("%line%",records),pending(x));
+            verify(x.rewards,never()).givePersistedQueueRewardAsync(any(),any(),any());
+        });
+    }
+
     @Test void duplicateLegacyTimedKeyFailsBeforeAnyReward() {
         String record=due();fixture(Arrays.asList(record,record),x->{assertThrows(CompletionException.class,()->x.f.user.checkDelayedTimedRewardsAsync().toCompletableFuture().join());assertEquals(record+"%line%"+record,pending(x));verify(x.rewards,never()).givePersistedQueueRewardAsync(any(),any(),any());});
     }

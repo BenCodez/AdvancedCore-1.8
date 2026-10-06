@@ -1297,13 +1297,84 @@ public class AdvancedCoreUser {
         }
     }
 
+    private static QueuedReplay timedReplay(String key) {
+        return parseQueuedReplay(stripAsyncRetryMarker(stripTimedExecutionMarker(key).split("%placeholders%", 2)[0]));
+    }
+
+    private static HashMap<String,String> timedPlaceholders(String key) {
+        String[] parts = key.split("%placeholders%", 2);
+        return ArrayUtils.fromString(parts.length > 1 ? parts[1] : "");
+    }
+
+    private static boolean timedRecordCovers(QueuedReplay newer, Map<String,String> newerMetadata, int newerRetry,
+            QueuedReplay older, Map<String,String> olderMetadata, int olderRetry) {
+        // An ordinal cannot prove a fingerprinted checkpoint, or vice versa.
+        if (older.legacyAsyncReplayCheckpoint && !newer.legacyAsyncReplayCheckpoint) return false;
+        if (newer.legacyAsyncReplayCheckpoint && !older.asyncReplayProgress.isEmpty()) return false;
+        return newerRetry >= olderRetry && newer.completedAsyncInjections >= older.completedAsyncInjections
+                && checkpointCovers(newer.asyncReplayProgress, newer.asyncReplayRegistryFingerprints,
+                        older.asyncReplayProgress, older.asyncReplayRegistryFingerprints)
+                && Reward.stableReplayMetadataCovers(newerMetadata, olderMetadata)
+                && AsyncActionCollection.completionMetadataCovers(newerMetadata, olderMetadata);
+    }
+
+    /** Select only a provably newer record; list order and timestamps alone are not evidence. */
+    private static String selectTimedRecord(String first, String second) {
+        TimedQueueEntry left = decodeTimedEntry(first), right = decodeTimedEntry(second);
+        QueuedReplay oldState = timedReplay(left.key), newState = timedReplay(right.key);
+        if (!java.util.Objects.equals(oldState.asyncReplayOccurrenceId, newState.asyncReplayOccurrenceId)
+                || !oldState.rewardReference.equals(newState.rewardReference))
+            throw new IllegalStateException("Timed occurrence has conflicting reward identities");
+        HashMap<String,String> oldMetadata = timedPlaceholders(left.key), newMetadata = timedPlaceholders(right.key);
+        AsyncActionCollection.validateCompletionMetadata(oldMetadata);
+        AsyncActionCollection.validateCompletionMetadata(newMetadata);
+        int oldRetry = asyncRetryCount(left.key), newRetry = asyncRetryCount(right.key);
+        boolean newCovers = timedRecordCovers(newState,newMetadata,newRetry,oldState,oldMetadata,oldRetry);
+        boolean oldCovers = timedRecordCovers(oldState,oldMetadata,oldRetry,newState,newMetadata,newRetry);
+        if (newCovers && !oldCovers) return second;
+        if (oldCovers && !newCovers) return first;
+        if (newCovers && left.time == right.time && oldMetadata.equals(newMetadata)) return first;
+        throw new IllegalStateException("Timed occurrence has conflicting recovery records");
+    }
+
+    private ArrayList<String> timedAdmissionSnapshot(ArrayList<String> snapshot) {
+        HashSet<String> active = new HashSet<>();
+        synchronized(REPLAY_CLAIMS_LOCK) {
+            HashMap<String,PersistedReplayClaims> users = REPLAY_CLAIMS.get(plugin);
+            PersistedReplayClaims claims = users == null ? null : users.get(getUUID());
+            if (claims != null) active.addAll(claims.occurrences);
+        }
+        java.util.LinkedHashMap<String,ArrayList<String>> groups = new java.util.LinkedHashMap<>();
+        for (String stored : snapshot) {
+            TimedQueueEntry entry = decodeTimedEntry(stored);
+            String id = occurrenceId(entry.key), group = id == null ? "legacy:" + entry.key : "id:" + id;
+            ArrayList<String> records = groups.computeIfAbsent(group, unused -> new ArrayList<>());
+            if (id == null && !records.isEmpty()) throw new IllegalStateException("Duplicate timed reward key");
+            records.add(stored);
+        }
+        ArrayList<String> result = new ArrayList<>();
+        for (ArrayList<String> records : groups.values()) {
+            String representative = records.get(0), id = occurrenceId(decodeTimedEntry(representative).key);
+            if (id != null && active.contains(id)) continue;
+            if (id != null) {
+                String selected = selectTimedRecord(representative, representative);
+                for (String candidate : records) {
+                    selected = selectTimedRecord(selected, candidate);
+                    TimedQueueEntry entry = decodeTimedEntry(candidate);
+                    if (entry.time > 0 && entry.time < System.currentTimeMillis()) representative = candidate;
+                }
+            }
+            result.add(representative);
+        }
+        return result;
+    }
+
     private CompletionStage<Void> dispatchTimedQueue(ServerThreadRewardDispatch owner,Reward.ReplayState runtime) {
         if(!plugin.getOptions().isProcessRewards())return CompletableFuture.completedFuture(null);
         ArrayList<String> snapshot;
         try{snapshot=getUserData().getStringListStrict("TimedRewards");}
         catch(RuntimeException failure){if(isTimedStorageFailure(failure))requestTimedStorageWakeup(owner,runtime);throw failure;}
-        HashSet<String> observed=new HashSet<>(),keys=new HashSet<>();
-        for(String stored:snapshot){TimedQueueEntry entry=decodeTimedEntry(stored);if(!keys.add(entry.key))throw new IllegalStateException("Duplicate timed reward key");String id=occurrenceId(entry.key);if(id!=null && !observed.add(id))throw new IllegalStateException("Duplicate timed reward occurrence");}
+        snapshot=timedAdmissionSnapshot(snapshot);
         ArrayList<CompletableFuture<Void>> outcomes=new ArrayList<>();
         for(String stored:snapshot) {
             TimedQueueEntry entry=decodeTimedEntry(stored);
@@ -1319,17 +1390,46 @@ public class AdvancedCoreUser {
             final PersistedReplayClaims captured=claims;
             java.util.concurrent.atomic.AtomicReference<String> current=new java.util.concurrent.atomic.AtomicReference<>(stored);
             java.util.concurrent.atomic.AtomicBoolean effectsStarted=new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicBoolean admissionDeferred=new java.util.concurrent.atomic.AtomicBoolean();
             java.util.concurrent.atomic.AtomicBoolean retryPublished=new java.util.concurrent.atomic.AtomicBoolean();
             CompletableFuture<Void> outcome=new CompletableFuture<Void>() {@Override public boolean cancel(boolean interrupt){return false;}};outcomes.add(outcome);
             previous.whenComplete((unused,priorFailure)->{
                 CompletionStage<Void> replay=owner.dispatchOffPrimary(()->{
-                    String key=existing==null?withAsyncOccurrence(entry.key,id):entry.key;
-                    String admitted=encodeTimedEntry(key,entry.time);
-                    mutateTimedQueue(pending->{int index=pending.indexOf(stored);if(index<0)throw new IllegalStateException("Timed occurrence disappeared before admission");pending.set(index,admitted);return pending;});current.set(admitted);
+                    java.util.concurrent.atomic.AtomicReference<String> selected=new java.util.concurrent.atomic.AtomicReference<>();
+                    mutateTimedQueue(pending->{
+                        if(existing==null) {
+                            int index=pending.indexOf(stored);
+                            if(index<0)throw new IllegalStateException("Timed occurrence disappeared before admission");
+                            String admitted=encodeTimedEntry(withAsyncOccurrence(entry.key,id),entry.time);
+                            pending.set(index,admitted);selected.set(admitted);
+                        } else {
+                            int first=-1;String chosen=null;
+                            String reference=timedReplay(entry.key).rewardReference;
+                            for(int index=0;index<pending.size();index++) {
+                                String candidate=pending.get(index);TimedQueueEntry decoded=decodeTimedEntry(candidate);
+                                if(!id.equals(occurrenceId(decoded.key)))continue;
+                                if(!reference.equals(timedReplay(decoded.key).rewardReference))
+                                    throw new IllegalStateException("Timed occurrence has conflicting reward identities");
+                                if(first<0)first=index;
+                                chosen=chosen==null?selectTimedRecord(candidate,candidate):selectTimedRecord(chosen,candidate);
+                            }
+                            if(first<0)throw new IllegalStateException("Timed occurrence disappeared before admission");
+                            pending.removeIf(candidate->id.equals(occurrenceId(decodeTimedEntry(candidate).key)));
+                            pending.add(first,chosen);selected.set(chosen);
+                        }
+                        return pending;
+                    });
+                    String admitted=selected.get();current.set(admitted);
+                    TimedQueueEntry admittedEntry=decodeTimedEntry(admitted);String key=admittedEntry.key;
+                    if(admittedEntry.time==0 || admittedEntry.time>=System.currentTimeMillis()) {
+                        admissionDeferred.set(true);
+                        if(admittedEntry.time>0)loadTimedDelayedTimer(admittedEntry.time);
+                        return CompletableFuture.<Void>completedFuture(null);
+                    }
                     asyncRetryCount(key);
                     String[] parts=key.split("%placeholders%",2);QueuedReplay metadata=parseQueuedReplay(stripTimedExecutionMarker(parts[0]));
                     RewardOptions options=new RewardOptions().setCheckTimed(false).withPlaceHolder(ArrayUtils.fromString(parts.length>1?parts[1]:""));
-                    options.addPlaceholder("date",new SimpleDateFormat("EEE, d MMM yyyy HH:mm").format(new Date(entry.time)));
+                    options.addPlaceholder("date",new SimpleDateFormat("EEE, d MMM yyyy HH:mm").format(new Date(admittedEntry.time)));
                     options.setCompletedAsyncInjections(metadata.completedAsyncInjections);options.setAsyncReplayProgress(metadata.asyncReplayProgress);options.setAsyncReplayRegistryFingerprints(metadata.asyncReplayRegistryFingerprints);options.setLegacyAsyncReplayCheckpoint(metadata.legacyAsyncReplayCheckpoint);options.setAsyncReplayOccurrenceId(id);options.setTimedQueueReplay(true);
                     options.setAsyncReplayCheckpointConsumer(checkpoint->{String before=current.get();TimedQueueEntry pendingEntry=decodeTimedEntry(before);String updated=encodeTimedEntry(withAsyncReplayProgress(stripTimedExecutionMarker(pendingEntry.key),checkpoint),pendingEntry.time);
                         mutateTimedQueue(pending->{int index=pending.indexOf(before);if(index<0)throw new IllegalStateException("Timed occurrence disappeared before checkpoint");pending.set(index,updated);return pending;});current.set(updated);
@@ -1340,6 +1440,7 @@ public class AdvancedCoreUser {
                     if(effect==null)throw new IllegalStateException("Timed reward omitted its completion stage");return effect;
                 },TimeUnit.SECONDS.toMillis(30));
                 replay.handle((ignored,failure)->owner.dispatchOffPrimary(()->{
+                    if(failure==null && admissionDeferred.get())return CompletableFuture.<Void>completedFuture(null);
                     if(failure==null)return publishQueueEdit(owner,captured,()->mutateTimedQueue(pending->{if(!pending.remove(current.get()))throw new IllegalStateException("Timed occurrence disappeared before completion");return pending;}));
                     else {
                         String before=current.get();

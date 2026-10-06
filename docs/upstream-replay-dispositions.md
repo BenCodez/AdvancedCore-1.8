@@ -474,3 +474,38 @@ both pinned references were verified unchanged. Initial timed duplicate admissio
 legacy ordinal handling, native SQL lifecycle integration, full upstream ledger
 classification, remaining acceptance checks and final independent review remain
 unfinished. No push or PR was performed.
+
+
+## Initial timed-record reconciliation
+
+The recovery snapshot previously rejected all repeated occurrence IDs before
+looking at their persisted state. Three red-before-fix cases showed that initial
+cached recovery records could not be reconciled, exact duplicates could not be
+collapsed, and a second poll rejected duplicate cached records owned by an active
+replay. The initial 27-test run had one failure and two errors.
+
+Preflight now groups explicit occurrence IDs and validates inactive groups before
+starting any reward. Admission reserves the existing per-user occurrence claim,
+then re-reads/reconciles records within checked native queue mutation. Only
+compatible, provably ordered progress/retry/metadata records can replace older
+ones. A selected future retry remains pending and re-arms its timer; it is neither
+executed early nor removed as completed. Exact duplicates collapse durably before
+one effect starts. Unrelated appends and distinct occurrences remain intact.
+
+Active IDs are left with their original owner. Conflicting reward identities,
+equal-progress conflicting contexts, incomparable progress and ambiguous dates
+fail closed without picking by list order or timestamp. Duplicate legacy records
+without an occurrence ID still fail before effects; their distinctness cannot be
+proven. Legacy ordinal and fingerprinted progress are not silently converted.
+
+72 focused timed/offline/checkpoint tests PASS, including failed collapse leaving
+both records intact, no effects on failed admission, and active-owner fencing.
+Complete Java 8 producer/consumer validation: 917/46 PASS, no failures/errors/skips;
+base-class maximum major 52; exact installed producer identity verified. Actual
+Java 8/Spigot 1.8.8 existing recovery fixture: 12 PASS. Workspace evidence is
+`evidence/timed-initial-reconciliation-*`. This runtime regression does not claim
+initial duplicate process-crash acceptance. Original/reference isolation is retained.
+
+The maintainer subsequently accepted an initial usable candidate with partial
+feature coverage. Remaining full-parity/native-lifecycle obligations are described
+in `initial-java8-candidate.md`; they are not silently marked implemented.
