@@ -446,6 +446,37 @@ public class RewardFileData {
 		configData = fileData.getConfigurationSection("");
 	}
 
+	/**
+	 * Build a detached generated snapshot without invoking legacy per-key writes.
+	 * Supplied sections replace their predecessor sections, as in setData;
+	 * unrelated keys are retained. This does not save or register the candidate.
+	 */
+	public Reward prepareGeneratedSnapshot(ConfigurationSection source) throws IOException {
+		if (fileData == null || dataFile == null) throw new IOException("Reward snapshot has no backing document");
+		java.util.Objects.requireNonNull(source, "source");
+		YamlConfiguration candidate = new YamlConfiguration();
+		try {
+			candidate.loadFromString(fileData.saveToString());
+			for (Entry<String, Object> entry : source.getValues(true).entrySet()) {
+				candidate.set(entry.getKey(), entry.getValue());
+			}
+			candidate.options().header("Directly defined reward file. WRONG PLACE TO EDIT THIS! DO NOT EDIT");
+			candidate.set("DirectlyDefinedReward", true);
+			// Sections borrowed during merge must not remain shared with the source.
+			YamlConfiguration frozen = new YamlConfiguration();
+			frozen.loadFromString(candidate.saveToString());
+			Reward snapshot = new Reward(reward.getName(), frozen);
+			snapshot.setFile(reward.getFile());
+			RewardFileData document = snapshot.getConfig();
+			document.fileData = frozen;
+			document.dataFile = dataFile;
+			document.rewardFolder = rewardFolder;
+			return snapshot;
+		} catch (org.bukkit.configuration.InvalidConfigurationException invalid) {
+			throw new IOException("Reward snapshot candidate is malformed", invalid);
+		}
+	}
+
 	/** Checked publication for completion-aware deferral; legacy void saves remain available. */
 	public void saveStrict() throws IOException { saveStrict(fileData); }
 

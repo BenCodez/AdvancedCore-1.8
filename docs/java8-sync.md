@@ -709,3 +709,39 @@ snapshot deleted, fixture-only console jar removed, owned processes stopped.
 Evidence checked-cache-runtime-results-CheckedSnapSQL.json. This validates
 the checked API; generated queue snapshot transaction/replay is not yet wired.
 Not liveMySQL/FLAT/proxy/failed-shutdown acceptance.
+
+### Detached generated reward candidates (partial async reward backport)
+
+`RewardFileData.prepareGeneratedSnapshot(ConfigurationSection)` now constructs
+an independent Reward/YAML candidate without legacy `setData` per-key save and
+reload calls. Existing target metadata, generated header and
+`DirectlyDefinedReward` flag are preserved. Supplied parent sections replace
+predecessor sections as in legacy `setData`; unrelated keys remain. A serialized
+copy isolates the candidate from later source and predecessor edits. Preparation
+neither writes nor registers it. The caller must separately acknowledge
+`saveStrict()` before publishing the candidate in the reward registry.
+
+Three regressions exercise independent candidate/source/predecessor state,
+malformed predecessor publication failure, and successful checked publication
+with section replacement/header/flag/readback. Actual Java 8 clean producer
+install: 183 unit + 12 artifact tests. Exact shaded consumer clean verify:
+19 unit + 1 artifact test. All zero failures/errors/skips; both jars' base
+classes have major version <=52. Evidence: `snapshot-candidate-build-results.json`
+and paired `*-snapshot-candidate-clean-*.log` in the isolated workspace.
+
+This is a prerequisite, not the complete generated reward transaction. Legacy
+root deferral remains unchanged; registry/file ordering under concurrent
+publication, checked queue append, occurrence/provenance/checkpoint/replay,
+native action completion and global storage shutdown remain to be integrated.
+No claim of fsync/power-loss durability, full pinned-main parity or final PR
+readiness. No configuration/schema/wire/version changes.
+
+Live acceptance: exact consumer `84391f96c6a1a735ffac15e955c3d15ec926a3fa94483f057d8ea3783ca45849`
+on real Java 8 / Spigot 1.8.8 with unique fixture identity `DetachedSnapSQL`
+passed detached candidate/source/predecessor isolation, checked save/readback,
+legacy parent-section replacement, pending async user delivery, vote/reward,
+points 10 / total 1, graceful stop, SQLite integrity and restart persistence.
+Evidence: `checked-cache-runtime-results-DetachedSnapSQL.json` and
+`snapshot-candidate-live.log`. Fixture-only diagnostic plugin removed; owned
+server/client processes exited. This does not prove full queued replay,
+MySQL/FLAT/proxy acceptance or failed-shutdown behavior for the candidate API.
