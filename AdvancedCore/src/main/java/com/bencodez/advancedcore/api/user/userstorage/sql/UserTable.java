@@ -69,11 +69,11 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 			return;
 		}
 		try {
-			String query = "ALTER TABLE " + getName() + " ADD COLUMN " + column.getName() + " "
+			String query = "ALTER TABLE " + getName() + " ADD COLUMN `" + column.getName() + "` "
 					+ column.getDataType().toString();
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			s.executeUpdate();
-			s.close();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query)) {
+				s.executeUpdate();
+			}
 			columns.add(column);
 		} catch (SQLException e) {
 			e.printStackTrace();
@@ -85,10 +85,10 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 			return;
 		}
 		try {
-			String query = "ALTER TABLE " + getName() + " ADD COLUMN " + column.getKey() + " " + column.getColumnType();
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			s.executeUpdate();
-			s.close();
+			String query = "ALTER TABLE " + getName() + " ADD COLUMN `" + column.getKey() + "` " + column.getColumnType();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query)) {
+				s.executeUpdate();
+			}
 			if (column instanceof UserDataKeyInt) {
 				columns.add(new Column(column.getKey(), DataType.INTEGER));
 			} else {
@@ -133,20 +133,18 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		String query = "SELECT uuid FROM " + getName();
 
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			ResultSet rs = s.executeQuery();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+				ResultSet rs = s.executeQuery()) {
 			/*
 			 * Query query = new Query(mysql, sql); ResultSet rs = query.executeQuery();
 			 */
 			while (rs.next()) {
 				String str = rs.getString("uuid");
 				if (str != null && str.equals(index)) {
-					rs.close();
-					s.close();
 					return true;
 				}
 			}
-			rs.close();
+			}
 
 		} catch (SQLException ex) {
 			ex.printStackTrace();
@@ -159,8 +157,9 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		checkColumn(new Column(columnFromName, dataType));
 		String sql = "UPDATE `" + getName() + "` SET `" + columnToName + "` = `" + columnFromName + "`;";
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(sql);
-			s.executeUpdate();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(sql)) {
+				s.executeUpdate();
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
@@ -170,7 +169,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		if (column.getName().equalsIgnoreCase(primaryKey.getName())) {
 			String query = "DELETE FROM " + getName() + " WHERE `" + column.getName() + "`=?";
 			try {
-				PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+				try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query)) {
 				if (column.getValue().isString()) {
 					s.setString(1, column.getValue().getString());
 				} else if (column.getValue().isInt()) {
@@ -179,7 +178,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 					s.setBoolean(1, column.getValue().getBoolean());
 				}
 				s.executeUpdate();
-				s.close();
+				}
 			} catch (SQLException e) {
 				e.printStackTrace();
 			}
@@ -190,9 +189,10 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 
 	public void executeQuery(String str) {
 		try {
-			PreparedStatement s = sqLite.getSQLConnection()
-					.prepareStatement(PlaceholderUtils.replacePlaceHolder(str, "tablename", getName()));
-			s.executeUpdate();
+			try (PreparedStatement s = sqLite.getSQLConnection()
+					.prepareStatement(PlaceholderUtils.replacePlaceHolder(str, "tablename", getName()))) {
+				s.executeUpdate();
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
@@ -202,8 +202,8 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		List<List<Column>> results = new ArrayList<>();
 		String query = "SELECT * FROM " + getName();
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			ResultSet rs = s.executeQuery();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+				ResultSet rs = s.executeQuery()) {
 			while (rs.next()) {
 				List<Column> result = new ArrayList<>();
 				for (int i = 0; i < getColumns().size(); i++) {
@@ -220,7 +220,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				}
 				results.add(result);
 			}
-			sqLite.close(s, rs);
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
@@ -232,8 +232,8 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		String query = "SELECT * FROM " + getName() + ";";
 
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			ResultSet rs = s.executeQuery();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+				ResultSet rs = s.executeQuery()) {
 
 			while (rs.next()) {
 				ArrayList<Column> cols = new ArrayList<>();
@@ -273,8 +273,8 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				}
 				result.put(uuid, cols);
 			}
-			rs.close();
 			return result;
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		} catch (ArrayIndexOutOfBoundsException e) {
@@ -303,7 +303,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		String query = "SELECT * FROM " + getName() + " WHERE `" + column.getName() + "`=?";
 		try {
 			synchronized (object) {
-				PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+				try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query)) {
 				if (column.getValue().isString()) {
 					s.setString(1, column.getValue().getString());
 				} else if (column.getValue().isInt()) {
@@ -311,7 +311,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				} else {
 					s.setBoolean(1, column.getValue().getBoolean());
 				}
-				ResultSet rs = s.executeQuery();
+				try (ResultSet rs = s.executeQuery()) {
 
 				if (rs.next()) {
 					for (int i = 1; i <= rs.getMetaData().getColumnCount(); i++) {
@@ -330,9 +330,9 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 						result.add(rCol);
 					}
 				}
-				rs.close();
-				s.close();
 				return result;
+				}
+			}
 			}
 
 		} catch (SQLException e) {
@@ -366,14 +366,14 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		String sqlStr = "SELECT " + column + " FROM " + getName() + ";";
 
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(sqlStr);
-			ResultSet rs = s.executeQuery();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(sqlStr);
+				ResultSet rs = s.executeQuery()) {
 
 			while (rs.next()) {
 				result.add(rs.getInt(column));
 			}
 
-			sqLite.close(s, rs);
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
@@ -402,19 +402,17 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		String query = "SELECT uuid FROM " + getName();
 
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			ResultSet rs = s.executeQuery();
-			try {
-				while (rs.next()) {
-					Column rCol = new Column("uuid", new DataValueString(rs.getString("uuid")));
-					result.add(rCol);
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+					ResultSet rs = s.executeQuery()) {
+				try {
+					while (rs.next()) {
+						Column rCol = new Column("uuid", new DataValueString(rs.getString("uuid")));
+						result.add(rCol);
+					}
+				} catch (SQLException e) {
+					e.printStackTrace();
+					return null;
 				}
-				sqLite.close(s, rs);
-			} catch (SQLException e) {
-				s.close();
-				rs.close();
-				e.printStackTrace();
-				return null;
 			}
 		} catch (SQLException e) {
 			e.printStackTrace();
@@ -429,17 +427,16 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		String query = "SELECT PlayerName FROM " + getName();
 
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			ResultSet rs = s.executeQuery();
-			try {
-				while (rs.next()) {
-					Column rCol = new Column("PlayerName", new DataValueString(rs.getString("PlayerName")));
-					result.add(rCol);
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+					ResultSet rs = s.executeQuery()) {
+				try {
+					while (rs.next()) {
+						Column rCol = new Column("PlayerName", new DataValueString(rs.getString("PlayerName")));
+						result.add(rCol);
+					}
+				} catch (SQLException e) {
+					return null;
 				}
-				sqLite.close(s, rs);
-			} catch (SQLException e) {
-				s.close();
-				return null;
 			}
 		} catch (SQLException e) {
 			e.printStackTrace();
@@ -452,8 +449,8 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		ArrayList<String> columns = new ArrayList<>();
 		String query = "SELECT * FROM " + getName();
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			ResultSet rs = s.executeQuery();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+				ResultSet rs = s.executeQuery()) {
 			ResultSetMetaData metadata = rs.getMetaData();
 			int columnCount = metadata.getColumnCount();
 
@@ -463,7 +460,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				columns.add(columnName);
 			}
 
-			sqLite.close(s, rs);
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
@@ -473,19 +470,17 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 	public String getUUID(String playerName) {
 		String query = "SELECT uuid FROM " + getName() + " WHERE " + "PlayerName" + "='" + playerName + "';";
 
-		try (PreparedStatement sql = sqLite.getSQLConnection().prepareStatement(query)) {
-			ResultSet rs = sql.executeQuery();
+		try (PreparedStatement sql = sqLite.getSQLConnection().prepareStatement(query);
+			ResultSet rs = sql.executeQuery()) {
 			/*
 			 * Query sql = new Query(mysql, query); ResultSet rs = sql.executeQuery();
 			 */
 			if (rs.next()) {
 				String uuid = rs.getString("uuid");
 				if (uuid != null && !uuid.isEmpty()) {
-					rs.close();
 					return uuid;
 				}
 			}
-			rs.close();
 		} catch (SQLException e) {
 			e.printStackTrace();
 		} catch (ArrayIndexOutOfBoundsException e) {
@@ -519,7 +514,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		}
 		query += ";";
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query)) {
 			for (int i = 0; i < columns.size(); i++) {
 				if (columns.get(i).getValue() != null) {
 					if (columns.get(i).getValue().isString()) {
@@ -534,7 +529,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				}
 			}
 			s.executeUpdate();
-			s.close();
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
@@ -548,7 +543,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		}
 		String query = "SELECT * FROM " + getName() + " WHERE `" + column.getName() + "`=?";
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query)) {
 			if (column.getValue().isString()) {
 				s.setString(1, column.getValue().getString());
 			} else if (column.getValue().isInt()) {
@@ -557,7 +552,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				s.setBoolean(1, column.getValue().getBoolean());
 			}
 
-			ResultSet rs = s.executeQuery();
+			try (ResultSet rs = s.executeQuery()) {
 			while (rs.next()) {
 				List<Column> result = new ArrayList<>();
 				for (int i = 0; i < getColumns().size(); i++) {
@@ -575,7 +570,8 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				}
 				results.add(result);
 			}
-			sqLite.close(s, rs);
+			}
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
@@ -623,9 +619,9 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				query += "WHERE `" + primaryKey.getName() + "`=";
 				query += "'" + primaryKey.getValue().getString() + "'";
 				try {
-					PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-					s.executeUpdate();
-					s.close();
+					try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query)) {
+						s.executeUpdate();
+					}
 				} catch (SQLException e) {
 					e.printStackTrace();
 				}
@@ -648,8 +644,9 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		checkColumn(new Column(columnName, dataType));
 		String sql = "UPDATE " + getName() + " SET " + columnName + " = " + dataType.getNoValue() + ";";
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(sql);
-			s.executeUpdate();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(sql)) {
+				s.executeUpdate();
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}

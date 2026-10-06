@@ -230,13 +230,26 @@ public class MySQL {
 	}
 
 	public void deletePlayer(String uuid) {
+		deletePlayer(uuid, false);
+	}
+
+	/** Delete a user without acknowledging a failed storage operation. */
+	public void deletePlayerStrict(String uuid) {
+		deletePlayer(uuid, true);
+	}
+
+	private void deletePlayer(String uuid, boolean strict) {
 		String q = "DELETE FROM " + getName() + " WHERE uuid='" + uuid + "';";
 		plugin.devDebug("MYSQL QUERY: " + q);
 		try {
 			Query query = new Query(mysql, q);
 			query.executeUpdate();
 		} catch (SQLException e) {
+			if (strict) {
+				throw new IllegalStateException("Failed to delete SQL user", e);
+			}
 			e.printStackTrace();
+			return;
 		}
 		uuids.remove(uuid);
 		names.remove(PlayerManager.getInstance()
