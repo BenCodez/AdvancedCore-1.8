@@ -22,6 +22,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Pattern;
 
 import org.bukkit.Bukkit;
+import org.bukkit.Material;
 import org.bukkit.Location;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.World;
@@ -588,7 +589,7 @@ public class MiscUtils {
 	 */
 	@Deprecated
 	public ItemStack setSkullOwner(String playerName) {
-		return new ItemBuilder("PLAYER_HEAD").setSkullOwner(playerName).toItemStack();
+		return new ItemBuilder(Material.SKULL_ITEM).setDurability((short) 3).setSkullOwner(playerName).toItemStack();
 	}
 
 	public LinkedHashMap<Double, String> sortByKeys(LinkedHashMap<Double, String> topVoterAllTime,

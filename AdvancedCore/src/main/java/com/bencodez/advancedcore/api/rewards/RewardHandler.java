@@ -685,7 +685,7 @@ public class RewardHandler {
 				return true;
 			}
 		}.priority(100).addEditButton(
-				new EditGUIButton(new ItemBuilder("CLOCK"), new EditGUIValueNumber("RewardExpiration", null) {
+				new EditGUIButton(new ItemBuilder(Material.WATCH), new EditGUIValueNumber("RewardExpiration", null) {
 
 					@Override
 					public void setValue(Player player, Number value) {
@@ -924,7 +924,7 @@ public class RewardHandler {
 				return false;
 			}
 		}.priority(100).allowReattempt().alwaysForceNoData().addEditButton(
-				new EditGUIButton(new ItemBuilder("END_PORTAL_FRAME"), new EditGUIValueList("Worlds", null) {
+				new EditGUIButton(new ItemBuilder(Material.ENDER_PORTAL_FRAME), new EditGUIValueList("Worlds", null) {
 
 					@Override
 					public void setValue(Player player, ArrayList<String> value) {
@@ -991,7 +991,7 @@ public class RewardHandler {
 				return true;
 			}
 		}.priority(100).allowReattempt().alwaysForceNoData().addEditButton(
-				new EditGUIButton(new ItemBuilder("END_PORTAL_FRAME"), new EditGUIValueList("BlackListedWorlds", null) {
+				new EditGUIButton(new ItemBuilder(Material.ENDER_PORTAL_FRAME), new EditGUIValueList("BlackListedWorlds", null) {
 
 					@Override
 					public void setValue(Player player, ArrayList<String> value) {
@@ -1033,7 +1033,7 @@ public class RewardHandler {
 				return true;
 			}
 		}.priority(100).addEditButton(
-				new EditGUIButton(new ItemBuilder("REDSTONE_TORCH"), new EditGUIValueString("RewardType", null) {
+				new EditGUIButton(new ItemBuilder(Material.REDSTONE_TORCH_ON), new EditGUIValueString("RewardType", null) {
 
 					@Override
 					public void setValue(Player player, String value) {
@@ -1340,7 +1340,7 @@ public class RewardHandler {
 				return null;
 			}
 		}.asPlaceholder("EXP").priority(100).addEditButton(
-				new EditGUIButton(new ItemBuilder("EXPERIENCE_BOTTLE"), new EditGUIValueInventory("EXP") {
+				new EditGUIButton(new ItemBuilder(Material.EXP_BOTTLE), new EditGUIValueInventory("EXP") {
 
 					@Override
 					public void openInventory(ClickEvent clickEvent) {
@@ -1374,7 +1374,7 @@ public class RewardHandler {
 				return null;
 			}
 		}.asPlaceholder("EXP").priority(100).addEditButton(
-				new EditGUIButton(new ItemBuilder("EXPERIENCE_BOTTLE"), new EditGUIValueInventory("EXPLevels") {
+				new EditGUIButton(new ItemBuilder(Material.EXP_BOTTLE), new EditGUIValueInventory("EXPLevels") {
 
 					@Override
 					public void openInventory(ClickEvent clickEvent) {
@@ -1449,7 +1449,7 @@ public class RewardHandler {
 				user.sendMessage(value, placeholders);
 				return null;
 			}
-		}.addEditButton(new EditGUIButton(new ItemBuilder("OAK_SIGN"), new EditGUIValueInventory("Messages") {
+		}.addEditButton(new EditGUIButton(new ItemBuilder(Material.SIGN), new EditGUIValueInventory("Messages") {
 
 			@Override
 			public void openInventory(ClickEvent clickEvent) {
@@ -1572,7 +1572,7 @@ public class RewardHandler {
 				MiscUtils.getInstance().executeConsoleCommands(user.getPlayerName(), value, placeholders);
 				return null;
 			}
-		}.addEditButton(new EditGUIButton(new ItemBuilder("COMMAND_BLOCK"), new EditGUIValueString("Command", null) {
+		}.addEditButton(new EditGUIButton(new ItemBuilder(Material.COMMAND), new EditGUIValueString("Command", null) {
 
 			@Override
 			public void setValue(Player player, String value) {
@@ -1643,7 +1643,7 @@ public class RewardHandler {
 				}
 				return null;
 			}
-		}.addEditButton(new EditGUIButton(new ItemBuilder("COMMAND_BLOCK"), new EditGUIValueList("Commands", null) {
+		}.addEditButton(new EditGUIButton(new ItemBuilder(Material.COMMAND), new EditGUIValueList("Commands", null) {
 
 			@Override
 			public void setValue(Player player, ArrayList<String> value) {
@@ -2261,7 +2261,7 @@ public class RewardHandler {
 				return null;
 
 			}
-		}.addEditButton(new EditGUIButton(new ItemBuilder("DRAGON_HEAD"), new EditGUIValueInventory("BossBar") {
+		}.addEditButton(new EditGUIButton(new ItemBuilder(Material.SKULL_ITEM), new EditGUIValueInventory("BossBar") {
 
 			@Override
 			public void openInventory(ClickEvent clickEvent) {
@@ -2359,7 +2359,7 @@ public class RewardHandler {
 				return null;
 
 			}
-		}.addEditButton(new EditGUIButton(new ItemBuilder("FIREWORK_ROCKET"), new EditGUIValueInventory("Firework") {
+		}.addEditButton(new EditGUIButton(new ItemBuilder(Material.FIREWORK), new EditGUIValueInventory("Firework") {
 
 			@Override
 			public void openInventory(ClickEvent clickEvent) {

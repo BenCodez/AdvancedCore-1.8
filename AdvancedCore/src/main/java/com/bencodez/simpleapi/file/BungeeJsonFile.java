@@ -243,7 +243,7 @@ public class BungeeJsonFile {
 	        conf.remove(path);
 	        return;
 	    }
-	    
+
 	    JsonObject node = navigateToNode(path);
 	    if (node != null) {
 	        String lastPart = getLastPathPart(path);
