@@ -468,17 +468,13 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 	}
 
 	public String getUUID(String playerName) {
-		String query = "SELECT uuid FROM " + getName() + " WHERE " + "PlayerName" + "='" + playerName + "';";
-
-		try (PreparedStatement sql = sqLite.getSQLConnection().prepareStatement(query);
-			ResultSet rs = sql.executeQuery()) {
-			/*
-			 * Query sql = new Query(mysql, query); ResultSet rs = sql.executeQuery();
-			 */
-			if (rs.next()) {
-				String uuid = rs.getString("uuid");
-				if (uuid != null && !uuid.isEmpty()) {
-					return uuid;
+		String query = "SELECT uuid FROM " + getName() + " WHERE PlayerName=?;";
+		try (PreparedStatement sql = sqLite.getSQLConnection().prepareStatement(query)) {
+			sql.setString(1, playerName);
+			try (ResultSet rs = sql.executeQuery()) {
+				if (rs.next()) {
+					String uuid = rs.getString("uuid");
+					if (uuid != null && !uuid.isEmpty()) return uuid;
 				}
 			}
 		} catch (SQLException e) {
@@ -596,47 +592,46 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 	}
 
 	public void update(Column primaryKey, List<Column> columns) {
-		for (Column c : columns) {
-			checkColumn(c);
-		}
+		for (Column c : columns) checkColumn(c);
+		if (columns.isEmpty()) return;
 		if (containsKey(primaryKey.getValue().toString())) {
 			synchronized (object) {
-				String query = "UPDATE " + getName() + " SET ";
-				for (Column column : columns) {
-					if (column.getValue().isString()) {
-						query += "`" + column.getName() + "`='" + column.getValue().getString() + "'";
-					} else if (column.getValue().isBoolean()) {
-						query += "`" + column.getName() + "`=" + column.getValue().getBoolean();
-					} else if (column.getValue().isInt()) {
-						query += "`" + column.getName() + "`=" + column.getValue().getInt();
-					}
-					if (columns.indexOf(column) == columns.size() - 1) {
-						query += " ";
-					} else {
-						query += ", ";
-					}
+				StringBuilder query = new StringBuilder("UPDATE ").append(getName()).append(" SET ");
+				for (int i = 0; i < columns.size(); i++) {
+					query.append("`").append(columns.get(i).getName()).append("`=?");
+					if (i != columns.size() - 1) query.append(", ");
 				}
-				query += "WHERE `" + primaryKey.getName() + "`=";
-				query += "'" + primaryKey.getValue().getString() + "'";
-				try {
-					try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query)) {
-						s.executeUpdate();
-					}
+				query.append(" WHERE `").append(primaryKey.getName()).append("`=?");
+				try (PreparedStatement statement = sqLite.getSQLConnection().prepareStatement(query.toString())) {
+					int parameter = 1;
+					for (Column column : columns) bindValue(statement, parameter++, column);
+					bindValue(statement, parameter, primaryKey);
+					statement.executeUpdate();
 				} catch (SQLException e) {
 					e.printStackTrace();
 				}
 			}
 		} else {
 			boolean addPrimary = true;
-			for (Column col : columns) {
-				if (col.getName().equals("uuid")) {
-					addPrimary = false;
-				}
+			for (Column column : columns) {
+				if (column.getName().equals("uuid")) addPrimary = false;
 			}
-			if (addPrimary) {
-				columns.add(primaryKey);
-			}
+			if (addPrimary) columns.add(primaryKey);
 			insert(columns);
+		}
+	}
+
+	private void bindValue(PreparedStatement statement, int parameter, Column column) throws SQLException {
+		if (column.getValue() == null) {
+			statement.setObject(parameter, null);
+		} else if (column.getValue().isString()) {
+			statement.setString(parameter, column.getValue().getString());
+		} else if (column.getValue().isBoolean()) {
+			statement.setBoolean(parameter, column.getValue().getBoolean());
+		} else if (column.getValue().isInt()) {
+			statement.setInt(parameter, column.getValue().getInt());
+		} else {
+			statement.setObject(parameter, column.getValue().toString());
 		}
 	}
 
