@@ -35,7 +35,7 @@ import lombok.Getter;
 
 public class MySQL {
 	private List<String> columns = Collections.synchronizedList(new ArrayList<String>());
-	private final java.util.Map<String, String> reconciledStringColumns = new ConcurrentHashMap<>();
+	private final java.util.Map<String, ColumnResolution> reconciledStringColumns = new ConcurrentHashMap<>();
 
 	// private List<String> intColumns;
 
@@ -129,6 +129,18 @@ public class MySQL {
 		plugin.debug("UseBatchUpdates: " + isUseBatchUpdates());
 	}
 
+	/** A completed reconciliation or an explicitly owned asynchronous type request. */
+	private static final class ColumnResolution {
+		final String declaration;
+		final boolean pending;
+		ColumnResolution(String declaration, boolean pending) {this.declaration = declaration; this.pending = pending;}
+	}
+
+	private String handledDeclaration(String column) {
+		ColumnResolution resolution = reconciledStringColumns.get(column.toLowerCase(java.util.Locale.ROOT));
+		return resolution == null ? null : resolution.declaration;
+	}
+
 	private static final class ColumnDeclaration {
 		final String sqlType;
 		final boolean registeredString;
@@ -155,6 +167,10 @@ public class MySQL {
 	}
 
 	private void addResolvedColumn(String column, ColumnDeclaration declaration) {
+		addResolvedColumn(column, declaration, true);
+	}
+
+	private void addResolvedColumn(String column, ColumnDeclaration declaration, boolean reconcileRetained) {
 		String sqlType = declaration.sqlType;
 		boolean registeredString = declaration.registeredString;
 		synchronized (object3) {
@@ -183,10 +199,10 @@ public class MySQL {
 							}
 						}
 					}
-					if (retained && registeredString) RetainedStringColumn.reconcile(connection, getName(), column, sqlType, this::discardSchemaConnection);
+					if (retained && registeredString && reconcileRetained) RetainedStringColumn.reconcile(connection, getName(), column, sqlType, this::discardSchemaConnection);
 				}
 				rememberColumn(column);
-				if (registeredString) reconciledStringColumns.put(column.toLowerCase(java.util.Locale.ROOT), sqlType);
+				if (registeredString && reconcileRetained) reconciledStringColumns.put(column.toLowerCase(java.util.Locale.ROOT), new ColumnResolution(sqlType, false));
 			} catch (SQLException failure) {
 				throw new IllegalStateException("Failed to initialize registered SQL column: " + column, failure);
 			}
@@ -207,13 +223,54 @@ public class MySQL {
 	}
 
 	public void alterColumnType(final String column, final String newType) {
-		checkColumn(column, DataType.STRING);
-		plugin.debug("MYSQL QUERY: Altering column `" + column + "` to " + newType);
-		try {
-			Query query = new Query(mysql, "ALTER TABLE " + getName() + " MODIFY `" + column + "` " + newType + ";");
-			query.executeUpdateAsync();
-		} catch (SQLException e) {
-			e.printStackTrace();
+		final ColumnDeclaration declaration = resolveColumnDeclaration(column);
+		final String identity = column.toLowerCase(java.util.Locale.ROOT);
+		final ColumnResolution requested = new ColumnResolution(declaration.sqlType, true);
+		synchronized (object4) {
+			synchronized (object3) {
+				boolean known = false;
+				List<String> current = columns;
+				if (current != null) synchronized (current) {
+					for (String existing : current) if (column.equalsIgnoreCase(existing)) {known = true; break;}
+				}
+				// The legacy explicit API checks presence; it must not first apply
+				// a competing registered-type migration to an existing column.
+				if (!known) addResolvedColumn(column, declaration, false);
+				ColumnResolution previous = declaration.registeredString ? reconciledStringColumns.put(identity, requested) : null;
+				try {
+					mysql.getThreadPool().submit(() -> applyExplicitColumnType(column, newType, declaration, requested));
+				} catch (RuntimeException failure) {
+					if (previous == null) reconciledStringColumns.remove(identity, requested);
+					else reconciledStringColumns.replace(identity, requested, previous);
+					throw failure;
+				}
+			}
+		}
+	}
+
+	private void applyExplicitColumnType(String column, String newType, ColumnDeclaration declaration, ColumnResolution requested) {
+		synchronized (object3) {
+			String identity = column.toLowerCase(java.util.Locale.ROOT);
+			try {
+				plugin.debug("MYSQL QUERY: Altering column `" + column + "` to " + newType);
+				try (Connection connection = mysql.getConnectionManager().getConnection()) {
+					if (connection == null) throw new SQLException("MySQL connection is unavailable");
+					if (!connection.getAutoCommit()) throw new SQLException("Explicit schema changes require auto-commit");
+					try (PreparedStatement statement = connection.prepareStatement("ALTER TABLE " + getName() + " MODIFY `"
+							+ column.replace("`", "``") + "` " + newType + ";")) {
+						statement.executeUpdate();
+					}
+				}
+				if (declaration.registeredString) {
+					ColumnResolution current = reconciledStringColumns.get(identity);
+					if (current != null && !current.pending && !current.declaration.equals(declaration.sqlType))
+						reconciledStringColumns.remove(identity, current);
+					reconciledStringColumns.replace(identity, requested, new ColumnResolution(declaration.sqlType, false));
+				}
+			} catch (SQLException | RuntimeException failure) {
+				reconciledStringColumns.remove(identity, requested);
+				failure.printStackTrace();
+			}
 		}
 	}
 
@@ -225,7 +282,7 @@ public class MySQL {
 			if (known != null) {
 				synchronized (known) {
 					for (String existing : known) if (column.equalsIgnoreCase(existing)
-							&& (registeredType == null || registeredType.equals(reconciledStringColumns.get(column.toLowerCase(java.util.Locale.ROOT))))) return;
+							&& (registeredType == null || registeredType.equals(handledDeclaration(column)))) return;
 				}
 			}
 			// addColumn owns checked live inspection and peer-race reconciliation.

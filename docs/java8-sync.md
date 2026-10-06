@@ -3879,3 +3879,41 @@ pass; this is not a claim of MySQL user-cache runtime or full vote/proxy accepta
 Public explicit alterColumnType compatibility, all-registry schema reconciliation, UUID
 constraints, headless lifecycle/paging, additional numeric families/driver/pool acceptance,
 remaining ledger entries and the final independent review are still required.
+
+
+## Explicit native SQL type API compatibility checkpoint
+
+The starting fork `d4a8f667d91e7121a5e0929a0e16cd615556f00d` checks presence before
+asynchronously applying alterColumnType's requested declaration. A packaged-code regression
+proved the new automatic registered-type reconciliation first performed an unwanted TEXT
+conversion before queuing VARCHAR(30). The explicit API now performs presence-only admission,
+creating a missing column with its registered definition, then runs the requested ALTER on
+the existing SQL executor. Public signatures and asynchronous void/admission semantics remain.
+Explicit declarations remain caller-owned; this API does not implicitly preserve omitted
+SQL nullability/default/comment clauses or acquire the automatic decimal migration fence.
+
+The existing per-column resolution map distinguishes pending explicit ownership from settled
+reconciliation. Normal checks do not apply a competing registered conversion while the explicit
+request is pending. Checked SQL plus statement/connection cleanup must succeed before settlement;
+SQL/cleanup/callback failures release only that request's ownership and stay visibly logged.
+Rejected submission restores prior ownership, and an older failure cannot cancel a newer
+request. An existing borrowed transaction is rejected without implicit commit. Completed
+explicit ownership is process-local and tied to the captured registered declaration; changed
+registration invalidates that match. Cross-restart external-addon override expectations and
+SQL-executor shutdown/cancellation still need the broader API/lifecycle audit. No completion
+future, ordering guarantee or durable override format is added.
+
+ActualJDK8u504 producer clean install:630 unit +72 artifact =702 PASS; exact installed producer
+consumer clean verify:45 unit +1 artifact =46 PASS, zero failures/errors/skips. Commands use
+the same explicit workspace-local Maven repository/resolver/tmp flags recorded above, with
+AdvancedCore/pom.xml clean install followed by VotingPlugin/pom.xml clean verify.
+Producer SHA256 `2a9c7ecc90b0981b5b1a284c69c8a8781f1ee1c8a467e4c439dc557d115fbbbc`;
+consumer SHA256 `08c4ebaa0d9052886fdb1792d64b3f4be20c916adb50a944fad117bce3be8284`.
+All1842/2459 base classes respectively have major<=52. Nine new explicit API artifact tests
+cover queued/completed ownership, rejected execution, older/newer requests, SQL/cleanup/
+callback failures, missing-column creation and transaction protection.
+A real executor/native packaged API/MariaDB fixture proves INT remains unchanged while queued,
+VARCHAR(30) applies on the worker, a later check retains it, and stored17 is preserved.
+Nine exact-consumer Java8/Spigot1.8.8 SQLite/schema/cache/startup/shutdown checks pass.
+The remaining upstream ledger, numeric/driver/pool and full runtime/API/lifecycle scope,
+and fresh independent final review are still incomplete. No push or PR readiness is claimed.
