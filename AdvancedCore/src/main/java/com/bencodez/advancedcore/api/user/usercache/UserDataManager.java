@@ -153,19 +153,21 @@ public class UserDataManager {
     }
 
     private boolean retire(UUID uuid,UserDataCache cache,boolean notify,boolean onlyOffline) {
+        final long expectedVersion=onlyOffline ? cache.cleanupSnapshotVersion() : 0L;
         try(UserStorageOwnership.Scope admission=getPlugin().getUserStorageOwnership().admit()) {
             UserStorageOwnership.Slot owner=plugin.getUserStorageOwnership().owner(uuid);
-            Runnable notification;
+            Runnable notification;boolean countRetirement;
             owner.getLock().lock();
             try {
-                if(onlyOffline && (userDataCache.get(uuid)!=cache || isUserOnline(uuid)))return false;
+                if(onlyOffline && (userDataCache.get(uuid)!=cache || cache.cleanupSnapshotVersion()!=expectedVersion || isUserOnline(uuid)))return false;
                 // Join markers must not wait for physical storage. Once flush starts,
                 // retire that flushed generation even if a concurrent join arrives.
                 notification=cache.retireForManager();
                 userDataCache.remove(uuid,cache);
+                countRetirement=!onlyOffline || !isUserOnline(uuid);
             }finally {owner.getLock().unlock();}
             if(notify && notification!=null)notification.run();
-            return true;
+            return countRetirement;
         }
     }
 

@@ -3559,3 +3559,38 @@ in-place cache mutation while canonical ownership is awaited, wider cache popula
 refresh callers, and runtime reload/failure matrix. This cohort does not establish
 whole-main parity or full-backport readiness. Configuration, schemas, public existing
 APIs, proxy wire formats and release metadata are unchanged.
+
+
+## Periodic cleanup snapshot-version fence
+
+Periodic cleanup now selects the cache snapshot version before waiting for canonical
+storage ownership, then rechecks version, mapped handler identity and online state
+under that owner. A newer in-place mutation makes that cleanup skip without physical
+writes; a later cleanup can flush and retire normally. The package-private version
+getter does not change existing public APIs. Explicit cache invalidation remains
+unconditional. A cache invalidated after a concurrent join is retired safely but is
+not logged as an offline eviction, matching the final pinned upstream behavior.
+
+Both defects have genuine failing regressions followed by19 passing cache/registry
+checks. The ownership-wait regression uses the actual ReentrantLock and a newer queued
+mutation, rather than a mocked successful storage path. The join-during-flush test
+checks retirement and the absence of misleading offline-removal logging.
+
+Final actualJava8 clean install615 unit +18 artifact =633 PASS; exact local producer
+consumer clean verify45 unit +1 artifact =46 PASS, failures/errors/skips zero. Both
+artifacts retain base class major<=52. Producer SHA256:
+`6f154a039f1f25a90cf1636ba05f3ae41527ae7a3218ca51efd17012178289a0`;
+consumer SHA256:
+`1c1f27220ba78bc78d07b2dbdc3bace103a319ee81b4b1c1e8ad912da3d4e51b`.
+Six native cache, ten native permission/reconnect and five legacy timestamp upgrade
+checks pass on this exact final consumer in real Java8/Spigot1.8.8 fixtures.
+
+The pinned session/snapshot commits bf11544e,fe461c6e,c092125a,ca9af6c7,5fd805d2
+are disposed as Java8/Bukkit1.8 adaptations of their final behavior. Immutable Java8
+state and copied collections replace records/Set.copyOf; existing canonical storage
+ownership replaces modern shared-runtime routing. Obsolete intermediate retention of
+a cleared cache after join is superseded by the final invalidation fix. Configuration,
+schemas, serialized data, wire formats, release metadata and public existing signatures
+are unchanged. See isolated cache-cleanup-upstream-audit.md for immutable IDs/callers.
+Mixed merge patches and wider schema/cache population/lifecycle backports remain
+unfinished; this is not whole-main parity or PR readiness.

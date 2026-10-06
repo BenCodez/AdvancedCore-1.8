@@ -17,6 +17,30 @@ import com.bencodez.advancedcore.api.user.usercache.change.UserDataChangeString;
 import com.bencodez.simpleapi.sql.data.*;
 
 class LegacyCacheCleanupThreadingTest {
+    @Test void mutationWhileCleanupWaitsForOwnershipPreservesNewerSnapshot() throws Exception {
+        fixture(f -> {
+            UserDataCache cache=f.cached();f.manager.clearNonNeededCachedUsers();f.dispatch.runNext();
+            java.util.concurrent.locks.ReentrantLock lock=f.dispatch.plugin.getUserStorageOwnership().owner(f.id).getLock();
+            Runnable cleanup=f.storage.remove(0);
+            java.util.concurrent.atomic.AtomicReference<Throwable> failed=new java.util.concurrent.atomic.AtomicReference<>();
+            Thread worker=new Thread(()->{try {cleanup.run();}catch(Throwable failure){failed.set(failure);}},"cleanup-version-waiter");
+            lock.lock();
+            try {
+                worker.start();long bound=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);
+                while(!lock.hasQueuedThread(worker) && worker.isAlive() && System.nanoTime()<bound)Thread.yield();
+                assertTrue(lock.hasQueuedThread(worker),"Cleanup reached canonical ownership wait");
+                cache.addChange(new UserDataChangeString("Points","newer"),true);
+            }finally {
+                lock.unlock();
+                try {worker.join(2000);}catch(InterruptedException failure){Thread.currentThread().interrupt();throw new AssertionError(failure);}
+            }
+            assertFalse(worker.isAlive());assertNull(failed.get());
+            assertSame(cache,f.manager.getUserDataCache().get(f.id),"Earlier cleanup cannot retire an in-place newer snapshot");
+            assertEquals("newer",cache.getCachedValue("Points").getString());assertTrue(cache.hasChangesToProcess());verifyNoInteractions(f.data);
+            f.manager.clearNonNeededCachedUsers();f.dispatch.runNext();f.runStorage();assertFalse(f.manager.getUserDataCache().containsKey(f.id));
+            try {verify(f.data).setValuesStrict(any());}catch(Exception failure){throw new AssertionError(failure);}
+        });
+    }
     @Test void cleanupCapturesBukkitOnOwnerAndFlushesOnStorageWorker() throws Exception {
         fixture(f -> {
             UserDataCache cache=f.cached();cache.addChange(new UserDataChangeString("Points","pending"),true);
@@ -73,6 +97,7 @@ class LegacyCacheCleanupThreadingTest {
             catch(Exception failure){throw new AssertionError(failure);}
             f.manager.clearNonNeededCachedUsers();f.dispatch.runNext();f.runStorage();
             assertNull(cache.getUuid());assertFalse(f.manager.getUserDataCache().containsKey(f.id),"A join cannot retain a generation already cleared by accepted storage work");
+            verify(f.dispatch.plugin,never()).devDebug(startsWith("Removed "));
             UserDataCache replacement=f.cached();f.manager.clearNonNeededCachedUsers();f.dispatch.runNext();f.runStorage();assertSame(replacement,f.manager.getUserDataCache().get(f.id));
         });
     }

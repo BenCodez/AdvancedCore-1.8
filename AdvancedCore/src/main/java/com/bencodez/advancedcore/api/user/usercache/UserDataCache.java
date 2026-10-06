@@ -197,6 +197,9 @@ public class UserDataCache {
 		} finally { synchronized (this) { removing = false; } }
 	}
 
+    /** Version selected by periodic cleanup before waiting on canonical storage ownership. */
+    synchronized long cleanupSnapshotVersion() { return snapshotVersion; }
+
 	// Registry removal must happen before callbacks can populate a new generation.
 	Runnable retireForManager() {
 		return finishCache(true);
