@@ -40,6 +40,7 @@ public class FullInventoryHandler {
 	private final AdvancedCorePlugin plugin;
 	private final ReentrantReadWriteLock deliveryLock = new ReentrantReadWriteLock(true);
 	private final AtomicBoolean shuttingDown = new AtomicBoolean();
+	private final Object saveLock = new Object();
 
 	@Getter
 	private ScheduledExecutorService timer;
@@ -118,51 +119,49 @@ public class FullInventoryHandler {
 	}
 
 	/**
-	 * Saves pending items to disk. The complete replacement section is first built in
-	 * a temporary configuration. Only after that succeeds is the live configuration
-	 * replaced in memory, followed by a single disk save. Delivery operations hold a
-	 * shared lock, while saving holds the exclusive lock, so a snapshot cannot observe
-	 * the temporary remove/re-add state of an in-flight inventory check.
+	 * Captures a complete point-in-time replacement under the delivery lock. Disk
+	 * publication is serialized separately so native delivery never waits for disk
+	 * I/O. The void API still returns only after publication or reports its failure.
 	 */
 	public void save() {
-		FileConfiguration data = null;
-		YamlConfiguration previous = null;
-		deliveryLock.writeLock().lock();
-		try {
+		synchronized (saveLock) {
 			ServerData serverData = plugin.getServerDataFile();
-			if (serverData == null || serverData.getData() == null) {
-				return;
-			}
-
-			YamlConfiguration snapshot = new YamlConfiguration();
-			long now = System.currentTimeMillis();
-			for (Entry<UUID, ArrayList<ItemStack>> entry : items.entrySet()) {
-				ArrayList<ItemStack> pending = new ArrayList<>(entry.getValue());
-				String basePath = "FullInventory." + entry.getKey();
-				for (int i = 0; i < pending.size(); i++) {
-					snapshot.set(basePath + ".Items." + i, pending.get(i));
-				}
-				snapshot.set(basePath + ".Time", now);
-			}
-
-			data = serverData.getData();
-			previous = copySection(data, "FullInventory");
-			data.set("FullInventory", null);
-			ConfigurationSection replacement = snapshot.getConfigurationSection("FullInventory");
-			if (replacement != null) {
-				for (String path : replacement.getKeys(true)) {
-					if (!replacement.isConfigurationSection(path)) {
-						data.set("FullInventory." + path, replacement.get(path));
+			if (serverData == null || serverData.getData() == null) return;
+			FileConfiguration data = null;
+			YamlConfiguration previous = null;
+			try {
+				deliveryLock.writeLock().lock();
+				try {
+					YamlConfiguration snapshot = new YamlConfiguration();
+					long now = System.currentTimeMillis();
+					for (Entry<UUID, ArrayList<ItemStack>> entry : items.entrySet()) {
+						ArrayList<ItemStack> pending = new ArrayList<>(entry.getValue());
+						String basePath = "FullInventory." + entry.getKey();
+						for (int i = 0; i < pending.size(); i++) {
+							ItemStack item = pending.get(i);
+							if (item == null) continue;
+							ItemStack captured = item.clone();
+							if (captured == null) throw new IllegalStateException("Pending item clone is unavailable");
+							snapshot.set(basePath + ".Items." + i, captured);
+						}
+						snapshot.set(basePath + ".Time", now);
 					}
+					data = serverData.getData();
+					previous = copySection(data, "FullInventory");
+					replaceSection(data, "FullInventory", copySection(snapshot, "FullInventory"));
+				} finally {
+					deliveryLock.writeLock().unlock();
 				}
+				serverData.saveData();
+			} catch (Exception failure) {
+				if (data != null && previous != null) {
+					deliveryLock.writeLock().lock();
+					try { replaceSection(data, "FullInventory", previous); }
+					finally { deliveryLock.writeLock().unlock(); }
+				}
+				plugin.getLogger().log(Level.WARNING, "Failed to save pending full-inventory items", failure);
+				throw new IllegalStateException("Unable to save pending full-inventory items", failure);
 			}
-			serverData.saveData();
-		} catch (Exception e) {
-			if (data != null && previous != null) replaceSection(data, "FullInventory", previous);
-			plugin.getLogger().log(Level.WARNING, "Failed to save pending full-inventory items", e);
-			throw new IllegalStateException("Unable to save pending full-inventory items", e);
-		} finally {
-			deliveryLock.writeLock().unlock();
 		}
 	}
 

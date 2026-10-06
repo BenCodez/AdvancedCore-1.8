@@ -47,8 +47,8 @@ public class FullInventoryHandlerTest {
 	public void addListMergesUnderSameUuid() {
 		Fixture fixture = createFixture();
 		UUID uuid = UUID.randomUUID();
-		ItemStack first = mock(ItemStack.class);
-		ItemStack second = mock(ItemStack.class);
+		ItemStack first = snapshotItem();
+		ItemStack second = snapshotItem();
 
 		fixture.handler.add(uuid, new ArrayList<>(java.util.Arrays.asList(first)));
 		fixture.handler.add(uuid, new ArrayList<>(java.util.Arrays.asList(second)));
@@ -61,7 +61,7 @@ public class FullInventoryHandlerTest {
 	public void offlinePlayerDoesNotBreakPendingSweep() {
 		Fixture fixture = createFixture();
 		UUID uuid = UUID.randomUUID();
-		fixture.handler.add(uuid, mock(ItemStack.class));
+		fixture.handler.add(uuid, snapshotItem());
 		fixture.handler.getLastMessageTime().put(uuid, 0L);
 
 		try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
@@ -79,7 +79,7 @@ public class FullInventoryHandlerTest {
 		Fixture fixture = createFixture();
 		UUID uuid = UUID.randomUUID();
 		Player player = mock(Player.class);
-		fixture.handler.add(uuid, mock(ItemStack.class));
+		fixture.handler.add(uuid, snapshotItem());
 
 		try (MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class)) {
 			bukkit.when(Bukkit::isPrimaryThread).thenReturn(true);
@@ -105,7 +105,7 @@ public class FullInventoryHandlerTest {
 	public void giveItemAlwaysUsesEntityScheduler() {
 		Fixture fixture = createFixture();
 		Player player = mock(Player.class);
-		ItemStack item = mock(ItemStack.class);
+		ItemStack item = snapshotItem();
 
 		fixture.handler.giveItem(player, item);
 
@@ -145,7 +145,7 @@ public class FullInventoryHandlerTest {
 	public void savePersistsCompletedSnapshotOnce() {
 		Fixture fixture = createFixture();
 		UUID uuid = UUID.randomUUID();
-		ItemStack item = mock(ItemStack.class);
+		ItemStack item = snapshotItem();
 		fixture.data.set("FullInventory.previous.Time", 123L);
 		fixture.handler.add(uuid, item);
 
@@ -159,6 +159,11 @@ public class FullInventoryHandlerTest {
 		assertEquals(item, root.getItemStack(uuid + ".Items.0"));
 		assertTrue(root.getLong(uuid + ".Time") > 0L);
 	}
+    private static ItemStack snapshotItem() {
+        ItemStack item = mock(ItemStack.class);
+        when(item.clone()).thenReturn(item); // Stable mock; native clone ownership has separate coverage.
+        return item;
+    }
 
 	private Fixture createFixture() {
 		AdvancedCorePlugin plugin = mock(AdvancedCorePlugin.class);

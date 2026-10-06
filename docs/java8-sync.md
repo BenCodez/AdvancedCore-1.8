@@ -1994,3 +1994,45 @@ partial failures, crash recovery, failed shutdown and the full remaining upstrea
 ledger/runtime matrix are not proven. The full goal remains active and incomplete;
 fresh independent final review and PR readiness have not been reached. No source
 push or PR opening is authorized.
+
+## Full-inventory snapshot publication latency
+
+Disk publication no longer holds the native delivery lock. Capturing and replacing
+the complete FullInventory section is fenced against remove/requeue delivery;
+each captured ItemStack is cloned. A separate per-handler save monitor serializes
+captures and disk writes, preventing a second save from replacing an in-flight
+snapshot. The existing void save API remains synchronous and propagates failure;
+a failure restores the prior in-memory section and leaves accepted pending items
+available for explicit retry. A completed save represents a point-in-time capture,
+not a fence preventing later native delivery before publication finishes.
+
+A gated disk-write regression fails on the previous implementation with one
+assertion failure and no test errors. Three added regressions prove delivery can
+finish while disk publication remains physically pending, native quantity changes
+do not alter captured items, and competing saves publish in order. Worker cleanup
+waits for actual termination. Existing remove/requeue and failed-write tests remain
+in place. This addresses disk latency on the delivery lock; it does not make an
+owner-thread caller of the synchronous save API asynchronous.
+
+Workspace Java 8 clean install: AdvancedCore 398 unit plus 18 artifact tests.
+Exact-dependent Java 8 clean verify: VotingPlugin 45 unit plus one artifact test.
+All failures/errors/skips are zero. Base class counts remain 1815/2432 and maximum
+major version 52. Artifact SHA-256:
+
+- AdvancedCore: `e9d21eb88bb8fe2e9e0b8798fcd17405dfc399d6b1d264d0cec1c30068ecbeeb`
+- VotingPlugin: `aca5cface171382609224927177df439056951e445cca2cadfec1310d822f2ad`
+
+The exact consumer artifact passes connected native overflow park/save/disable/
+restart/recovery (`4e469c8c9f`), connected navigation and sync/async callbacks
+(`c3e283706e`), and native item/pagination/MySQL/global pool/conversion/repaired
+retry/console completion/pending-write restart acceptance (`5545a6f773`). These
+are real Java 8/Spigot 1.8.8 protocol-client and storage tests, not graphical UI
+inspection or live fault-injected disk-latency acceptance. Full evidence is in
+the workspace overflow-latency build and runtime logs.
+
+Unrelated ServerData writers, reload races, atomic file publication, replay-aware
+item completion and reward checkpoints, queued give retirement, arbitrary partial
+native failure and crash exactly-once delivery remain incomplete. This cohort
+does not complete the full upstream ledger or independent final review. All 167
+original checkouts and both pinned references remain unchanged. No source push or
+PR opening is authorized.

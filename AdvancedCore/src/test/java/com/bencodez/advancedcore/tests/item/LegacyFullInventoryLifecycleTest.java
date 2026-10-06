@@ -25,7 +25,7 @@ import com.bencodez.simpleapi.scheduler.BukkitScheduler;
 class LegacyFullInventoryLifecycleTest {
     @Test void deliveryDefersNativeAccessAndKeepsAnOverflowAddedDuringTheCheck() {
         try (Fixture f = new Fixture()) {
-            ItemStack original=mock(ItemStack.class), newer=mock(ItemStack.class), excess=mock(ItemStack.class);
+            ItemStack original=snapshotItem(), newer=snapshotItem(), excess=snapshotItem();
             f.handler.add(f.id, original);
             when(f.inventory.addItem(original)).thenAnswer(call -> {
                 f.handler.add(f.id, newer); HashMap<Integer,ItemStack> remaining=new HashMap<>();remaining.put(0,excess);return remaining;
@@ -38,7 +38,7 @@ class LegacyFullInventoryLifecycleTest {
     }
     @Test void shutdownFencesAnAlreadyQueuedOrdinaryCheckBeforeItsSnapshot() {
         try (Fixture f = new Fixture()) {
-            ItemStack item=mock(ItemStack.class);f.handler.add(f.id,item);f.handler.check(f.player);
+            ItemStack item=snapshotItem();f.handler.add(f.id,item);f.handler.check(f.player);
             f.handler.shutdown();f.owner.remove(0).run();
             verify(f.inventory,never()).addItem(any(ItemStack[].class));
             assertEquals(item,f.data.getItemStack("FullInventory."+f.id+".Items.0"));
@@ -54,7 +54,7 @@ class LegacyFullInventoryLifecycleTest {
     }
     @Test void saveWaitsForTheRemoveAndOverflowRequeuePhase() throws Exception {
         try(Fixture f=new Fixture()) {
-            ItemStack item=mock(ItemStack.class);f.handler.add(f.id,item);f.handler.check(f.player);
+            ItemStack item=snapshotItem();f.handler.add(f.id,item);f.handler.check(f.player);
             CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1);
             when(f.inventory.addItem(item)).thenAnswer(call->{entered.countDown();assertTrue(release.await(2,TimeUnit.SECONDS));HashMap<Integer,ItemStack> rest=new HashMap<>();rest.put(0,item);return rest;});
             ExecutorService workers=Executors.newFixedThreadPool(2);
@@ -73,7 +73,7 @@ class LegacyFullInventoryLifecycleTest {
     @Test void failedSaveRestoresThePreviousSectionAndRetainsAcceptedItemsForExplicitRetry() {
         try(Fixture f=new Fixture()) {
             f.data.set("FullInventory.previous.Time",123L);f.data.set("Unrelated",456);
-            ItemStack item=mock(ItemStack.class);f.handler.add(f.id,item);
+            ItemStack item=snapshotItem();f.handler.add(f.id,item);
             doThrow(new IllegalStateException("Fixture disk failure")).when(f.serverData).saveData();
             assertThrows(IllegalStateException.class,f.handler::save);
             assertEquals(123,f.data.getLong("FullInventory.previous.Time"));assertEquals(456,f.data.getInt("Unrelated"));assertEquals(Arrays.asList(item),f.handler.getItems().get(f.id));
@@ -93,7 +93,7 @@ class LegacyFullInventoryLifecycleTest {
     }
     @Test void giveItemCopiesTheInputArrayAndDeliversOnOwner() {
         try(Fixture f=new Fixture()) {
-            ItemStack original=mock(ItemStack.class),replacement=mock(ItemStack.class);ItemStack[] supplied={original};
+            ItemStack original=snapshotItem(),replacement=snapshotItem();ItemStack[] supplied={original};
             when(f.inventory.addItem(original)).thenReturn(new HashMap<>());
             f.handler.giveItem(f.player,supplied);supplied[0]=replacement;verify(f.player,never()).getInventory();
             f.owner.remove(0).run();verify(f.inventory).addItem(original);verify(f.inventory,never()).addItem(replacement);verify(f.player).updateInventory();
@@ -105,6 +105,67 @@ class LegacyFullInventoryLifecycleTest {
         IllegalStateException failure=assertThrows(IllegalStateException.class,data::saveData);assertInstanceOf(java.io.IOException.class,failure.getCause());
         Path file=temporary.resolve("ServerData.yml");when(data.getdFile()).thenReturn(file.toFile());data.saveData();
         YamlConfiguration reloaded=new YamlConfiguration();reloaded.load(file.toFile());assertEquals(123,reloaded.getInt("Unrelated"));
+    }
+    @Test void diskPublicationDoesNotHoldTheNativeDeliveryLock() throws Exception {
+        try(Fixture f=new Fixture()) {
+            ItemStack item=snapshotItem();f.handler.add(f.id,item);
+            CountDownLatch writing=new CountDownLatch(1),releaseWrite=new CountDownLatch(1),delivered=new CountDownLatch(1);
+            doAnswer(call->{writing.countDown();assertTrue(releaseWrite.await(3,TimeUnit.SECONDS));return null;}).when(f.serverData).saveData();
+            when(f.inventory.addItem(item)).thenAnswer(call->{delivered.countDown();return new HashMap<Integer,ItemStack>();});
+            ExecutorService workers=Executors.newFixedThreadPool(2);
+            try {
+                Future<?> save=workers.submit(f.handler::save);assertTrue(writing.await(2,TimeUnit.SECONDS));
+                f.handler.check(f.player);Future<?> delivery=workers.submit(f.owner.remove(0));
+                assertTrue(delivered.await(1,TimeUnit.SECONDS),"Disk IO must not stall native delivery");
+                assertFalse(save.isDone(),"Fixture disk write must still be physically active");
+                assertEquals(item,f.data.getItemStack("FullInventory."+f.id+".Items.0"),"Capture remains the complete point-in-time snapshot");
+                releaseWrite.countDown();delivery.get(2,TimeUnit.SECONDS);save.get(2,TimeUnit.SECONDS);
+                assertFalse(f.handler.getItems().containsKey(f.id));
+            } finally {releaseWrite.countDown();workers.shutdownNow();assertTrue(workers.awaitTermination(2,TimeUnit.SECONDS));doNothing().when(f.serverData).saveData();}
+        }
+    }
+
+    @Test void capturedNativeItemCannotChangeWhileDiskPublicationIsPending() throws Exception {
+        try(Fixture f=new Fixture()) {
+            ItemStack original=new ItemStack(Material.DIAMOND,3);f.handler.add(f.id,original);
+            CountDownLatch writing=new CountDownLatch(1),release=new CountDownLatch(1);
+            doAnswer(call->{writing.countDown();assertTrue(release.await(3,TimeUnit.SECONDS));return null;}).when(f.serverData).saveData();
+            ExecutorService worker=Executors.newSingleThreadExecutor();
+            try {
+                Future<?> save=worker.submit(f.handler::save);assertTrue(writing.await(2,TimeUnit.SECONDS));
+                ItemStack captured=f.data.getItemStack("FullInventory."+f.id+".Items.0");
+                assertNotSame(original,captured);original.setAmount(1);
+                assertEquals(3,captured.getAmount());assertEquals(Material.DIAMOND,captured.getType());
+                release.countDown();save.get(2,TimeUnit.SECONDS);
+            }finally{release.countDown();worker.shutdownNow();assertTrue(worker.awaitTermination(2,TimeUnit.SECONDS));doNothing().when(f.serverData).saveData();}
+        }
+    }
+
+    @Test void competingSavesCannotReplaceAnInFlightSnapshotBeforeItsWriteFinishes() throws Exception {
+        try(Fixture f=new Fixture()) {
+            f.handler.add(f.id,snapshotItem());
+            CountDownLatch writing=new CountDownLatch(1),release=new CountDownLatch(1),secondAdmitted=new CountDownLatch(1);
+            java.util.concurrent.atomic.AtomicInteger writes=new java.util.concurrent.atomic.AtomicInteger();
+            java.util.concurrent.atomic.AtomicReference<Thread> secondThread=new java.util.concurrent.atomic.AtomicReference<>();
+            List<Integer> sizes=java.util.Collections.synchronizedList(new ArrayList<>());
+            doAnswer(call->{sizes.add(f.data.getConfigurationSection("FullInventory."+f.id+".Items").getKeys(false).size());if(writes.incrementAndGet()==1){writing.countDown();assertTrue(release.await(3,TimeUnit.SECONDS));}return null;}).when(f.serverData).saveData();
+            ExecutorService workers=Executors.newFixedThreadPool(2);
+            try {
+                Future<?> first=workers.submit(f.handler::save);assertTrue(writing.await(2,TimeUnit.SECONDS));
+                f.handler.add(f.id,snapshotItem());
+                Future<?> second=workers.submit(()->{secondThread.set(Thread.currentThread());secondAdmitted.countDown();f.handler.save();});
+                assertTrue(secondAdmitted.await(2,TimeUnit.SECONDS));long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(1);
+                while(secondThread.get().getState()!=Thread.State.BLOCKED&&System.nanoTime()<end)Thread.yield();
+                assertEquals(Thread.State.BLOCKED,secondThread.get().getState());assertFalse(second.isDone());assertEquals(Arrays.asList(1),sizes);
+                release.countDown();first.get(2,TimeUnit.SECONDS);second.get(2,TimeUnit.SECONDS);assertEquals(Arrays.asList(1,2),sizes);
+            }finally{release.countDown();workers.shutdownNow();assertTrue(workers.awaitTermination(2,TimeUnit.SECONDS));doNothing().when(f.serverData).saveData();}
+        }
+    }
+
+    private static ItemStack snapshotItem() {
+        ItemStack item = mock(ItemStack.class);
+        when(item.clone()).thenReturn(item); // Stable mock; native clone ownership has separate coverage.
+        return item;
     }
     private static final class Fixture implements AutoCloseable {
         final UUID id=UUID.randomUUID();final AdvancedCorePlugin plugin=mock(AdvancedCorePlugin.class);
