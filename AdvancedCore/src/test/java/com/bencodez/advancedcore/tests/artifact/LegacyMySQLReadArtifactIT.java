@@ -24,7 +24,16 @@ class LegacyMySQLReadArtifactIT {
     @Test void checkedSqlLookingIdentityIsAnActualMissingRow() throws Exception {
         assertLookup("' OR 1=1 --",null,true);
     }
+    @Test void completeConversionSourceUsesPackagedJava8JdbcAndClosesBorrowedConnection() throws Exception {
+        assertLookup("",null,true,"complete");
+    }
+    @Test void failedCompleteConversionSourcePropagatesSqlErrorAndClosesBorrowedConnection() throws Exception {
+        assertLookup("",null,true,"complete-fail");
+    }
     private void assertLookup(String name,String expected,boolean checked) throws Exception {
+        assertLookup(name,expected,checked,"lookup");
+    }
+    private void assertLookup(String name,String expected,boolean checked,String operation) throws Exception {
         // Exercise the packaged Java8 pool relocation rather than the upstream
         // dependency's unshaded Java11 pool on the unit-test classpath.
         URL artifact=Paths.get(System.getProperty("advancedcore.jar")).toUri().toURL();
@@ -71,7 +80,17 @@ class LegacyMySQLReadArtifactIT {
                 when(users.getDataManager()).thenReturn(mock(com.bencodez.advancedcore.api.user.usercache.UserDataManager.class));
                 set(storeType,store,"plugin",plugin);
                 set(storeType,store,"mysql",driver);
-                if(checked) {
+                if(operation.startsWith("complete")) {
+                    if(operation.equals("complete-fail")) {
+                        try(java.sql.Statement drop=connection.createStatement()){drop.executeUpdate("DROP TABLE users");}
+                        java.lang.reflect.InvocationTargetException failure=assertThrows(java.lang.reflect.InvocationTargetException.class,
+                            () -> storeType.getMethod("getAllQueryStrict").invoke(store));assertTrue(failure.getCause() instanceof java.sql.SQLException);
+                    } else {
+                        java.util.Map<java.util.UUID,java.util.ArrayList<com.bencodez.simpleapi.sql.Column>> result=
+                            (java.util.Map<java.util.UUID,java.util.ArrayList<com.bencodez.simpleapi.sql.Column>>)storeType.getMethod("getAllQueryStrict").invoke(store);
+                        assertEquals(1,result.size());assertEquals("O'Brien",result.get(java.util.UUID.fromString("00000000-0000-0000-0000-000000000001")).get(1).getValue().getString());
+                    }
+                } else if(checked) {
                     java.util.List<com.bencodez.simpleapi.sql.Column> row=(java.util.List<com.bencodez.simpleapi.sql.Column>)
                         storeType.getMethod("getExactStrict",String.class).invoke(store,name);
                     if(expected==null)assertTrue(row.isEmpty());

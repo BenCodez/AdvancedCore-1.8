@@ -294,6 +294,18 @@ public class MySQL {
 		}
 	}
 
+	/** Complete conversion source; failed reads never return an empty/partial result. */
+	public HashMap<UUID, ArrayList<Column>> getAllQueryStrict() throws SQLException {
+		if (mysql == null || mysql.getConnectionManager() == null) throw new SQLException("MySQL user storage is unavailable");
+		try (Connection connection = mysql.getConnectionManager().getConnection()) {
+			if (connection == null || !connection.getAutoCommit()) throw new SQLException("Complete user source requires an available auto-commit connection");
+			try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM " + getName());
+					ResultSet rows = statement.executeQuery()) {
+				return com.bencodez.advancedcore.api.user.userstorage.CompleteUserRows.read(rows, plugin.getUserManager().getDataManager());
+			}
+		}
+	}
+
 	public HashMap<UUID, ArrayList<Column>> getAllQuery() {
 		HashMap<UUID, ArrayList<Column>> result = new HashMap<>();
 		String query = "SELECT * FROM " + getName() + ";";

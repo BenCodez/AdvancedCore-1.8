@@ -317,13 +317,15 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	private void convertDataStorageOwned(UserStorage from, UserStorage to) {
 		debug("Starting convert process");
 		if (!hasStorageProvider(from)) loadUserAPI(from);
-		if (!hasStorageProvider(to)) loadUserAPI(to);
 
 		if (getMysql() != null) {
 			getMysql().clearCacheBasic();
 		}
 
-		HashMap<UUID, ArrayList<Column>> cols = getUserManager().getAllKeys(from);
+		HashMap<UUID, ArrayList<Column>> cols;
+		try { cols = getUserManager().getAllKeysStrict(from); }
+		catch (java.sql.SQLException | java.io.IOException failure) { throw new IllegalStateException("Conversion source was not completely read", failure); }
+		if (!hasStorageProvider(to)) loadUserAPI(to);
 		Queue<Entry<UUID, ArrayList<Column>>> players = new LinkedList<>(cols.entrySet());
 
 		while (players.size() > 0) {

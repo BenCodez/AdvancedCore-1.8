@@ -308,6 +308,38 @@ public class FileThread {
 		}
 	}
 
+	/** Read the explicit FLAT conversion source under the existing file owner. */
+	public HashMap<UUID, HashMap<String, DataValue>> getAllValuesStrict() throws IOException {
+		synchronized (FileThread.getInstance()) {
+			if (plugin == null) throw new IOException("User file owner is not initialized");
+			Path directory = new File(plugin.getDataFolder(), "Data").toPath();
+			HashMap<UUID, HashMap<String, DataValue>> result = new HashMap<>();
+			if (Files.notExists(directory)) return result;
+			if (!Files.isDirectory(directory)) throw new IOException("User data directory is unavailable");
+			try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(directory, "*.yml")) {
+				for (Path file : files) {
+					String name = file.getFileName().toString();String text = name.substring(0, name.length() - 4);UUID identity;
+					try { identity = UUID.fromString(text);if (!identity.toString().equalsIgnoreCase(text)) throw new IllegalArgumentException(); }
+					catch (IllegalArgumentException invalid) { throw new IOException("Invalid source user file identity", invalid); }
+					if (!Files.isRegularFile(file)) throw new IOException("User source is not a readable regular file");
+					YamlConfiguration data = new YamlConfiguration();
+					try { data.load(file.toFile()); }
+					catch (InvalidConfigurationException invalid) { throw new IOException("Existing user source is malformed", invalid); }
+					HashMap<String, DataValue> values = new HashMap<>();
+					for (String key : data.getKeys(false)) {
+						Object value = data.get(key);
+						if (value instanceof Integer) values.put(key, new DataValueInt((Integer) value));
+						else if (value instanceof String || value instanceof Boolean || value instanceof Number)
+							values.put(key, new DataValueString(String.valueOf(value)));
+						else throw new IOException("Unsupported structured user source value");
+					}
+					if (result.put(identity, values) != null) throw new IOException("Duplicate source user file identity");
+				}
+			}
+			return result;
+		}
+	}
+
 	void publishStrict(Path staged, Path target) throws IOException {
 		Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
 	}

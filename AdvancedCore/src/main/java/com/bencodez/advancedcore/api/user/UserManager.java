@@ -78,6 +78,28 @@ public class UserManager {
 		return getAllKeys(plugin.getStorageType());
 	}
 
+	/** Materialize the requested source completely before conversion may copy rows. */
+	public HashMap<UUID, ArrayList<Column>> getAllKeysStrict(UserStorage storage) throws java.sql.SQLException, java.io.IOException {
+		java.util.Objects.requireNonNull(storage, "storage");
+		try (com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Scope admission = plugin.getUserStorageOwnership().admit()) {
+			if (storage == UserStorage.MYSQL) {
+				if (plugin.getMysql() == null) throw new java.sql.SQLException("MySQL user storage is unavailable");
+				return plugin.getMysql().getAllQueryStrict();
+			}
+			if (storage == UserStorage.SQLITE) {
+				if (plugin.getSQLiteUserTable() == null) throw new java.sql.SQLException("SQLite user storage is unavailable");
+				return plugin.getSQLiteUserTable().getAllQueryStrict();
+			}
+			HashMap<UUID, ArrayList<Column>> result = new HashMap<>();
+			for (Entry<UUID, HashMap<String, DataValue>> row : com.bencodez.advancedcore.thread.FileThread.getInstance().getAllValuesStrict().entrySet()) {
+				ArrayList<Column> columns = new ArrayList<>();
+				for (Entry<String, DataValue> value : row.getValue().entrySet()) columns.add(new Column(value.getKey(), value.getValue()));
+				result.put(row.getKey(), columns);
+			}
+			return result;
+		}
+	}
+
 	public HashMap<UUID, ArrayList<Column>> getAllKeys(UserStorage storage) {
 		if (storage.equals(UserStorage.SQLITE)) {
 			return plugin.getSQLiteUserTable().getAllQuery();

@@ -244,6 +244,19 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		return results;
 	}
 
+	/** Complete conversion source without taking ownership of the shared connection. */
+	public HashMap<UUID, ArrayList<Column>> getAllQueryStrict() throws SQLException {
+		synchronized (object) {
+			if (sqLite == null) throw new SQLException("SQLite user storage is unavailable");
+			Connection connection = sqLite.getSQLConnection();
+			if (connection == null || !connection.getAutoCommit()) throw new SQLException("Complete user source requires an available auto-commit connection");
+			try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM " + getName());
+					ResultSet rows = statement.executeQuery()) {
+				return com.bencodez.advancedcore.api.user.userstorage.CompleteUserRows.read(rows, plugin.getUserManager().getDataManager());
+			}
+		}
+	}
+
 	public HashMap<UUID, ArrayList<Column>> getAllQuery() {
 		HashMap<UUID, ArrayList<Column>> result = new HashMap<>();
 		String query = "SELECT * FROM " + getName() + ";";

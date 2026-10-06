@@ -1314,3 +1314,45 @@ inactive-provider configuration drift, raw APIs that bypass admission, and borro
 global readers during direct external parent replacement. Do not claim full migration
 safety, whole upstream runtime parity or PR readiness from this cohort. The full
 remaining ledger/features/runtime matrix and final independent review remain required.
+
+### Complete conversion source reads
+
+Conversion now fully materializes its requested source before creating a missing
+destination. Additive `UserManager.getAllKeysStrict`, MySQL/UserTable
+`getAllQueryStrict`, and FileThread `getAllValuesStrict` leave legacy query APIs
+unchanged. Strict SQL reads propagate preparation/iteration failures, reject missing
+or duplicate column/normalized UUID identities, malformed integers/booleans and
+unacknowledged outer transactions. SQL null integer/boolean defaults remain 0/false;
+boolean true/false and numeric 1/0 are supported. Borrowed MySQL connections are
+closed, the shared SQLite connection stays with its owner. FLAT enumeration reads
+its own Data directory under the existing FileThread lock, preserves scalar values
+and source bytes, rejects malformed YAML/structured values/duplicate identities,
+and never resolves through the active SQL store or starts the legacy polling thread.
+No schema, configuration, release, dependency or wire changes.
+
+Corrected native SQLite baseline: 2 assertion failures / 0 errors. Earlier attempts
+had fixture overload/stubbing errors and an incompatible unshaded dependency pool
+on the raw Java8 unit classpath; they are not product evidence. MySQL coverage uses
+the actual packaged Java8 relocation instead. Final focused21pass; complete actual
+Temurin1.8.0_504/Maven3.9.9 builds with the same explicit workspace .m2/tmp/wagon
+flags above: AC300unit+18artifact, VP45unit+1artifact, all0fail/errors/skips.
+SHA256 AC8ecb10bb9a4ebc3531a67c3f0a27af1e3287e5a3115d4a844d914692647a0ac2;
+VP16531f7ebb9c06a878455a9d9a41e2ebd5a526cc369ee956a7d7930b4e3cb135.
+Baseclasses1823/2440, maxmajor52. Packaged MySQL complete-read success/failure and
+borrowed connection closure actually ran. Evidence complete-source-build-results.json,
+complete-source-final-baseline-test.log, complete-source-extended-test.log and build logs.
+
+Exact consumer realJava8/Spigot1.8.8/MariaDB11.8.6 fixturefd5a392c78: pending19
+MYSQL-to-SQLITE copy retains main source pool; explicit FLAT source points21 and
+marker copy to SQLite while currentMYSQL stays19 and FLAT bytes unchanged. Final
+pendingMYSQL20 survives clean shutdown/restart. Previous global pool/setter/config
+reload checks pass. Independent offlineSQLite integrity and points21/FLAT marker
+readback pass. Both final logs contain no tested failure markers or fixture secrets.
+ConnectorJ5.1.14 remains fixture classpath only. Evidence complete-source-live-results.json
+and complete-source-mysql-flat-live.log.
+
+Remaining: async completion/server-owner behavior, partial-copy reconciliation,
+inactive provider configuration drift, duplicate YAML keys (the legacy YAML loader
+may collapse them), concurrent external SQL/file changes and raw APIs that bypass
+admission. SQL auto-commit enumeration is not a transactional network-wide snapshot.
+No complete-migration, final-review or full upstream parity claim. Full goal active.

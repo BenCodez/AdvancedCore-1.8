@@ -10,7 +10,7 @@ import com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership;
 import com.bencodez.advancedcore.api.user.userstorage.mysql.MySQL;
 
 class LegacyStorageConversionTest {
-    @Test void conversionMustNotRecreateItsExistingMysqlSource() {
+    @Test void conversionMustNotRecreateItsExistingMysqlSource() throws Exception {
         AdvancedCorePlugin plugin=fixture();
         plugin.convertDataStorage(UserStorage.MYSQL, UserStorage.SQLITE);
         verify(plugin,never()).loadUserAPI(UserStorage.MYSQL);
@@ -19,7 +19,7 @@ class LegacyStorageConversionTest {
     @Test void conversionKeepsForeignWritersOutThroughSourceEnumeration() throws Exception {
         AdvancedCorePlugin plugin=fixture();UserStorageOwnership owner=plugin.getUserStorageOwnership();
         ExecutorService foreign=Executors.newSingleThreadExecutor();
-        when(plugin.getUserManager().getAllKeys(UserStorage.MYSQL)).thenAnswer(call -> {
+        when(plugin.getUserManager().getAllKeysStrict(UserStorage.MYSQL)).thenAnswer(call -> {
             assertTrue(foreign.submit(() -> {
                 try(UserStorageOwnership.Scope ignored=owner.admit()) {return false;}
                 catch(IllegalStateException sealed) {return true;}
@@ -35,7 +35,7 @@ class LegacyStorageConversionTest {
         AdvancedCoreUser user=mock(AdvancedCoreUser.class);UserData data=mock(UserData.class);
         java.util.ArrayList<com.bencodez.simpleapi.sql.Column> columns=new java.util.ArrayList<>();
         HashMap<java.util.UUID,java.util.ArrayList<com.bencodez.simpleapi.sql.Column>> source=new HashMap<>();source.put(id,columns);
-        when(plugin.getUserManager().getAllKeys(UserStorage.MYSQL)).thenReturn(source);
+        when(plugin.getUserManager().getAllKeysStrict(UserStorage.MYSQL)).thenReturn(source);
         when(plugin.getUserManager().getUser(id,false)).thenReturn(user);when(user.getData()).thenReturn(data);
         HashMap<String,com.bencodez.simpleapi.sql.data.DataValue> values=new HashMap<>();when(data.convert(columns)).thenReturn(values);
         ExecutorService foreign=Executors.newSingleThreadExecutor();
@@ -46,23 +46,30 @@ class LegacyStorageConversionTest {
         try {plugin.convertDataStorage(UserStorage.MYSQL,UserStorage.SQLITE);verify(data).setValues(UserStorage.SQLITE,values);verify(user).dontCache();}
         finally {foreign.shutdownNow();assertTrue(foreign.awaitTermination(2,TimeUnit.SECONDS));}
     }
-    @Test void failedCopyRetainsSealAndOriginalFailure() {
+    @Test void failedCopyRetainsSealAndOriginalFailure() throws Exception {
         AdvancedCorePlugin plugin=fixture();IllegalStateException failure=new IllegalStateException("source failed");
-        when(plugin.getUserManager().getAllKeys(UserStorage.MYSQL)).thenThrow(failure);
+        when(plugin.getUserManager().getAllKeysStrict(UserStorage.MYSQL)).thenThrow(failure);
         assertSame(failure,assertThrows(IllegalStateException.class,() -> plugin.convertDataStorage(UserStorage.MYSQL,UserStorage.SQLITE)));
         assertThrows(IllegalStateException.class,plugin.getUserStorageOwnership()::admit);
         verify(plugin,never()).loadUserAPI(UserStorage.MYSQL);
     }
-    @Test void nullTypesFailBeforeProviderSideEffects() {
+    @Test void nullTypesFailBeforeProviderSideEffects() throws Exception {
         AdvancedCorePlugin plugin=fixture();assertThrows(RuntimeException.class,() -> plugin.convertDataStorage(null,UserStorage.SQLITE));
         assertThrows(RuntimeException.class,() -> plugin.convertDataStorage(UserStorage.MYSQL,null));verify(plugin,never()).loadUserAPI(any());
         try(UserStorageOwnership.Scope normal=plugin.getUserStorageOwnership().admit()) {}
     }
-    AdvancedCorePlugin fixture() {
+    @Test void checkedSourceFailurePrecedesDestinationCreationAndKeepsItsCause() throws Exception {
+        AdvancedCorePlugin plugin=fixture();java.sql.SQLException failure=new java.sql.SQLException("incomplete source");
+        when(plugin.getUserManager().getAllKeysStrict(UserStorage.MYSQL)).thenThrow(failure);
+        assertSame(failure,assertThrows(IllegalStateException.class,() -> plugin.convertDataStorage(UserStorage.MYSQL,UserStorage.SQLITE)).getCause());
+        verify(plugin,never()).loadUserAPI(UserStorage.SQLITE);verify(plugin.getUserManager(),never()).getAllKeys(any());
+        assertThrows(IllegalStateException.class,plugin.getUserStorageOwnership()::admit);
+    }
+    AdvancedCorePlugin fixture() throws Exception {
         AdvancedCorePlugin plugin=mock(AdvancedCorePlugin.class);
         when(plugin.getUserStorageOwnership()).thenReturn(new UserStorageOwnership());
         UserManager users=mock(UserManager.class);when(plugin.getUserManager()).thenReturn(users);
-        when(users.getAllKeys(UserStorage.MYSQL)).thenReturn(new HashMap<>());
+        when(users.getAllKeysStrict(UserStorage.MYSQL)).thenReturn(new HashMap<>());
         when(plugin.getMysql()).thenReturn(mock(MySQL.class));
         when(plugin.getLogger()).thenReturn(java.util.logging.Logger.getAnonymousLogger());
         doCallRealMethod().when(plugin).convertDataStorage(any(),any());
