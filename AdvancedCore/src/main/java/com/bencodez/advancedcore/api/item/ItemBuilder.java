@@ -269,9 +269,11 @@ public class ItemBuilder {
 								addLoreLine(line);
 							}
 						}
-						int durability = data.getInt("Durability");
-						if (durability > 0) {
-							setDurability((short) durability);
+						if (data.contains("Damage")) {
+							setDamage(data.getInt("Damage"));
+						} else {
+							int durability = data.getInt("Durability");
+							if (durability > 0) setDurability((short) durability);
 						}
 
 						if (data.isConfigurationSection("Enchants")) {
@@ -300,6 +302,12 @@ public class ItemBuilder {
 							ConfigurationSection potionColor = data.getConfigurationSection("PotionColor");
 							color = Color.fromRGB(potionColor.getInt("Red", 0), potionColor.getInt("Green", 0),
 									potionColor.getInt("Blue", 0));
+						}
+
+						if (data.isConfigurationSection("LeatherColor")) {
+							ConfigurationSection leatherColor = data.getConfigurationSection("LeatherColor");
+							setLeatherArmorColor(Color.fromRGB(leatherColor.getInt("Red", 0),
+									leatherColor.getInt("Green", 0), leatherColor.getInt("Blue", 0)));
 						}
 
 						if (data.isConfigurationSection("Potions")) {
@@ -859,6 +867,21 @@ public class ItemBuilder {
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Sets damage on legacy damageable tools/armor without changing material data
+	 * on non-damageable items. The 1.8 storage field is a non-negative short.
+	 * @param damage damage from 0 through Short.MAX_VALUE
+	 * @return this builder
+	 */
+	public ItemBuilder setDamage(int damage) {
+		if (is.getType().getMaxDurability() <= 0) return this;
+		if (damage < 0 || damage > Short.MAX_VALUE) {
+			throw new IllegalArgumentException("Damage cannot be represented by Spigot 1.8");
+		}
+		is.setDurability((short) damage);
+		return this;
 	}
 
 	/**

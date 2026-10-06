@@ -1529,3 +1529,46 @@ api/inventory owns GUI/editor behavior. Preserve those boundaries in later work.
 
 Full upstream ledger/features/lifecycle/runtime matrix and independent final
 review remain unfinished. Source commits are local; no push or PR opening.
+
+
+### Damage and leather configuration: partial upstream port (2026-10-06)
+
+Upstream158dec28c7be447b57882a78c64c7a1aaa0bb826 is PARTIAL, not completed.
+Damage takes precedence over Durability, including explicit zero. MissingDamage
+preserves the legacy Durability path. Public setDamage(int) uses 1.8 durability
+only for materials with positive maximum durability; other material variant data
+is untouched. Negative or aboveShort.MAX_VALUE damage is rejected for damageable
+items instead of silently truncating into the legacy short field. This adaptation
+uses no modernDamageable API. LeatherColor.Red/Green/Blue uses existing legacy
+leather metadata; absentcolor retains default. Existing setDurability remains.
+Example portable configuration:
+
+```yaml
+Material: LEATHER_CHESTPLATE
+Amount: 1
+Damage: 5
+LeatherColor:
+  Red: 12
+  Green: 34
+  Blue: 56
+```
+
+Baseline2fail/0errors; final4damage/color +6retained item tests pass. ActualJava8
+ACcleaninstall321unit+18artifact and VPcleanverify45unit+1artifact, all0fail/errors/
+skips; baseclasses1823/2440 maxmajor52. Exact modulePOM/workspace .m2/tmp/wagon
+commands retain Temurin1.8.0_504/Maven3.9.9. SHA256:
+ACe1f7088aa4d0c7d0e71683c7b457bcc45295e6f88a394bb4815f17bdc3f24b54;
+VPf3126b4de089814058c52637ef4056dd0bcc32fb4792e9c3335a991b0f15d718.
+ActualSpigot1.8.8 fixturee0d94f1691 owner-thread checks damage precedence/missing/
+zero/publicsetter bounds, preservedwoolvariant, leatherRGB/defaultcolor and retained
+itemownership/tooltip. Existing SQLFLAT conversion/retry/commands/disable/restart20
+alsoPASS. SQLiteintegrity and two log error/credential auditsPASS. Evidence
+item-damage-color-build-results.json/item-damage-color-live-results.json.
+
+Still pending in this upstreamcommit: portable serialization expansion, aliases,
+createConfigurationData coordination and originalexample resource changes; modern
+metadata omissions need individual evidence. Current serializers are unchanged,
+so no storedformat migration is claimed. Damage sampling/breakage upstream
+7d9297a5228629a1bbd0d2aa67ad670540702aa4 and dcc9b1ea7de6d39ac777dac5826c6c93abb282b9
+remain pending separately. Fullscope ledger/lifecycle/features/runtime/freshfinal
+independentreview unfinished. No release/dependency/schema/wire change or sourcepush/PR.
