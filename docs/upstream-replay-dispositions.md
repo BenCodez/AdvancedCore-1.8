@@ -271,3 +271,42 @@ integrity checks against this exact consumer (`timed-reconciliation-runtime.log`
 `queue-publication-recovery-runtime-680e2d4728.json`). The cached-record conflict
 reproduction is deterministic; this fixture is not a process-crash or initial
 duplicate-admission proof. All 167 originals and both references remain unchanged.
+
+## Monotonic failure checkpoint publication
+
+The cached timed reconciliation audit exposed another failure mode: applying an
+older `RewardReplayFailure` replaced a more advanced persisted v3 checkpoint and
+its placeholders. The shared offline/timed failure serializer now compares
+per-path completed counts and registry fingerprints before replacement. A
+strictly dominating persisted checkpoint remains unchanged; a failure checkpoint
+that covers the persisted paths may advance it. Incomparable progress or a
+fingerprint mismatch fails before queue publication. Equal completed maps retain
+the existing failure-metadata behavior, since child/command cursor metadata can
+advance before the enclosing injection count does. This does not claim a complete
+ordering or merge for all nested metadata, legacy checkpoints or shared storage
+generations; those remain separate technical obligations.
+
+A deterministic red-before-fix test publishes a cached v3 count of two and then
+settles an older failure at count one. It now retains count two, cached
+placeholders and the cached retry count. A second regression changes registry
+fingerprints and verifies the queue remains unchanged with no retry timer.
+The first focused timed/offline/publication run passes 57 tests before adding the
+fingerprint regression. No configuration, API, schema or serialized format change.
+
+Java 8 `clean install`: 735 unit + 78 artifact = 813 PASS; exact consumer
+`clean verify`: 45 unit + one artifact = 46 PASS. Zero failures/errors/skips.
+Producer SHA-256: `f46fe72349cc2a0d4e777bb3a39805a1c2d3ebdfbb7ff81e3c2a07e2a5fbba35`.
+Consumer SHA-256: `1be82c1f569eb8c1dcd70ae591b5e556b76efb54981ce32bb44242b9db79355b`.
+Base classes remain major 52 (1867 producer, 2484 consumer). Evidence:
+`timed-checkpoint-order-red.log`, `timed-checkpoint-order-focused.log`,
+`timed-checkpoint-order-clean-install.log`,
+`timed-checkpoint-order-consumer-clean-verify.log`,
+`timed-checkpoint-order-build-results.json`.
+
+Actual Java 8/Spigot 1.8.8 acceptance passes all 12 existing timed physical
+checkpoint, completion-removal/timer retry, competing-poll fencing, native
+actions, overflow park/disable/restart/item recovery and checked SQLite integrity
+checks against the exact consumer (`timed-checkpoint-order-runtime.log`).
+Checkpoint comparison/conflict coverage is deterministic; no process-crash or
+shared-generation proof is inferred from this run. All 167 original checkouts
+and both references remain unchanged.

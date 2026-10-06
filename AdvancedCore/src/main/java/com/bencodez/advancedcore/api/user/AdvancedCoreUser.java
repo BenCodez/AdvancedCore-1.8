@@ -949,6 +949,15 @@ public class AdvancedCoreUser {
 		int placeholders = rewardEntry.indexOf("%placeholders%");
 		String storedReference = placeholders < 0 ? rewardEntry : rewardEntry.substring(0, placeholders);
 		String suffix = placeholders < 0 ? "" : rewardEntry.substring(placeholders);
+        QueuedReplay persisted=parseQueuedReplay(stripAsyncRetryMarker(storedReference));
+        if(replayFailure!=null && !persisted.asyncReplayProgress.isEmpty() && !replayFailure.getReplayProgress().isEmpty()) {
+            boolean storedCovers=checkpointCovers(persisted.asyncReplayProgress,persisted.asyncReplayRegistryFingerprints,
+                    replayFailure.getReplayProgress(),replayFailure.getReplayRegistryFingerprints());
+            boolean failureCovers=checkpointCovers(replayFailure.getReplayProgress(),replayFailure.getReplayRegistryFingerprints(),
+                    persisted.asyncReplayProgress,persisted.asyncReplayRegistryFingerprints);
+            if(storedCovers && !failureCovers)return rewardEntry;
+            if(!failureCovers)throw new IllegalStateException("Persisted and failed replay checkpoints cannot be safely ordered");
+        }
 		if (replayFailure != null) suffix = "%placeholders%" + ArrayUtils.makeString(replayFailure.getReplayPlaceholders());
 		QueuedReplay queuedReplay = parseQueuedReplay(stripAsyncRetryMarker(storedReference));
 		if (!serializedProgress.isEmpty()) return queuedReference(queuedReplay) + ASYNC_PROGRESS_DELIMITER
@@ -956,6 +965,15 @@ public class AdvancedCoreUser {
 		return queuedReference(queuedReplay) + ASYNC_PROGRESS_DELIMITER
 				+ Math.max(queuedReplay.completedAsyncInjections, completed) + suffix;
 	}
+
+    private static boolean checkpointCovers(Map<String,Integer> newer,Map<String,String> newerRegistry,
+            Map<String,Integer> older,Map<String,String> olderRegistry) {
+        for(Entry<String,Integer> entry:older.entrySet()) {
+            if(!newer.containsKey(entry.getKey()) || newer.get(entry.getKey())<entry.getValue()
+                    || !java.util.Objects.equals(newerRegistry.get(entry.getKey()),olderRegistry.get(entry.getKey())))return false;
+        }
+        return true;
+    }
 
 	private static String withAsyncReplayProgress(String rewardEntry, Reward.ReplayCheckpoint checkpoint) {
 		int marker = rewardEntry.indexOf("%placeholders%");

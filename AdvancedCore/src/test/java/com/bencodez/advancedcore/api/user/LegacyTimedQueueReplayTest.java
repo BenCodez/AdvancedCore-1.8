@@ -22,6 +22,45 @@ class LegacyTimedQueueReplayTest {
     private Reward.ReplayCheckpoint checkpoint() {
         try {java.lang.reflect.Constructor<Reward.ReplayCheckpoint> c=Reward.ReplayCheckpoint.class.getDeclaredConstructor(Map.class,Map.class,HashMap.class);c.setAccessible(true);return c.newInstance(Collections.singletonMap("daily",1),Collections.singletonMap("daily","registry"),new HashMap<String,String>());}catch(Exception failure){throw new AssertionError(failure);}
     }
+    @Test void olderReplayFailureCannotReplaceMoreAdvancedPersistedCheckpoint() {
+        String id=UUID.randomUUID().toString();long due=System.currentTimeMillis()-1000;
+        String original=entry("daily%asyncoccurrence%"+id,due);
+        String encoded=Base64.getUrlEncoder().withoutPadding().encodeToString("ZGFpbHk\t2\tregistry".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String newer=entry("daily%asyncoccurrence%"+id+"%asyncprogress%v3-"+encoded+"%asyncretry%3%placeholders%Server%pair%cached",due+60000);
+        fixture(Collections.singletonList(original),x->{
+            CompletableFuture<Void> effect=new CompletableFuture<>();when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenReturn(effect);
+            CompletionStage<Void> result=x.f.user.checkDelayedTimedRewardsAsync();x.f.data.mutateStringListStrict("TimedRewards",list->{list.add(newer);return list;});
+            RewardOptions options=new RewardOptions();options.setAsyncReplayProgress(Collections.singletonMap("daily",1));options.setAsyncReplayRegistryFingerprints(Collections.singletonMap("daily","registry"));
+            Throwable failure;
+            try {
+                java.lang.reflect.Constructor<Reward.RewardReplayFailure> constructor=Reward.RewardReplayFailure.class.getDeclaredConstructor(Reward.ReplayState.class,HashMap.class,Throwable.class);constructor.setAccessible(true);
+                HashMap<String,String> old=new HashMap<>();old.put("Server","old");
+                failure=constructor.newInstance(Reward.replayStateFor(options),old,new IllegalStateException("temporary"));
+            }catch(Exception reflection){throw new AssertionError(reflection);}
+            effect.completeExceptionally(failure);assertThrows(CompletionException.class,()->result.toCompletableFuture().join());
+            assertEquals(1,pending(x).split("%line%").length);assertTrue(pending(x).contains("%asyncprogress%v3-"+encoded));
+            assertTrue(pending(x).contains("Server%pair%cached"));assertTrue(pending(x).contains("%asyncretry%4%"));
+        });
+    }
+
+    @Test void differentRegistryFingerprintsLeaveConflictingCheckpointsUntouched() {
+        String id=UUID.randomUUID().toString();long due=System.currentTimeMillis()-1000;
+        String original=entry("daily%asyncoccurrence%"+id,due);
+        String encoded=Base64.getUrlEncoder().withoutPadding().encodeToString("ZGFpbHk\t2\tpersisted-registry".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String newer=entry("daily%asyncoccurrence%"+id+"%asyncprogress%v3-"+encoded,due+60000);
+        fixture(Collections.singletonList(original),x->{
+            CompletableFuture<Void> effect=new CompletableFuture<>();when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenReturn(effect);
+            CompletionStage<Void> result=x.f.user.checkDelayedTimedRewardsAsync();x.f.data.mutateStringListStrict("TimedRewards",list->{list.add(newer);return list;});String before=pending(x);
+            RewardOptions options=new RewardOptions();options.setAsyncReplayProgress(Collections.singletonMap("daily",1));options.setAsyncReplayRegistryFingerprints(Collections.singletonMap("daily","different-registry"));
+            try {
+                java.lang.reflect.Constructor<Reward.RewardReplayFailure> constructor=Reward.RewardReplayFailure.class.getDeclaredConstructor(Reward.ReplayState.class,HashMap.class,Throwable.class);constructor.setAccessible(true);
+                effect.completeExceptionally(constructor.newInstance(Reward.replayStateFor(options),new HashMap<String,String>(),new IllegalStateException("temporary")));
+            }catch(Exception reflection){throw new AssertionError(reflection);}
+            assertThrows(CompletionException.class,()->result.toCompletableFuture().join());assertEquals(before,pending(x));
+            verify(x.f.user,never()).loadTimedDelayedTimer(anyLong());
+        });
+    }
+
     @Test void failedEffectReconcilesNewerCachedRecordForTheSameOccurrence() {
         String id=UUID.randomUUID().toString();long due=System.currentTimeMillis()-1000;
         String original=entry("daily%asyncoccurrence%"+id+"%placeholders%Server%pair%old",due);
