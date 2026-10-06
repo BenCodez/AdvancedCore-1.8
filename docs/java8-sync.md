@@ -2887,3 +2887,75 @@ lifecycle cases, the full upstream ledger and broader platform acceptance. This
 cohort does not prove unacknowledged effects, power loss, cross-store atomicity,
 or arbitrary command/plugin effects. No independent final approval, PR readiness,
 push, PR, release or deployment is claimed.
+
+
+## Random and AdvancedRandomReward awaited completion (2026-10-06)
+
+The existing anonymous `Random` and `AdvancedRandomReward` injections now opt into
+completion-aware dispatch without changing their legacy synchronous callbacks,
+registration identity, priorities, placeholders, defaults or YAML shapes. A
+selected branch is checkpointed before dispatch, shares its parent's replay
+state/occurrence, and the parent awaits the child's physical completion followed
+by its durable single-child completion marker. Named selections, inline rewards,
+fallbacks and advanced named/inline definitions use the existing admitted runtime.
+No new dependency, release version, proxy format or schema is introduced.
+
+Preserve the fork's unusual established chance semantics: `Chance: 0` and
+`Chance: 100` both mean unconditional success. The deterministic fallback fixture
+uses `Chance: -1`; it does not reinterpret zero or introduce probabilistic waits.
+Absent, blank and empty-list optional fallback/inline definitions remain no-ops
+on first admission. Missing unfinished durable definitions fail explicitly.
+
+The strengthened live regression observed the actual registered branch callback:
+old consumer case `7af7382e44` settled while its child was unresolved. An earlier
+parent-timing-only attempt passed prematurely and is not defect proof. The new
+fixture forwards the original callback/stage unchanged and requires that its
+settlement occurs only after child release. The first inline run `809462721f`
+failed because the fixture inserted a fileless reward into the file-backed reward
+registry. Replacing that helper entry with a normal named reward file fixed the
+fixture; production code was unchanged. Five corrected cases passed four checks
+each: pick, inline, fallback, advanced-name and advanced-inline. Each checks actual
+callback settlement, physical offline queue retention/removal, Java 8 linkage
+and shutdown. This is bounded controlled-child acceptance, not a probabilistic
+selection test or proof of arbitrary inline definition freezing across restart.
+
+Validation used Temurin 8u504 and Maven 3.9.9:
+
+```shell
+mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install
+mvn -B -f VotingPlugin/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean verify
+```
+
+AdvancedCore: 538 unit + 18 artifact checks = 556 passed. VotingPlugin:
+45 unit + 1 artifact check = 46 passed, using the exact locally installed producer.
+All tests have zero failures, errors or skips. Ten focused nested-reward tests
+passed. The initial full run reported three fixture errors because the legacy
+MiscUtils singleton had captured a null plugin before mock initialization; the
+fixture now binds/restores that singleton's plugin during each test, without
+changing production chance logic or weakening assertions.
+
+Producer SHA-256: `868b47287b057956c72b67e24a57acbb36a8be474684cced4c9e18c6fbcd08aa`; consumer: `f2ea3dbd2bd99246fb67e8f57c29738a526ff6ce4fa8e2d398b17d24be6714a3`.
+All 1,834 producer and 2,451 consumer base classes have major <=52.
+
+Prepared inline definition freezing, other nested injectors, clear/wipe/lifecycle
+races, the remaining upstream ledger and broader platform acceptance remain in
+scope. No unacknowledged-effect, power-loss, cross-store atomicity, arbitrary
+command/plugin-effect guarantee, final independent approval or PR readiness is
+claimed. No push, PR, release or deployment was performed.
+
+
+Random pick SIGKILL acceptance passed 12 checks in each lane: offline
+`ef5f04af4e`, timed `e4d5305248`, on the exact consumer above. The real owned Java
+process exits -9 after the selected child's checked physical checkpoint and
+explicit player save, before its parent finishes. The fixture changes the
+candidate list to only the opposite named reward. Automatic login/timed startup
+replay retains the original selection and occurrence, skips its completed native
+effect, finishes/removes the parent queue and preserves exactly 3 diamonds and
+7 experience with durable fixture effect count 1. SQLite integrity, restart,
+shutdown and Java 8 linkage checks pass. This proves acknowledged named-selection
+recovery for these lanes, not arbitrary changed inline/advanced definitions or
+unacknowledged external effects.

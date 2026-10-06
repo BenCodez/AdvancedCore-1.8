@@ -69,6 +69,48 @@ class LegacyNestedRewardSequenceTest {
             config.set("Rewards",null);CompletionStage<Void> missing=f.handler.giveRewardAsync(f.user,config,"Rewards",f.options());f.drain();assertThrows(CompletionException.class,()->await(missing));
         });
     }
+    @Test void realRandomBuiltinZeroChanceAwaitsPickedNamedChild() {
+        fixture(f->{
+            Reward child=f.reward("child");CompletableFuture<Void> effect=new CompletableFuture<>();when(child.giveRewardAsync(eq(f.user),any())).thenReturn(effect);
+            YamlConfiguration config=new YamlConfiguration();config.set("Random.Chance",0);config.set("Random.Rewards",Arrays.asList("child"));
+            com.bencodez.advancedcore.api.rewards.injected.RewardInject inject=f.builtin("Random");Reward parent=mock(Reward.class);when(parent.getName()).thenReturn("parent");
+            CompletionStage<Object> result=inject.onRewardRequestAsync(parent,f.user,config,new HashMap<>());f.drain();assertFalse(result.toCompletableFuture().isDone());effect.complete(null);f.drain();await(result);
+        });
+    }
+    @Test void realAdvancedRandomBuiltinAwaitsSelectedNamedDefinition() {
+        fixture(f->{
+            Reward child=f.reward("child");CompletableFuture<Void> effect=new CompletableFuture<>();when(child.giveRewardAsync(eq(f.user),any())).thenReturn(effect);
+            YamlConfiguration config=new YamlConfiguration();config.set("AdvancedRandomReward.branch","child");
+            com.bencodez.advancedcore.api.rewards.injected.RewardInject inject=f.builtin("AdvancedRandomReward");Reward parent=mock(Reward.class);when(parent.getRewardName()).thenReturn("parent");
+            CompletionStage<Object> result=inject.onRewardRequestAsync(parent,f.user,config,new HashMap<>());f.drain();assertFalse(result.toCompletableFuture().isDone());effect.complete(null);f.drain();assertEquals("branch",await(result));
+        });
+    }
+    @Test void zeroChanceKeepsLegacyUnconditionalSuccessAndMissingFallbackIsOptional() {
+        fixture(f->{
+            assertTrue(com.bencodez.advancedcore.api.misc.MiscUtils.getInstance().checkChance(0,100));assertTrue(com.bencodez.advancedcore.api.misc.MiscUtils.getInstance().checkChance(100,100));
+            assertFalse(com.bencodez.advancedcore.api.misc.MiscUtils.getInstance().checkChance(-1,100));
+            YamlConfiguration config=new YamlConfiguration();config.set("Random.Chance",-1);
+            com.bencodez.advancedcore.api.rewards.injected.RewardInject inject=f.builtin("Random");CompletionStage<Object> result=inject.onRewardRequestAsync(mock(Reward.class),f.user,config,new HashMap<>());f.drain();assertNull(await(result));
+        });
+    }
+    @Test void actualInlineRandomFallbackAndAdvancedPathsAwaitTheirEffect() {
+        for(String mode:Arrays.asList("inline","fallback","advanced"))fixture(f->{
+            YamlConfiguration config=new YamlConfiguration();String path=mode.equals("advanced")?"AdvancedRandomReward.branch":mode.equals("fallback")?"Random.FallBack":"Random.Rewards";
+            config.set(path+".EXP",7);if(!mode.equals("advanced")){config.set("Random.Chance",mode.equals("fallback")?-1:100);config.set("Random.PickRandom",false);}
+            CompletableFuture<Void> effect=new CompletableFuture<>();
+            try(MockedConstruction<Reward> constructed=mockConstruction(Reward.class,(mock,context)->{when(mock.giveRewardAsync(eq(f.user),any())).thenReturn(effect);})) {
+                com.bencodez.advancedcore.api.rewards.injected.RewardInject inject=f.builtin(mode.equals("advanced")?"AdvancedRandomReward":"Random");Reward parent=mock(Reward.class);when(parent.getName()).thenReturn("parent");when(parent.getRewardName()).thenReturn("parent");
+                CompletionStage<Object> result=inject.onRewardRequestAsync(parent,f.user,config,new HashMap<>());f.drain();assertEquals(1,constructed.constructed().size(),mode);assertFalse(result.toCompletableFuture().isDone(),mode);
+                effect.complete(null);f.drain();await(result);verify(constructed.constructed().get(0)).checkRewardFile();
+            }
+        });
+    }
+    @Test void optionalBlankAndEmptyFallbacksRemainNoOps() {
+        for(Object value:Arrays.asList("",Collections.emptyList()))fixture(f->{
+            YamlConfiguration config=new YamlConfiguration();config.set("Random.Chance",-1);config.set("Random.FallBack",value);
+            CompletionStage<Object> result=f.builtin("Random").onRewardRequestAsync(mock(Reward.class),f.user,config,new HashMap<>());f.drain();assertNull(await(result));
+        });
+    }
     private Object await(CompletionStage<?> stage) {
         try{return stage.toCompletableFuture().get(2,TimeUnit.SECONDS);}
         catch(ExecutionException failure){throw new CompletionException(failure.getCause());}
@@ -82,12 +124,25 @@ class LegacyNestedRewardSequenceTest {
             RewardHandler handler=mock(RewardHandler.class,CALLS_REAL_METHODS);handler.plugin=dispatch.plugin;when(dispatch.plugin.getRewardHandler()).thenReturn(handler);
             List<Reward> rewards=new ArrayList<>();when(handler.getRewards()).thenReturn(rewards);when(handler.getDirectlyDefinedRewards()).thenReturn(new ArrayList<>());when(handler.getSubDirectlyDefinedRewards()).thenReturn(new ArrayList<>());
             AdvancedCoreUser user=mock(AdvancedCoreUser.class);when(user.getPlugin()).thenReturn(dispatch.plugin);when(user.getUUID()).thenReturn("user");
-            try{body.accept(new Fixture(dispatch,handler,user,rewards));}finally{dispatch.owner.close();RewardHandler.getInstance().getRepeatTimer().cancel();}
+            java.lang.reflect.Field miscPlugin;
+            try{miscPlugin=com.bencodez.advancedcore.api.misc.MiscUtils.class.getDeclaredField("plugin");miscPlugin.setAccessible(true);}catch(Exception failure){throw new AssertionError(failure);}
+            Object previousMiscPlugin;
+            try{previousMiscPlugin=miscPlugin.get(com.bencodez.advancedcore.api.misc.MiscUtils.getInstance());miscPlugin.set(com.bencodez.advancedcore.api.misc.MiscUtils.getInstance(),dispatch.plugin);}catch(Exception failure){throw new AssertionError(failure);}
+            try{body.accept(new Fixture(dispatch,handler,user,rewards));}finally{
+                try{miscPlugin.set(com.bencodez.advancedcore.api.misc.MiscUtils.getInstance(),previousMiscPlugin);}catch(Exception failure){throw new AssertionError(failure);}
+                dispatch.owner.close();RewardHandler.getInstance().getRepeatTimer().cancel();
+            }
         }
     }
     private static class Fixture {
         final LegacyRewardDispatchTest.Fixture dispatch;final RewardHandler handler;final AdvancedCoreUser user;final List<Reward> rewards;final List<Reward.ReplayCheckpoint> writes=new ArrayList<>();
         Fixture(LegacyRewardDispatchTest.Fixture dispatch,RewardHandler handler,AdvancedCoreUser user,List<Reward> rewards){this.dispatch=dispatch;this.handler=handler;this.user=user;this.rewards=rewards;}
+        com.bencodez.advancedcore.api.rewards.injected.RewardInject builtin(String path) {
+            ArrayList<com.bencodez.advancedcore.api.rewards.injected.RewardInject> registry=new ArrayList<>();
+            try{java.lang.reflect.Field field=RewardHandler.class.getDeclaredField("injectedRewards");field.setAccessible(true);field.set(handler,registry);}catch(Exception failure){throw new AssertionError(failure);}
+            when(handler.getInjectedRewards()).thenReturn(registry);handler.loadInjectedRewards();
+            return registry.stream().filter(i->i.getPath().equals(path)).findFirst().get();
+        }
         Reward reward(String name){Reward reward=mock(Reward.class);when(reward.getName()).thenReturn(name);when(reward.getConfig()).thenReturn(mock(RewardFileData.class));rewards.add(reward);return reward;}
         RewardOptions options(){RewardOptions options=new RewardOptions();options.setAsyncReplayKey("root");options.setAsyncReplayOccurrenceId("occurrence");options.setAsyncReplayCheckpointConsumer(writes::add);return options;}
         void drain(){int n=0;while(!dispatch.queued.isEmpty() || !dispatch.asyncQueued.isEmpty()){assertTrue(n++<100,"nested dispatch did not settle");if(!dispatch.queued.isEmpty())dispatch.runNext();else dispatch.runAsyncNext();}}

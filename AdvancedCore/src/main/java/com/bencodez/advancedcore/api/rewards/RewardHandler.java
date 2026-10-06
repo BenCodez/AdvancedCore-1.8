@@ -571,6 +571,12 @@ public class RewardHandler {
 
 	}
 
+    private boolean hasConfiguredNestedReward(ConfigurationSection data,String path) {
+        if(data.isConfigurationSection(path))return true;
+        if(data.isList(path))return !data.getList(path).isEmpty();
+        return !data.getString(path,"").isEmpty();
+    }
+
     /** Completion-aware configuration dispatch preserving list/scalar/inline shapes. */
     public java.util.concurrent.CompletionStage<Void> giveRewardAsync(AdvancedCoreUser user,
             ConfigurationSection data,String path,RewardOptions requested) {
@@ -2034,6 +2040,38 @@ public class RewardHandler {
 
 		injectedRewards.add(new RewardInjectConfigurationSection("Random") {
 
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean supportsAsyncSynchronization(){return false;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplaySelection(placeholders);}
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,
+                    AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if(section==null && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                String choice=Reward.replaySelection(placeholders,()->{
+                    if(!MiscUtils.getInstance().checkChance(section.getDouble("Chance",100),100))
+                        return hasConfiguredNestedReward(data,"Random.FallBack")?"fallback":"none";
+                    if(!section.getBoolean("PickRandom",true))return hasConfiguredNestedReward(data,"Random.Rewards")?"rewards":"none";
+                    java.util.List<String> list=section.getStringList("Rewards");
+                    return list.isEmpty()?"none":"pick:"+list.get(ThreadLocalRandom.current().nextInt(list.size()));
+                });
+                if(choice==null || choice.equals("none"))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey(),occurrence=Reward.currentReplayOccurrenceId();
+                if(choice.startsWith("pick:")) {
+                    String selected=choice.substring(5);
+                    if(selected.isEmpty())return java.util.concurrent.CompletableFuture.completedFuture(null);
+                    RewardOptions child=Reward.withReplayState(new RewardOptions().setPlaceholders(placeholders),state,key,"selected:"+selected,occurrence);
+                    return Reward.persistReplayMetadataAsync(plugin,placeholders).thenCompose(unused->
+                            Reward.replaySingleNestedReward(plugin,placeholders,"selected",state,key,()->giveRewardAsync(user,selected,child))).thenApply(unused->(Object)null);
+                }
+                if(!choice.equals("rewards") && !choice.equals("fallback"))return failedQueueReward(new IllegalStateException("Unknown random reward replay choice"));
+                String path=choice.equals("rewards")?"Random.Rewards":"Random.FallBack";
+                RewardBuilder builder=new RewardBuilder(data,path).withPrefix(reward.getName()).withPlaceHolder(placeholders);
+                Reward.withReplayState(builder.getRewardOptions(),state,key,"path:"+path,occurrence);
+                return Reward.persistReplayMetadataAsync(plugin,placeholders).thenCompose(unused->
+                        Reward.replaySingleNestedReward(plugin,placeholders,"selected",state,key,()->builder.sendAsync(user))).thenApply(unused->(Object)null);
+            }
+
 			@SuppressWarnings("unchecked")
 			@Override
 			public String onRewardRequested(Reward reward, AdvancedCoreUser user, ConfigurationSection section,
@@ -2290,6 +2328,26 @@ public class RewardHandler {
 				}.addLore("Execute rewards"))).synchronize().priority(20).postReward());
 
 		injectedRewards.add(new RewardInjectConfigurationSection("AdvancedRandomReward") {
+
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean supportsAsyncSynchronization(){return false;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplaySelection(placeholders);}
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,
+                    AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if(section==null && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                java.util.List<String> keys=section==null?java.util.Collections.emptyList():new ArrayList<>(section.getKeys(false));
+                if(keys.isEmpty() && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                String selected=Reward.replaySelection(placeholders,()->keys.get(ThreadLocalRandom.current().nextInt(keys.size())));
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey();
+                RewardOptions child=Reward.withReplayState(new RewardOptions().setPlaceholders(placeholders),state,key,
+                        "selected:"+selected,Reward.currentReplayOccurrenceId()).setPrefix(reward.getRewardName()+"_AdvancedRandomReward");
+                return Reward.persistReplayMetadataAsync(plugin,placeholders).thenCompose(unused->
+                        Reward.replaySingleNestedReward(plugin,placeholders,"selected",state,key,()->
+                                section==null?failedQueueReward(new IllegalStateException("Selected advanced random definition is missing")):
+                                        giveRewardAsync(user,section,selected,child))).thenApply(unused->(Object)selected);
+            }
 
 			@Override
 			public String onRewardRequested(Reward r, AdvancedCoreUser user, ConfigurationSection section,
