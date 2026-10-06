@@ -3698,3 +3698,45 @@ reconciliation, fail-closed metadata, retained-type migration, identity/unique c
 peer migration idempotence and modern headless construction/cleanup remain unfinished.
 No PostgreSQL support or whole-main parity is claimed. Original checkouts/references
 remain unchanged; no push/PR/final independent readiness gate has occurred.
+
+
+## Checked schema evidence and peer column additions
+
+Native MySQL column addition first reads live, zero-row table metadata. Missing or failed
+metadata is an error, not evidence that a column is absent. Existing case-folded columns
+are remembered once without duplicate DDL. Cached checkColumn supports the existing
+public List contract without assuming an ArrayList; uncached checks use the same checked
+addition path rather than the forgiving SHOW helper.
+
+A competing ADD succeeds only when error1060/SQLState42S21 is followed by successful live
+reinspection proving the column exists. Unrelated errors, absent peer columns, failed
+reinspection and cleanup errors remain failures with their original/suppressed evidence.
+Membership publishes only after resources close. A retry after physical DDL plus failed
+connection cleanup can discover the completed column without repeating the DDL.
+No generic retries, sleeps, user enumeration or alternate pool ownership are introduced.
+
+The initial five new regressions failed (three assertions/two errors); final16 packaged
+schema checks pass. The first implementation double-read metadata count; the peer-race
+regression detected that and the count is now captured once. Additional counterchecks
+cover wrong SQL state, absent metadata, statement/inspection cleanup failures, failed
+reinspection and uncertain completion retry. ActualJava8 clean install621 unit +34
+artifact =655 PASS; exact locally installed producer consumer clean verify45 unit +1
+artifact =46 PASS, zero failures/errors/skips; base bytecode major<=52.
+Producer SHA256 `6205189a725821e447a4fc8e9a1a2a2ac5de6bb5f41c152f47780ab0ec4b2655`;
+consumer SHA256 `be392478be876523b560f27565ae6da15c93099ed72000cd88c79c0632bdf84f`.
+
+RealJava8/MariaDB11.8.6 acceptance forces two independent wrappers/connections to capture
+absent-column metadata before either can add it. Both physically attempt ADD; both settle
+successfully, with one physical column and one remembered entry each. Repeated registration
+does not repeat DDL; the declared integer/default, existing row and invalid-DDL rejection
+remain correct. Owned test table/daemon/workers are removed or terminated. Eight real
+Java8/Spigot1.8.8 registration/cache/SQLite/linkage checks pass on the exact final consumer.
+
+This establishes column membership evidence/idempotence, not full retained-schema
+compatibility. Physical retained column types, defaults, UUID uniqueness and canonical
+cached values still require reconciliation. In particular, physical case-folded labels
+currently reach exact-key cache/default handling; preserving nonzero stored data under
+such names needs a separate reproduction and fix. The full801fb0a/5ef372/5198b961
+headless/borrowed/retained migration patches remain partial or pending. Existing APIs,
+configuration/data/wire/release contracts and original/reference checkouts are preserved.
+No whole-main parity, final independent review, push or PR readiness is claimed.

@@ -147,11 +147,24 @@ public class MySQL {
 				try (Connection connection = mysql.getConnectionManager().getConnection()) {
 					if (connection == null) throw new SQLException("MySQL connection is unavailable");
 					if (!connection.getAutoCommit()) throw new SQLException("Checked schema changes require auto-commit");
-					try (PreparedStatement statement = connection.prepareStatement(sql)) {
-						statement.executeUpdate();
+					if (!hasLiveColumn(connection, column)) {
+						try (PreparedStatement statement = connection.prepareStatement(sql)) {
+							statement.executeUpdate();
+						} catch (SQLException ddlFailure) {
+							// Only an exact duplicate-column error may indicate a peer's
+							// completed ADD. Cleanup failures are never acknowledged here.
+							if (ddlFailure.getErrorCode() != 1060 || !"42S21".equals(ddlFailure.getSQLState())
+									|| ddlFailure.getSuppressed().length != 0) throw ddlFailure;
+							try {
+								if (!hasLiveColumn(connection, column)) throw ddlFailure;
+							} catch (SQLException inspectionFailure) {
+								if (inspectionFailure != ddlFailure) ddlFailure.addSuppressed(inspectionFailure);
+								throw ddlFailure;
+							}
+						}
 					}
 				}
-				getColumns().add(column);
+				rememberColumn(column);
 			} catch (SQLException failure) {
 				throw new IllegalStateException("Failed to initialize registered SQL column: " + column, failure);
 			}
@@ -171,11 +184,42 @@ public class MySQL {
 
 	public void checkColumn(String column, DataType dataType) {
 		synchronized (object4) {
-			if (!ArrayUtils.containsIgnoreCase((ArrayList<String>) getColumns(), column)) {
-				if (!ArrayUtils.containsIgnoreCase(getColumnsQueury(), column)) {
-					addColumn(column, dataType);
+			List<String> known = columns;
+			if (known != null) {
+				synchronized (known) {
+					for (String existing : known) if (column.equalsIgnoreCase(existing)) return;
 				}
 			}
+			// addColumn owns checked live inspection and peer-race reconciliation.
+			// The legacy getColumnsQueury helper converts SQL failures to empty.
+			addColumn(column, dataType);
+		}
+	}
+
+	private boolean hasLiveColumn(Connection connection, String column) throws SQLException {
+		String table = "`" + getName().replace("`", "``") + "`";
+		try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM " + table + " WHERE 1=0");
+				ResultSet rows = statement.executeQuery()) {
+			if (rows == null) throw new SQLException("SQL schema inspection returned no result");
+			java.sql.ResultSetMetaData metadata = rows.getMetaData();
+			if (metadata == null) throw new SQLException("SQL schema metadata is unavailable");
+			int count = metadata.getColumnCount();
+			if (count <= 0) throw new SQLException("SQL schema metadata is unavailable");
+			for (int i = 1; i <= count; i++) {
+				String name = metadata.getColumnName(i);
+				if (name == null || name.isEmpty()) throw new SQLException("SQL schema column identity is unavailable");
+				if (column.equalsIgnoreCase(name)) return true;
+			}
+			return false;
+		}
+	}
+
+	private void rememberColumn(String column) {
+		if (columns == null) columns = new ArrayList<>();
+		synchronized (columns) {
+			java.util.Iterator<String> iterator = columns.iterator();
+			while (iterator.hasNext()) if (column.equalsIgnoreCase(iterator.next())) iterator.remove();
+			columns.add(column);
 		}
 	}
 
