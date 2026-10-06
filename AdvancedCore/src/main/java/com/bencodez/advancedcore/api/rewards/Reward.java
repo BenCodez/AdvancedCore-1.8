@@ -1,6 +1,13 @@
 package com.bencodez.advancedcore.api.rewards;
 
 import java.io.File;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Base64;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.function.Consumer;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -34,6 +41,176 @@ import lombok.Setter;
  * The Class Reward.
  */
 public class Reward {
+	private static final String REPLAY_SELECTION_PREFIX = "__advancedcore_replay_selection_";
+	private static final String REPLAY_COMMAND_PREFIX = "__advancedcore_replay_commands_";
+	private static final String REPLAY_NESTED_LIST_PREFIX = "__advancedcore_replay_nested_list_";
+	private static final String REPLAY_SINGLE_CHILD_PREFIX = "__advancedcore_replay_single_child_";
+	private static final String REPLAY_LEGACY_ACTION_PREFIX = "__advancedcore_replay_legacy_actions_";
+	public static String replayMetadata(HashMap<String, String> placeholders, ReplayState replayState, String key) {
+		String value = placeholders == null || (replayState != null && !replayState.acceptsPersistedMetadata())
+				? null : placeholders.get(key);
+		return value == null && replayState != null ? replayState.replayMetadata(key) : value;
+	}
+
+	public static void recordReplayMetadata(HashMap<String, String> placeholders, ReplayState replayState,
+			String key, String value) {
+		if (replayState != null) replayState.recordReplayMetadata(key, value);
+		if (placeholders != null && (replayState == null || replayState.hasCheckpointConsumer())) {
+			placeholders.put(key, value);
+		}
+	}
+
+	private static String digest(String value) {
+		try {
+			byte[] bytes = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
+			StringBuilder hex = new StringBuilder(bytes.length * 2);
+			for (byte item : bytes) hex.append(String.format("%02x", item & 0xff));
+			return hex.toString();
+		} catch (NoSuchAlgorithmException failure) {
+			throw new IllegalStateException("SHA-256 is unavailable for reward replay checkpoints", failure);
+		}
+	}
+
+	public static void mergeReplayMetadata(HashMap<String, String> target, Map<String, String> source) {
+		if (target == null || source == null) return;
+		for (Entry<String, String> entry : source.entrySet()) {
+			if (isReplayMetadataKey(entry.getKey())) target.put(entry.getKey(), entry.getValue());
+		}
+	}
+
+	private static boolean isReplayMetadataKey(String key) {
+		return key != null && (key.startsWith(REPLAY_SELECTION_PREFIX) || key.startsWith(REPLAY_COMMAND_PREFIX)
+				|| key.startsWith(REPLAY_NESTED_LIST_PREFIX) || key.startsWith(REPLAY_SINGLE_CHILD_PREFIX)
+				|| key.startsWith(REPLAY_LEGACY_ACTION_PREFIX));
+	}
+
+	public static String legacyActionReplayKey(String injectionKey) {
+		String encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(
+				(injectionKey == null ? "" : injectionKey).getBytes(StandardCharsets.UTF_8));
+		return REPLAY_LEGACY_ACTION_PREFIX + encoded;
+	}
+
+	public static String legacyActionFingerprint(String descriptor) {
+		return digest(descriptor == null ? "" : descriptor);
+	}
+
+	public static final class ReplayState {
+		private final HashMap<String, Integer> completed = new HashMap<>();
+		private final HashMap<String, String> registryFingerprints = new HashMap<>();
+		private final HashMap<String, String> replayMetadata = new HashMap<>();
+		private final boolean legacyCheckpoint;
+		private final boolean restoredCheckpoint;
+		private boolean livePlayerStateSet;
+		private boolean livePlayerOnline;
+		private boolean livePlayerVanished;
+		private Consumer<ReplayCheckpoint> checkpointConsumer;
+		private ReplayState(Map<String, Integer> initial) { this(initial, null, false); }
+		private ReplayState(Map<String, Integer> initial, Map<String, String> initialFingerprints,
+				boolean legacyCheckpoint) {
+			if (initial != null) completed.putAll(initial);
+			if (initialFingerprints != null) registryFingerprints.putAll(initialFingerprints);
+			this.legacyCheckpoint = legacyCheckpoint;
+			this.restoredCheckpoint = legacyCheckpoint || (initial != null && !initial.isEmpty())
+					|| (initialFingerprints != null && !initialFingerprints.isEmpty());
+		}
+		private synchronized int getCompleted(String rewardName, int fallback) {
+			return completed.getOrDefault(rewardName, fallback);
+		}
+		private synchronized void setCompleted(String rewardName, int count) { completed.put(rewardName, count); }
+		private synchronized Map<String, Integer> copyProgress() { return new HashMap<>(completed); }
+		private synchronized void setRegistryFingerprint(String rewardName, String fingerprint) {
+			registryFingerprints.put(rewardName, fingerprint);
+		}
+		private synchronized Map<String, String> copyRegistryFingerprints() {
+			return new HashMap<>(registryFingerprints);
+		}
+		/** Records a reserved marker produced by a nested replay-aware injector. */
+		public synchronized void recordReplayMetadata(String key, String value) {
+			if (isReplayMetadataKey(key)) replayMetadata.put(key, value);
+		}
+		public synchronized void mergeReplayMetadataInto(HashMap<String, String> target) {
+			Reward.mergeReplayMetadata(target, replayMetadata);
+		}
+		public synchronized String replayMetadata(String key) { return replayMetadata.get(key); }
+		private synchronized boolean hasPersistedCheckpoint() {
+			return legacyCheckpoint || !completed.isEmpty() || !registryFingerprints.isEmpty();
+		}
+		private synchronized void copyTo(RewardOptions options) {
+			options.setCompletedAsyncInjections(Math.max(options.getCompletedAsyncInjections(), highestCompletedCount()));
+			options.setAsyncReplayProgress(copyProgress());
+			options.setAsyncReplayRegistryFingerprints(copyRegistryFingerprints());
+			options.setLegacyAsyncReplayCheckpoint(legacyCheckpoint);
+			mergeReplayMetadataInto(options.getPlaceholders());
+		}
+		private synchronized boolean matchesRegistryFingerprint(String currentFingerprint) {
+			if (legacyCheckpoint) return false;
+			for (Entry<String, Integer> entry : completed.entrySet()) {
+				if (entry.getValue() != null && entry.getValue() > 0
+						&& !currentFingerprint.equals(registryFingerprints.get(entry.getKey()))) return false;
+			}
+			for (String fingerprint : registryFingerprints.values()) {
+				if (!currentFingerprint.equals(fingerprint)) return false;
+			}
+			return true;
+		}
+		private synchronized int highestCompletedCount() {
+			int highest = 0;
+			for (int count : completed.values()) highest = Math.max(highest, count);
+			return highest;
+		}
+		private synchronized void setCheckpointConsumer(Consumer<ReplayCheckpoint> consumer) {
+			checkpointConsumer = consumer;
+		}
+		private synchronized void captureLivePlayerState(RewardOptions options) {
+			if (!options.isLivePlayerStateSet()) return;
+			livePlayerStateSet = true;
+			livePlayerOnline = options.isOnline();
+			livePlayerVanished = options.isLivePlayerVanished();
+		}
+		private synchronized void applyLivePlayerState(RewardOptions options) {
+			if (livePlayerStateSet) options.captureLivePlayerState(livePlayerOnline, livePlayerVanished);
+		}
+		private synchronized boolean hasCheckpointConsumer() {
+			return checkpointConsumer != null;
+		}
+		private synchronized boolean acceptsPersistedMetadata() {
+			return restoredCheckpoint || checkpointConsumer != null;
+		}
+		public CompletionStage<Void> persistCheckpointAsync(AdvancedCorePlugin plugin,
+				HashMap<String, String> placeholders) {
+			return persistCheckpointAsync(plugin, placeholders, 30, TimeUnit.SECONDS);
+		}
+
+		private CompletionStage<Void> persistCheckpointAsync(AdvancedCorePlugin plugin,
+                HashMap<String,String> placeholders, long timeout, TimeUnit timeoutUnit) {
+            Consumer<ReplayCheckpoint> consumer;
+            synchronized(this) {consumer=checkpointConsumer;}
+            if(consumer==null)return CompletableFuture.completedFuture(null);
+            ReplayCheckpoint checkpoint=new ReplayCheckpoint(copyProgress(),copyRegistryFingerprints(),placeholders);
+            return plugin.getRewardDispatch().dispatchOffPrimary(()->{
+                consumer.accept(checkpoint);
+                return CompletableFuture.<Void>completedFuture(null);
+            },timeoutUnit.toMillis(timeout));
+        }
+
+	}
+
+	public static final class ReplayCheckpoint {
+		@Getter private final Map<String, Integer> replayProgress;
+		@Getter private final Map<String, String> replayRegistryFingerprints;
+		@Getter private final HashMap<String, String> placeholders;
+		private ReplayCheckpoint(Map<String, Integer> replayProgress, HashMap<String, String> placeholders) {
+			this(replayProgress, new HashMap<>(), placeholders);
+		}
+		private ReplayCheckpoint(Map<String, Integer> replayProgress, Map<String, String> replayRegistryFingerprints,
+				HashMap<String, String> placeholders) {
+			this.replayProgress = new HashMap<>(replayProgress);
+			this.replayRegistryFingerprints = new HashMap<>(replayRegistryFingerprints);
+			this.placeholders = new HashMap<>(placeholders);
+		}
+	}
+
+
 
 	@Getter
 	@Setter
@@ -304,18 +481,29 @@ public class Reward {
 	private CompletionStage<Object> invokeInjectionAsync(RewardInject inject, AdvancedCoreUser user,
 			HashMap<String, String> placeholders, ServerThreadRewardDispatch owner) {
 		Supplier<CompletionStage<Object>> request = () -> owner.dispatch(() -> {
-			if (inject.supportsAsyncRequest()) return inject.onRewardRequestAsync(this, user, getConfig().getConfigData(), placeholders);
-			try {
-				Object value;
-				if (inject.isSynchronize()) {
-					synchronized (inject.getObject()) { value = inject.onRewardRequest(this, user, getConfig().getConfigData(), placeholders); }
-				} else value = inject.onRewardRequest(this, user, getConfig().getConfigData(), placeholders);
-				return CompletableFuture.completedFuture(value);
-			} catch (Exception failure) {
-				// Ordinary legacy callbacks retain their per-injection isolation contract.
-				failure.printStackTrace();
-				return CompletableFuture.completedFuture(null);
-			}
+            AdvancedCoreUser.AsyncActionCollection collection=user==null?null:user.beginAsyncActionCollection();
+            CompletionStage<Object> result;
+            try {
+                if(inject.supportsAsyncRequest()) result=inject.onRewardRequestAsync(this,user,getConfig().getConfigData(),placeholders);
+                else {
+                    try {
+                        Object value;
+                        if(inject.isSynchronize()) {synchronized(inject.getObject()){value=inject.onRewardRequest(this,user,getConfig().getConfigData(),placeholders);}}
+                        else value=inject.onRewardRequest(this,user,getConfig().getConfigData(),placeholders);
+                        result=CompletableFuture.completedFuture(value);
+                    }catch(Exception failure){failure.printStackTrace();result=CompletableFuture.completedFuture(null);}
+                }
+                if(result==null)throw new IllegalStateException("Reward injection returned null completion stage");
+            }catch(Throwable failure){CompletableFuture<Object> failed=new CompletableFuture<>();failed.completeExceptionally(failure);result=failed;}
+            finally {if(user!=null)user.restoreAsyncActionCollectionScope(collection);}
+            if(collection==null)return result;
+            CompletableFuture<Object> combined=new CompletableFuture<>();
+            result.whenComplete((value,failure)->user.endAsyncActionCollection(collection).whenComplete((ignored,actionFailure)->{
+                if(failure!=null)combined.completeExceptionally(failure);
+                else if(actionFailure!=null)combined.completeExceptionally(actionFailure);
+                else combined.complete(value);
+            }));
+            return combined;
 		}, getServerThreadDispatchTimeoutMillis());
 		return inject.isSynchronize() && inject.supportsAsyncSynchronization()
 				? inject.runSynchronizedAsync(request) : request.get();

@@ -170,6 +170,80 @@ class LegacyOrderedRewardPipelineTest {
             assertSame(failure,assertThrows(CompletionException.class,()->result.toCompletableFuture().join()).getCause());assertTrue(calls.isEmpty());verify(repeat,never()).giveRepeat(any(),any());
         });
     }
+
+    @Test void legacyItemInjectionCannotAdvanceBeforeItsDeliveryReceipt() {
+        fixture(f -> {
+            AdvancedCoreUser user=mock(AdvancedCoreUser.class,CALLS_REAL_METHODS);org.bukkit.entity.Player player=mock(org.bukkit.entity.Player.class);
+            doReturn(player).when(user).getPlayer();
+            try {java.lang.reflect.Field field=AdvancedCoreUser.class.getDeclaredField("plugin");field.setAccessible(true);field.set(user,f.dispatch.plugin);}catch(Exception error){throw new AssertionError(error);}
+            com.bencodez.simpleapi.scheduler.BukkitScheduler scheduler=mock(com.bencodez.simpleapi.scheduler.BukkitScheduler.class);
+            when(f.dispatch.plugin.getBukkitScheduler()).thenReturn(scheduler);
+            com.bencodez.advancedcore.api.item.FullInventoryHandler items=mock(com.bencodez.advancedcore.api.item.FullInventoryHandler.class);
+            when(f.dispatch.plugin.getFullInventoryHandler()).thenReturn(items);
+            org.bukkit.inventory.ItemStack item=new org.bukkit.inventory.ItemStack(org.bukkit.Material.DIAMOND,3);CompletableFuture<Void> delivered=new CompletableFuture<>();
+            when(items.giveItemAsync(player,item)).thenReturn(delivered);List<String> calls=new ArrayList<>();
+            f.injections.add(new RewardInject("legacy-item") {@Override public Object onRewardRequest(Reward reward,AdvancedCoreUser target,ConfigurationSection config,HashMap<String,String> placeholders){target.giveItem(item);calls.add("item");return null;}});
+            f.injections.add(async("after",p->{calls.add("after");return CompletableFuture.completedFuture(null);}));
+            CompletionStage<Void> result=f.reward.giveInjectedRewardsAsync(user,new HashMap<>());f.dispatch.runNext();
+            assertEquals(Arrays.asList("item"),calls);assertFalse(result.toCompletableFuture().isDone());
+            delivered.complete(null);f.dispatch.runNext();result.toCompletableFuture().join();assertEquals(Arrays.asList("item","after"),calls);
+        });
+    }
+
+
+    @Test void explicitlyWrappedAsyncContinuationBelongsToItsOriginatingInjection() {
+        fixture(f -> {
+            AdvancedCoreUser user=scopedUser(f);org.bukkit.entity.Player player=user.getPlayer();
+            com.bencodez.advancedcore.api.item.FullInventoryHandler items=mock(com.bencodez.advancedcore.api.item.FullInventoryHandler.class);when(f.dispatch.plugin.getFullInventoryHandler()).thenReturn(items);
+            org.bukkit.inventory.ItemStack item=new org.bukkit.inventory.ItemStack(org.bukkit.Material.DIAMOND,3);CompletableFuture<Void> delivered=new CompletableFuture<>();when(items.giveItemAsync(player,item)).thenReturn(delivered);
+            CompletableFuture<Object> gate=new CompletableFuture<>();
+            f.injections.add(async("continuation",p->{AdvancedCoreUser.AsyncActionContext context=user.captureAsyncActionContext();return gate.thenApply(context.wrap(value->{user.giveItem(item);return value;}));}));
+            CompletionStage<Void> result=f.reward.giveInjectedRewardsAsync(user,new HashMap<>());f.dispatch.runNext();assertFalse(result.toCompletableFuture().isDone());
+            gate.complete("ready");assertFalse(result.toCompletableFuture().isDone());verify(items).giveItemAsync(player,item);
+            delivered.complete(null);f.dispatch.runNext();result.toCompletableFuture().join();
+        });
+    }
+    @Test void pendingCollectionDoesNotCaptureAnUnrelatedOrdinaryDelivery() {
+        fixture(f -> {
+            AdvancedCoreUser user=scopedUser(f);org.bukkit.entity.Player player=user.getPlayer();
+            com.bencodez.advancedcore.api.item.FullInventoryHandler items=mock(com.bencodez.advancedcore.api.item.FullInventoryHandler.class);when(f.dispatch.plugin.getFullInventoryHandler()).thenReturn(items);
+            org.bukkit.inventory.ItemStack item=new org.bukkit.inventory.ItemStack(org.bukkit.Material.DIAMOND,3);
+            AdvancedCoreUser.AsyncActionCollection collection=user.beginAsyncActionCollection();AdvancedCoreUser.AsyncActionContext context=user.captureAsyncActionContext();user.restoreAsyncActionCollectionScope(collection);
+            context.wrap((Runnable)()->user.giveItem(item)).run();
+            user.giveItem(item);verify(items).giveItem(player,item);verify(items,never()).giveItemAsync(any(),any());
+            CompletableFuture<Void> delivered=new CompletableFuture<>();when(items.giveItemAsync(player,item)).thenReturn(delivered);
+            CompletionStage<Void> result=user.endAsyncActionCollection(collection);assertFalse(result.toCompletableFuture().isDone());delivered.complete(null);result.toCompletableFuture().join();
+        });
+    }
+    @Test void legacyActionCheckpointSkipsOnlyTheExactCompletedPayload() {
+        fixture(f -> {
+            AdvancedCoreUser user=scopedUser(f);org.bukkit.entity.Player player=user.getPlayer();
+            com.bencodez.advancedcore.api.item.FullInventoryHandler items=mock(com.bencodez.advancedcore.api.item.FullInventoryHandler.class);when(f.dispatch.plugin.getFullInventoryHandler()).thenReturn(items);
+            org.bukkit.inventory.ItemStack item=new org.bukkit.inventory.ItemStack(org.bukkit.Material.DIAMOND,3);when(items.giveItemAsync(player,item)).thenReturn(CompletableFuture.completedFuture(null));
+            Reward.ReplayState state=replayState();HashMap<String,String> metadata=new HashMap<>();List<Reward.ReplayCheckpoint> writes=new ArrayList<>();
+            try {java.lang.reflect.Method set=Reward.ReplayState.class.getDeclaredMethod("setCheckpointConsumer",java.util.function.Consumer.class);set.setAccessible(true);set.invoke(state,(java.util.function.Consumer<Reward.ReplayCheckpoint>)writes::add);}catch(Exception failure){throw new AssertionError(failure);}
+            AdvancedCoreUser.AsyncActionCollection first=user.beginAsyncActionCollection(state,metadata,"inject");user.giveItem(item);user.endAsyncActionCollection(first).toCompletableFuture().join();
+            assertEquals(2,writes.size());verify(items).giveItemAsync(player,item);
+            AdvancedCoreUser.AsyncActionCollection retry=user.beginAsyncActionCollection(state,metadata,"inject");user.giveItem(item);user.endAsyncActionCollection(retry).toCompletableFuture().join();verify(items,times(1)).giveItemAsync(player,item);assertEquals(2,writes.size());
+        });
+    }
+    @Test void duplicateScopeCloseCannotRepeatAnAlreadyAcceptedEffect() {
+        fixture(f -> {
+            AdvancedCoreUser user=scopedUser(f);org.bukkit.entity.Player player=user.getPlayer();com.bencodez.advancedcore.api.item.FullInventoryHandler items=mock(com.bencodez.advancedcore.api.item.FullInventoryHandler.class);when(f.dispatch.plugin.getFullInventoryHandler()).thenReturn(items);
+            org.bukkit.inventory.ItemStack item=new org.bukkit.inventory.ItemStack(org.bukkit.Material.DIAMOND,3);CompletableFuture<Void> delivered=new CompletableFuture<>();when(items.giveItemAsync(player,item)).thenReturn(delivered);
+            AdvancedCoreUser.AsyncActionCollection collection=user.beginAsyncActionCollection();user.giveItem(item);
+            CompletionStage<Void> first=user.endAsyncActionCollection(collection),second=user.endAsyncActionCollection(collection);assertEquals(1,mockingDetails(items).getInvocations().size());
+            delivered.complete(null);first.toCompletableFuture().join();second.toCompletableFuture().join();
+        });
+    }
+    private Reward.ReplayState replayState() {
+        try {java.lang.reflect.Constructor<Reward.ReplayState> constructor=Reward.ReplayState.class.getDeclaredConstructor(java.util.Map.class);constructor.setAccessible(true);return constructor.newInstance((Object)null);}catch(Exception failure){throw new AssertionError(failure);}
+    }
+    private AdvancedCoreUser scopedUser(Fixture f) {
+        AdvancedCoreUser user=mock(AdvancedCoreUser.class,CALLS_REAL_METHODS);doReturn(mock(org.bukkit.entity.Player.class)).when(user).getPlayer();
+        try {java.lang.reflect.Field field=AdvancedCoreUser.class.getDeclaredField("plugin");field.setAccessible(true);field.set(user,f.dispatch.plugin);}catch(Exception failure){throw new AssertionError(failure);}return user;
+    }
+
     private AdvancedCoreUser onlineUser() {
         AdvancedCoreUser user=mock(AdvancedCoreUser.class);org.bukkit.entity.Player player=mock(org.bukkit.entity.Player.class);
         when(user.getPlayer()).thenReturn(player);when(user.getPlayerName()).thenReturn("User");when(user.getUUID()).thenReturn("uuid");when(player.getDisplayName()).thenReturn("Display");return user;

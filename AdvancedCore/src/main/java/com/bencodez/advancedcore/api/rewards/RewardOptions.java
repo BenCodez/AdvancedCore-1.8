@@ -11,6 +11,17 @@ import lombok.Setter;
 
 public class RewardOptions {
 
+    @Getter @Setter private int completedAsyncInjections;
+    @Getter @Setter private java.util.Map<String,Integer> asyncReplayProgress = new HashMap<>();
+    @Getter @Setter private java.util.Map<String,String> asyncReplayRegistryFingerprints = new HashMap<>();
+    @Getter @Setter private boolean legacyAsyncReplayCheckpoint;
+    @Getter private boolean livePlayerStateSet;
+    @Getter private boolean livePlayerVanished;
+    public RewardOptions captureLivePlayerState(boolean online, boolean vanished) {
+        this.online=online;this.onlineSet=true;this.livePlayerStateSet=true;this.livePlayerVanished=vanished;return this;
+    }
+
+
 	@Getter
 	private boolean checkRepeat = true;
 	private boolean checkTimed = true;
@@ -66,6 +77,12 @@ public class RewardOptions {
 		copy.suffix = suffix;
 		copy.useDefaultWorlds = useDefaultWorlds;
 		copy.orginalTrigger = orginalTrigger;
+		copy.completedAsyncInjections=completedAsyncInjections;
+		copy.asyncReplayProgress=new HashMap<>(asyncReplayProgress);
+		copy.asyncReplayRegistryFingerprints=new HashMap<>(asyncReplayRegistryFingerprints);
+		copy.legacyAsyncReplayCheckpoint=legacyAsyncReplayCheckpoint;
+		copy.livePlayerStateSet=livePlayerStateSet;
+		copy.livePlayerVanished=livePlayerVanished;
 		return copy;
 	}
 

@@ -2095,3 +2095,59 @@ give retirement, queue capacity/mutable getter bypasses, arbitrary partial nativ
 failure, shared ServerData writers and atomic publication remain outstanding.
 The full backport/ledger/runtime matrix and fresh independent final review remain
 incomplete. No source push, PR opening, merge, release or deployment is authorized.
+
+## Explicit user action collection and item receipt integration
+
+The awaited injection pipeline now opens an explicit per-user action collection,
+restores the invoking thread's prior scope immediately after the callback, and
+awaits the collected actions before advancing. Async injectors can capture an
+AsyncActionContext and explicitly wrap Runnable, Function or Supplier callbacks.
+Unrelated ordinary work does not join another pending scope. Legacy giveItem and
+giveItems use the new handler receipt within a scope and retain void delivery
+outside it without adding a second scheduler boundary. Existing synchronous
+injection isolation and default async opt-in routing remain unchanged.
+
+The pinned-main action fingerprint/occurrence identities, sorted Base64 snapshot
+and completed-action formats, reserved replay metadata helpers, ReplayState and
+ReplayCheckpoint structures are present. Java8 failed-stage and recovery adapters
+replace failedFuture/exceptionallyCompose. Checkpoint consumers use the existing
+server-thread dispatch owner's off-primary admission, rather than a new timer or
+Java9 delayed executor. RewardOptions copies its new progress/fingerprint maps
+at dispatch. The collection releases its monitor before invoking actions or
+checkpoint callbacks. Closing it twice returns one cancellation-protected receipt
+and cannot dispatch accepted actions twice.
+
+Five new behavioral cases cover pipeline wait, explicitly wrapped continuation,
+unrelated ordinary work, exact completed-payload skip and duplicate close. The
+pipeline wait test fails before integration; duplicate close reproduces two
+invocations before its fix. Mockito's attempt to describe a real ItemStack in the
+first duplicate diagnostic required an unavailable test ItemFactory; checking
+invocation count directly exposes the intended assertion without changing its
+behavioral requirement. All original tests are retained.
+
+Exact Java8 AdvancedCore clean install: 422 unit plus 18 artifact tests. Exact
+VotingPlugin clean verify: 45 unit plus one artifact test. All failures, errors
+and skips are zero. Maximum base class major remains 52, counts 1823/2440.
+Artifact SHA-256:
+
+- AdvancedCore: `f8bbf4710192fc8627bb2a5a50f0d1d53471c9015cd29b55eb820ad32bfce085`
+- VotingPlugin: `350850669e130de7403fcd3128ecb6634314abb3e9eaebbf9bf4aee8ca30b9d7`
+
+Actual Java8/Spigot1.8.8 fixture b2b0535331 constructs a real VotingPlugin user off
+the Bukkit owner, dispatches scoped giveItem on the owner, awaits its receipt
+without an extra save, validates persisted three-diamond overflow, and disables/
+restarts/delivers it to the connected protocol client. Retained connected listener
+fixture a80b52d308 and MySQL/global-pool/conversion/repaired-retry/console-completion/
+pending-write restart fixture ac80359efc also pass. This is native user item-scope
+acceptance, not complete persisted root reward replay or graphical UI inspection.
+All 167 original checkouts remain unchanged. Helpers and evidence remain outside
+source repositories. No production dependency or release version changed.
+
+Remaining work: other legacy user action families; root injection registry and
+occurrence propagation; checkpoint consumer binding to the admitted runtime
+owner and checked storage; offline/timed reward recovery and choice/random
+reservation integration; malformed/changed/partial checkpoint tests; failed
+shutdown/crash acceptance; and the entire remaining ledger/platform/runtime
+matrix. This phase does not classify the whole AdvancedCoreUser or Reward class,
+or their mixed upstream commits, as complete. The full goal and independent final
+review remain outstanding. No source push or PR opening is authorized.
