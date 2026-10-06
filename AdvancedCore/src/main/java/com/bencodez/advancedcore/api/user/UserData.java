@@ -1,5 +1,8 @@
 package com.bencodez.advancedcore.api.user;
 
+import java.io.IOException;
+import java.sql.SQLException;
+import java.util.Map;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -639,6 +642,36 @@ public class UserData {
 					setData(user.getUUID(), entry.getKey(), entry.getValue().getInt());
 				}
 			}
+		}
+	}
+
+	/** Writes one synchronous checked batch; callers retain pending changes on failure. */
+	public void setValuesStrict(Map<String, DataValue> values) throws SQLException, IOException {
+		if (values.isEmpty()) return;
+		UserStorage storage = user.getPlugin().getStorageType();
+		if (storage == null) throw new IllegalStateException("User storage is not initialized");
+		if (storage == UserStorage.FLAT) {
+			FileThread.getInstance().setValuesStrict(user.getUUID(), values);
+			return;
+		}
+		ArrayList<Column> columns = new ArrayList<>();
+		for (Entry<String, DataValue> entry : values.entrySet()) {
+			if (!"uuid".equals(entry.getKey())) {
+				if (entry.getKey() == null || entry.getValue() == null) {
+					throw new IllegalArgumentException("Invalid user-data batch value");
+				}
+				columns.add(new Column(entry.getKey(), entry.getValue()));
+			}
+		}
+		if (columns.isEmpty()) return;
+		if (storage == UserStorage.MYSQL) {
+			if (user.getPlugin().getMysql() == null) throw new SQLException("MySQL user storage is unavailable");
+			user.getPlugin().getMysql().updateStrict(user.getUUID(), columns);
+		} else if (storage == UserStorage.SQLITE) {
+			if (user.getPlugin().getSQLiteUserTable() == null) throw new SQLException("SQLite user storage is unavailable");
+			user.getPlugin().getSQLiteUserTable().updateStrict(new Column("uuid", new DataValueString(user.getUUID())), columns);
+		} else {
+			throw new IllegalStateException("Unsupported user storage");
 		}
 	}
 

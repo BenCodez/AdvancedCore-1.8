@@ -726,6 +726,7 @@ public class MySQL {
 			}
 			query.append(";");
 			try (Connection connection = mysql.getConnectionManager().getConnection()) {
+				if (connection == null) throw new SQLException("MySQL connection is unavailable");
 				if (!connection.getAutoCommit()) throw new SQLException("Checked user writes require auto-commit");
 				try (PreparedStatement prepared = connection.prepareStatement(query.toString())) {
 					prepared.setString(1, index);

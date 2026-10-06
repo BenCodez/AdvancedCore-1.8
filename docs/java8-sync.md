@@ -239,3 +239,39 @@ UserData/cache callers still use the legacy methods. The checked FLAT adapter,
 cache failure retention, serialized flushes, retirement fencing, caller threading
 and shutdown behavior remain under implementation and audit. No claim of
 completed vote/point durability follows from adding these methods alone.
+
+## Checked FLAT publication and common batch adapter
+
+`UserData.setValuesStrict` is an additive synchronous adapter for FLAT, MySQL,
+and SQLite batches. Existing void setters remain unchanged. The FLAT method uses
+the existing FileThread owner lock without starting its deprecated polling
+thread. It strictly reads existing YAML, preserves unrelated values and legacy
+boolean text, stages beside the target, and atomically replaces the target only
+after saving successfully. Malformed input and rejected publication preserve the
+previous file. Existing Linux POSIX permissions/ownership and resolved symlink
+targets are retained. A filesystem without atomic replacement support or without
+permission to preserve existing attributes reports failure; there is no unsafe
+truncate fallback. Cross-owner/group installations and other filesystems remain
+runtime acceptance limitations. This does not claim fsync/power-loss durability.
+
+Missing JDBC connections now produce checked SQLExceptions before preparing
+writes or publishing identity caches. Two additional regressions cover this
+failure, including the actual shaded MySQL artifact. Eight real temporary-file
+tests cover typed batches, partial updates, malformed input preservation,
+publication failure cleanup, invalid identities/values, directory rejection,
+Linux permissions and symlinks. Four adapter tests cover backend selection,
+legacy UUID filtering, unchanged caller maps, and propagated storage failures.
+
+Actual Java8 clean install: 82 unit + 8 packaged-artifact tests, all passing with
+zero failures/errors/skips. The exact workspace-local AdvancedCore artifact is
+consumed by VotingPlugin's Java8 clean verify: 14 unit + 1 packaged-artifact test,
+all passing. Both final artifacts have maximum base class-file major52 (1814
+AdvancedCore and2434 VotingPlugin classes). Evidence is recorded in
+`ac-checked-flat-adapter-clean-install.log`,
+`vp-checked-flat-adapter-clean-verify.log` and
+`checked-flat-adapter-build-results.json` outside Git in the isolated workspace.
+
+These tests do not prove cache integration. Queue restoration, concurrent flush
+ownership, cache retirement, callback ordering and shutdown behavior are still
+under implementation. The full upstream ledger and final independent review
+remain incomplete; this cohort is not full-backport or PR readiness.

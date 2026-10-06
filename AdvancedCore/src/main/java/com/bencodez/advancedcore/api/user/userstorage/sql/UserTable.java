@@ -639,6 +639,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		}
 		synchronized (object) {
 			Connection connection = sqLite.getSQLConnection();
+			if (connection == null) throw new SQLException("SQLite connection is unavailable");
 			if (!connection.getAutoCommit()) throw new SQLException("Checked user writes require auto-commit");
 			for (Column column : values) checkColumn(column);
 			StringBuilder update = new StringBuilder("UPDATE ").append(getName()).append(" SET ");

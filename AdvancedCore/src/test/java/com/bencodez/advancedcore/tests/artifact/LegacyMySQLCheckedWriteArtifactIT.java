@@ -53,6 +53,17 @@ class LegacyMySQLCheckedWriteArtifactIT {
             verifyNoInteractions(f.connection,f.statement);
         }
     }
+    @Test void unavailableConnectionProducesCheckedFailureWithoutPublishingIdentity() throws Exception {
+        try (Fixture f=new Fixture()) {
+            when((Connection)f.manager.getClass().getMethod("getConnection").invoke(f.manager)).thenReturn(null);
+            InvocationTargetException result=assertThrows(InvocationTargetException.class,
+                ()->f.write(Collections.singletonList(new Column("PlayerName",new DataValueString("LegacyPlayer")))));
+            assertTrue(result.getCause() instanceof SQLException);
+            assertEquals("MySQL connection is unavailable",result.getCause().getMessage());
+            assertTrue(f.uuids.isEmpty());assertTrue(f.names.isEmpty());
+            verifyNoInteractions(f.connection,f.statement);
+        }
+    }
     private static class Fixture implements AutoCloseable {
         final String uuid="00000000-0000-0000-0000-000000000002";
         final Connection connection=mock(Connection.class);
@@ -62,6 +73,7 @@ class LegacyMySQLCheckedWriteArtifactIT {
         final URLClassLoader loader;
         final Class<?> storeType;
         final Object store;
+        final Object manager;
         Fixture() throws Exception {
             URL artifact=Paths.get(System.getProperty("advancedcore.jar")).toUri().toURL();
             loader=new URLClassLoader(new URL[]{artifact},getClass().getClassLoader()) {
@@ -86,7 +98,7 @@ class LegacyMySQLCheckedWriteArtifactIT {
             store=mock(storeType,withSettings().mockMaker("mock-maker-subclass").defaultAnswer(CALLS_REAL_METHODS));
             Class<?> driverType=loader.loadClass("com.bencodez.simpleapi.sql.mysql.MySQL");
             Object driver=mock(driverType,withSettings().mockMaker("mock-maker-subclass"));
-            Object manager=mock(loader.loadClass("com.bencodez.simpleapi.sql.mysql.ConnectionManager"),
+            manager=mock(loader.loadClass("com.bencodez.simpleapi.sql.mysql.ConnectionManager"),
                 withSettings().mockMaker("mock-maker-subclass"));
             when(driverType.getMethod("getConnectionManager").invoke(driver)).thenReturn(manager);
             when((Connection)manager.getClass().getMethod("getConnection").invoke(manager)).thenReturn(connection);

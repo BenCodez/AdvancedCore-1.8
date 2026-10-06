@@ -1,13 +1,23 @@
 package com.bencodez.advancedcore.thread;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFileAttributes;
+import java.util.Map;
+import java.util.UUID;
 
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 
 import com.bencodez.advancedcore.AdvancedCorePlugin;
 import com.bencodez.advancedcore.api.misc.files.FilesManager;
 import com.bencodez.advancedcore.api.user.UserData;
+import com.bencodez.simpleapi.sql.data.DataValue;
 
 /**
  * The Class Thread.
@@ -153,6 +163,76 @@ public class FileThread {
 	 * Instantiates a new thread.
 	 */
 	private FileThread() {
+	}
+
+	/**
+	 * Publishes one checked legacy user-data batch under the existing file owner.
+	 * Does not start the deprecated polling thread. Malformed/unreadable input is
+	 * a failed write, never an empty document to overwrite.
+	 */
+	public void setValuesStrict(String uuid, Map<String, DataValue> values) throws IOException {
+		if (values.isEmpty()) return;
+		UUID.fromString(uuid); // Keep the supplied filename spelling; reject path-like identities.
+		for (Map.Entry<String, DataValue> entry : values.entrySet()) {
+			DataValue value = entry.getValue();
+			if (entry.getKey() == null || entry.getKey().isEmpty() || value == null
+					|| (!value.isString() && !value.isInt() && !value.isBoolean())) {
+				throw new IllegalArgumentException("Unsupported user-data batch value");
+			}
+		}
+		synchronized (FileThread.getInstance()) {
+			if (plugin == null) throw new IOException("User file owner is not initialized");
+			Path target = new File(new File(plugin.getDataFolder(), "Data"), uuid + ".yml")
+					.getCanonicalFile().toPath();
+			YamlConfiguration data = new YamlConfiguration();
+			PosixFileAttributes attributes = null;
+			if (!Files.notExists(target)) {
+				if (!Files.isRegularFile(target)) throw new IOException("User data is not a readable regular file");
+				try {
+					data.load(target.toFile());
+				} catch (InvalidConfigurationException invalid) {
+					throw new IOException("Existing user data is malformed", invalid);
+				}
+				if (Files.getFileAttributeView(target, PosixFileAttributeView.class) != null) {
+					attributes = Files.readAttributes(target, PosixFileAttributes.class);
+				}
+			}
+			for (Map.Entry<String, DataValue> entry : values.entrySet()) {
+				DataValue value = entry.getValue();
+				if (value.isInt()) data.set(entry.getKey(), value.getInt());
+				else if (value.isBoolean()) data.set(entry.getKey(), Boolean.toString(value.getBoolean()));
+				else data.set(entry.getKey(), value.getString());
+			}
+			Files.createDirectories(target.getParent());
+			Path staged = Files.createTempFile(target.getParent(), ".user-data-", ".tmp");
+			Throwable failure = null;
+			try {
+				data.save(staged.toFile());
+				if (attributes != null) {
+					PosixFileAttributeView view = Files.getFileAttributeView(staged, PosixFileAttributeView.class);
+					view.setPermissions(attributes.permissions());
+					view.setOwner(attributes.owner());
+					view.setGroup(attributes.group());
+				}
+				publishStrict(staged, target);
+				staged = null; // Publication succeeded; cleanup cannot turn it into a failed write.
+			} catch (IOException | RuntimeException | Error problem) {
+				failure = problem;
+				throw problem;
+			} finally {
+				if (staged != null) {
+					try { Files.deleteIfExists(staged); }
+					catch (IOException cleanup) {
+						if (failure != null) failure.addSuppressed(cleanup);
+						else throw cleanup;
+					}
+				}
+			}
+		}
+	}
+
+	void publishStrict(Path staged, Path target) throws IOException {
+		Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
 	}
 
 	/**

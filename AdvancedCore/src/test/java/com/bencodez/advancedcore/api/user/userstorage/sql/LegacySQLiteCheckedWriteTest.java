@@ -78,6 +78,13 @@ class LegacySQLiteCheckedWriteTest {
                 Collections.singletonList(new Column("Preserved",new DataValueString("new")))));
         }
     }
+    @Test void unavailableConnectionProducesCheckedFailure() {
+        UserTable table=fixture(null);
+        SQLException failure=assertThrows(SQLException.class,()->table.updateStrict(primary("one"),
+            Collections.singletonList(new Column("Message",new DataValueString("new")))));
+        assertEquals("SQLite connection is unavailable",failure.getMessage());
+        verify(table,never()).checkColumn(any());
+    }
     private Connection database() throws Exception {
         Class.forName("org.sqlite.JDBC");Connection connection=DriverManager.getConnection("jdbc:sqlite::memory:");
         try (Statement statement=connection.createStatement()) {
