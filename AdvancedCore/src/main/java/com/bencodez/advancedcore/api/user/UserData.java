@@ -40,14 +40,7 @@ public class UserData {
 	}
 
 	public HashMap<String, DataValue> convert(List<Column> cols) {
-		HashMap<String, DataValue> data = new HashMap<>();
-		if (cols != null) {
-			for (Column col : cols) {
-				data.put(col.getName(), col.getValue());
-			}
-		}
-
-		return data;
+		return com.bencodez.advancedcore.core.user.storage.SqlUserDataAccess.convert(cols);
 	}
 
 	public boolean getBoolean(String key) {

@@ -4050,3 +4050,58 @@ all-full world drops or global queue bounds. The failure/recovery diagnostic is
 verified by the deterministic real-entry-point regression, not that live smoke test.
 The remaining upstream ledger and fresh independent final review are incomplete.
 No push, PR readiness, release or deployment is claimed.
+
+
+### Shared SQL facade foundation
+
+Reviewed the pinned main `SqlUserStorage`, `SqlUserDataAccess` and
+`BukkitSqlUserStorage`, plus the initial extraction commit
+`b789d7b1b95252f05083f717a039fc9ff0841975`, against native checked storage callers.
+Ported the core storage contract and row-access facade from pinned main
+`6390c1cab41bd4d7683c7df88dd36537c8c7861e`. Java 8 replaces the default
+transaction overload's `Map.of()` with an empty `Collections` map. The interface's
+unsupported transaction default remains an explicit exception without invoking the
+callback; it does not pretend to provide a JDBC transaction. The documentation
+states that cached transaction integration is not yet supplied by this fork.
+
+The facade preserves lazy construction, a caller-supplied live row reader,
+exact key matching, legacy invalid-integer/default and null-string semantics,
+first matching typed value for scalar reads, last-wins duplicate conversion,
+mutable detached maps retaining the original value objects, and backing provider
+exceptions. Native `UserData.convert` delegates to its equivalent conversion helper.
+The native strict snapshot path still rejects omitted snapshots before conversion;
+checked writes, lifecycle/per-user ownership, caches, public row overrides,
+configuration, schemas and wire formats are not replaced by this foundation.
+No production dependency, executor, connection, schema or listener is created.
+
+Six new focused tests cover lazy live reads, duplicate/default behavior, boolean
+and null sentinel strings, detached conversion, provider failure propagation,
+write delegation and explicitly unsupported transactions. Actual Java 8 focused
+command with existing workspace-local Maven flags:
+`-Dtest=LegacySqlUserDataAccessTest,LegacyCacheSnapshotTest,LegacyQueueMutationBridgeTest test`
+passes 30 tests, zero failures/errors/skips. Producer `AdvancedCore/pom.xml clean install`:
+642 unit +72 artifact =714 PASS; exact installed producer verified before consumer
+`VotingPlugin/pom.xml clean verify`:45 unit +1 artifact =46 PASS.
+Producer SHA256 `f882e03107223bd91e1e4a35edc1e9ca80a8e5479b3e7565b4e64d130f08071f`;
+consumer SHA256 `0a5e6a57e8670e0c8dd74b50561fb58b74403cd9690976c5027454eebb84418c`.
+All1846 producer/2463 consumer base classes have major<=52; both packaged artifacts
+contain the core row-access class. Full logs/manifest: workspace
+`evidence/sql-facade-foundation-{focused,clean-install,consumer-clean-verify}.log`
+and `evidence/sql-facade-foundation-build-results.json`.
+
+Fresh exact-consumer Java8/Spigot1.8.8 cache/schema acceptance: nine PASS checks
+for stored nonzero canonical value preservation, detached schema/cache registration,
+idempotent next pass, retained existing row, physical late column, SQLite integrity,
+Java8 linkage and clean shutdown. Command:
+`python3 runtime/canonical-read-acceptance/run.py work/VotingPlugin-1.8/VotingPlugin/target/VotingPlugin.jar`
+from the isolated workspace. Evidence: `evidence/sql-facade-foundation-spigot-runtime.log`
+and `evidence/schema-registration-acceptance-5654391214.json`.
+This proves packaged conversion/native SQLite use, not a shared SQL runtime,
+MySQL facade integration, atomic user transactions or outer reward crash recovery.
+
+The extraction remains a partial port: the pinned Bukkit adapter depends on shared
+route/maintenance APIs, and its methods cannot replace native checked writes blindly.
+Backend adapters, schema/backend lifecycle, shared cache owner, shared runtime,
+transaction implementation and remaining facade delegation still require integration.
+See `docs/upstream-shared-user-dispositions.md`. No main-match, final independent
+review or PR readiness is claimed. No push, release or deployment was performed.
