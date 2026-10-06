@@ -2151,3 +2151,55 @@ shutdown/crash acceptance; and the entire remaining ledger/platform/runtime
 matrix. This phase does not classify the whole AdvancedCoreUser or Reward class,
 or their mixed upstream commits, as complete. The full goal and independent final
 review remain outstanding. No source push or PR opening is authorized.
+
+## Legacy scheduled user action receipt backport
+
+Scoped experience, experience levels, money deposits/withdrawals, potion effects
+and temporary-permission admission now join their originating action collection.
+Native execution uses the existing Java8 ServerThreadRewardDispatch; each scope
+captures that owner so a replacement runtime cannot admit old queued actions.
+Player-bound effects validate current identity/online state immediately before
+execution. Pre-admission rejection or timeout is distinguished from an exception
+after the native body starts. No new executor, production dependency or Java9
+scheduled-future API is introduced. Ordinary experience retains its immediate
+legacy behavior; unscoped money/potion calls retain their existing fire-and-forget
+scheduler. Temporary permission completion covers its initial mutation, not the
+entire permission lifetime. Both ItemBuilder and item-with-placeholder overloads
+use the same missing-player guard. Public void signatures and defaults remain.
+
+Twelve regressions cover experience and owner-side level reads, disconnected
+players, captured-owner retirement/replacement, late timeout callbacks, observer
+cancellation, started native failure classification, ordinary immediate behavior,
+Vault provider deposit/withdraw invocation, potion construction/application,
+initial permission mutation and both missing-player item overloads. The initial
+experience regression fails on the old body with one assertion failure and no
+errors. Native action tests and the existing ordered-injection tests pass.
+
+Exact Java8 AdvancedCore clean install: 434 unit plus 18 artifact tests; exact
+VotingPlugin clean verify: 45 unit plus one artifact test. Zero failures, errors
+or skips. Base bytecode maximum 52, class counts 1820/2437. Three old anonymous
+Runnable classes were replaced with lambdas; no public API was deleted. Hashes:
+
+- AdvancedCore: `55aa0763f84f4ef8166de25e0be14b6bb19125955ca9771be9289183074c7c95`
+- VotingPlugin: `d41114e4d8a16cc382e6176225808c81de021db6a8da3ad86bd25f92fdd66cf1`
+
+Real Java8/Spigot1.8.8 fixture 9ccc4a4185 uses a real VotingPlugin user and validates
+scoped native experience and a SPEED potion after the aggregate receipt settles.
+Its three overflow diamonds are persisted, survive disable/restart and reach the
+connected protocol client. Retained connected listener fixture a0b8706fa0 and native
+item/pagination/MySQL/global-pool/conversion/repaired-retry/console completion/
+pending-write restart fixture 89a903d00c pass on that same artifact. This is not a
+live economy-provider or permission-expiry acceptance test, graphical UI inspection,
+or a complete durable root replay proof. Evidence is workspace
+user-native-action-final-results.json and its build/runtime logs.
+
+Remaining root work includes admitted-generation binding for item/checkpoint paths,
+checked root checkpoint writes, stable injection/occurrence identities, offline/
+timed recovery, nested/random/choice integration and failure/crash acceptance.
+Vault return-value acceptance semantics remain inherited and require audit; actual
+provider invocation is the covered boundary. Permission-map repeated admission and
+expiry require focused reproduction: installed Java8 ConcurrentHashMap bytecode
+confirms its legacy contains(Object) is a containsValue alias, and the old handler
+uses it with a UUID. That discovery has not been patched or classified complete.
+All 167 originals remain unchanged. Full source ledger, broader runtime matrix and
+fresh independent final review remain incomplete. No source push or PR authorized.

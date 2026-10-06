@@ -38,6 +38,7 @@ import com.bencodez.advancedcore.api.item.ItemBuilder;
 import com.bencodez.advancedcore.api.messages.PlaceholderUtils;
 import com.bencodez.advancedcore.api.misc.PlayerManager;
 import com.bencodez.advancedcore.api.rewards.Reward;
+import com.bencodez.advancedcore.api.rewards.ServerThreadRewardDispatch;
 import com.bencodez.advancedcore.api.rewards.RewardBuilder;
 import com.bencodez.advancedcore.api.rewards.RewardHandler;
 import com.bencodez.advancedcore.api.rewards.RewardOptions;
@@ -71,6 +72,7 @@ public class AdvancedCoreUser {
 		private final String checkpointKey;
 		private final String snapshotKey;
 		private final AdvancedCorePlugin plugin;
+		private final ServerThreadRewardDispatch actionOwner;
 		private boolean closed;
 		private CompletableFuture<Void> completion;
 
@@ -83,6 +85,7 @@ public class AdvancedCoreUser {
 			this.checkpointKey = Reward.legacyActionReplayKey(injectionKey);
 			this.snapshotKey = checkpointKey + ACTION_SNAPSHOT_SUFFIX;
 			this.plugin = plugin;
+			this.actionOwner = plugin == null ? null : plugin.getRewardDispatch();
 		}
 
 		private synchronized boolean add(Supplier<CompletionStage<Void>> action, String descriptor) {
@@ -473,6 +476,64 @@ public class AdvancedCoreUser {
     }
 
 
+	private void scheduleLegacyRewardAction(Runnable action, Player player, boolean playerAware, String descriptor) {
+		scheduleLegacyRewardActionAsync(() -> {
+			action.run();
+			return CompletableFuture.completedFuture(null);
+		}, player, playerAware, descriptor);
+	}
+	private boolean scheduleOwnedPlayerAction(Player player, Runnable action, String descriptor) {
+		if (!hasOwnedAsyncActionCollection()) return false;
+		if (player == null) {
+			collectAsyncFailure(new IllegalStateException("Player became unavailable before reward delivery"));
+			return true;
+		}
+		if (!plugin.isEnabled()) {
+			collectAsyncFailure(new IllegalStateException("Plugin disabled before player reward delivery"));
+			return true;
+		}
+		scheduleLegacyRewardAction(action, player, true, descriptor);
+		return true;
+	}
+	private void validateLiveScheduledPlayer(Player player) {
+		if (player == null || player.getUniqueId() == null) {
+			throw replayActionNotStarted("Scheduled player reward has no live player identity");
+		}
+		Player current = Bukkit.getPlayer(player.getUniqueId());
+		if (current != player || !current.isOnline()) {
+			throw replayActionNotStarted("Player became unavailable before scheduled reward delivery");
+		}
+	}
+    private void scheduleLegacyRewardActionAsync(Supplier<CompletionStage<Void>> action, Player player,
+            boolean playerAware, String descriptor) {
+        AsyncActionCollection collection=ASYNC_ACTION_COLLECTION.get();
+        ServerThreadRewardDispatch owner=collection!=null&&collection.belongsTo(this)?collection.actionOwner:null;
+        if(!collectAsyncAction(()->{
+            if(owner==null)return failedStage(replayActionNotStarted("Reward action dispatcher is unavailable"));
+            java.util.concurrent.atomic.AtomicBoolean started=new java.util.concurrent.atomic.AtomicBoolean();
+            CompletionStage<Void> receipt=owner.dispatch(()->{
+                if(playerAware)validateLiveScheduledPlayer(player);
+                started.set(true);
+                return action.get();
+            },TimeUnit.SECONDS.toMillis(30));
+            return recoverCompletion(receipt,failure->failedStage(started.get()?failure:
+                    replayActionNotStarted("Scheduled reward action did not begin",failure)));
+        },descriptor)) {
+            Runnable dispatch=()->{
+                try {
+                    CompletionStage<Void> stage=action.get();
+                    if(stage==null)throw new IllegalStateException("Scheduled reward action returned null");
+                }catch(Throwable failure) {
+                    if(failure instanceof RuntimeException)throw (RuntimeException)failure;
+                    if(failure instanceof Error)throw (Error)failure;
+                    throw new IllegalStateException("Scheduled reward action failed",failure);
+                }
+            };
+            if(playerAware)getPlugin().getBukkitScheduler().runTask(plugin,dispatch,player);
+            else getPlugin().getBukkitScheduler().runTask(plugin,dispatch);
+        }
+    }
+
 	/** Signals a replay-aware legacy action that was conclusively never started. */
 	private static final class LegacyActionNotStartedException extends IllegalStateException {
 		private static final long serialVersionUID = 1L;
@@ -639,7 +700,11 @@ public class AdvancedCoreUser {
 	}
 
 	public void addPermission(String permission, long delay) {
-		plugin.getPermissionHandler().addPermission(getPlayer(), permission, delay);
+		Player player = getPlayer();
+		if (scheduleOwnedPlayerAction(player,
+				() -> plugin.getPermissionHandler().addPermission(player, permission, delay),
+				"temporary-permission:" + permission + ":" + delay)) return;
+		plugin.getPermissionHandler().addPermission(player, permission, delay);
 	}
 
 	public synchronized void addTimedReward(Reward reward, HashMap<String, String> placeholders, long epochMilli) {
@@ -977,6 +1042,7 @@ public class AdvancedCoreUser {
 	 */
 	public void giveExp(int exp) {
 		Player player = getPlayer();
+		if (scheduleOwnedPlayerAction(player, () -> player.giveExp(exp), "exp:" + exp)) return;
 		if (player != null) {
 			player.giveExp(exp);
 		}
@@ -984,13 +1050,19 @@ public class AdvancedCoreUser {
 
 	public void giveExpLevels(int num) {
 		Player p = getPlayer();
+		if (scheduleOwnedPlayerAction(p, () -> p.setLevel(p.getLevel() + num), "exp-levels:" + num)) return;
 		if (p != null) {
 			p.setLevel(p.getLevel() + num);
 		}
 	}
 
 	public void giveItem(ItemBuilder builder) {
-		giveItem(builder.toItemStack(getPlayer()));
+		Player player = getPlayer();
+		if (player == null && hasOwnedAsyncActionCollection()) {
+			collectAsyncFailure(new IllegalStateException("Player became unavailable before item reward delivery"));
+			return;
+		}
+		giveItem(builder.toItemStack(player));
 	}
 
 	/**
@@ -1014,7 +1086,7 @@ public class AdvancedCoreUser {
 	}
 
 	public void giveItem(ItemStack itemStack, HashMap<String, String> placeholders) {
-		giveItem(new ItemBuilder(itemStack).setPlaceholders(placeholders).toItemStack(getPlayer()));
+		giveItem(new ItemBuilder(itemStack).setPlaceholders(placeholders));
 	}
 
 	public void giveItems(ItemStack... item) {
@@ -1039,36 +1111,30 @@ public class AdvancedCoreUser {
 	 */
 	public void giveMoney(double m) {
 		if (!plugin.isEnabled()) {
+			collectAsyncFailure(new IllegalStateException("Plugin disabled before money reward was scheduled"));
 			return;
 		}
 		if (plugin.getVaultHandler() != null && plugin.getVaultHandler().getEcon() != null) {
 			try {
 				if (m > 0) {
 					final double money = m;
-					getPlugin().getBukkitScheduler().runTask(plugin, new Runnable() {
-
-						@Override
-						public void run() {
-							plugin.getVaultHandler().getEcon().depositPlayer(getOfflinePlayer(), money);
-						}
-					});
+					scheduleLegacyRewardAction(
+							() -> plugin.getVaultHandler().getEcon().depositPlayer(getOfflinePlayer(), money), null, false,
+							"money:deposit:" + Double.toString(money));
 
 				} else if (m < 0) {
 					m = m * -1;
 					final double money = m;
-					getPlugin().getBukkitScheduler().runTask(plugin, new Runnable() {
-
-						@Override
-						public void run() {
-							plugin.getVaultHandler().getEcon().withdrawPlayer(getOfflinePlayer(), money);
-						}
-					});
+					scheduleLegacyRewardAction(
+							() -> plugin.getVaultHandler().getEcon().withdrawPlayer(getOfflinePlayer(), money), null, false,
+							"money:withdraw:" + Double.toString(money));
 
 				}
 			} catch (
 
 			IllegalStateException e) {
 				e.printStackTrace();
+				collectAsyncFailure(e);
 			}
 		}
 	}
@@ -1090,19 +1156,20 @@ public class AdvancedCoreUser {
 	 * @param amplifier  the amplifier
 	 */
 	public void givePotionEffect(String potionName, int duration, int amplifier) {
-		Player player = Bukkit.getPlayer(java.util.UUID.fromString(getUUID()));
-		if (player != null && plugin.isEnabled()) {
-			getPlugin().getBukkitScheduler().runTask(plugin, new Runnable() {
-
-				@SuppressWarnings("deprecation")
-				@Override
-				public void run() {
-					player.addPotionEffect(
-							new PotionEffect(PotionEffectType.getByName(potionName), 20 * duration, amplifier));
-				}
-			}, player);
-
+		Player player = getPlayer();
+		if (player == null) {
+			if (hasOwnedAsyncActionCollection()) collectAsyncFailure(new IllegalStateException(
+					"Player became unavailable before potion reward delivery"));
+			return;
 		}
+		if (!plugin.isEnabled()) {
+			if (hasOwnedAsyncActionCollection()) collectAsyncFailure(new IllegalStateException(
+					"Potion reward could not be scheduled because the plugin is unavailable"));
+			return;
+		}
+		scheduleLegacyRewardAction(() -> player.addPotionEffect(
+				new PotionEffect(PotionEffectType.getByName(potionName), 20 * duration, amplifier)), player, true,
+				"potion:" + potionName + ":" + duration + ":" + amplifier);
 	}
 
 	public void giveReward(FileConfiguration data, String path, RewardOptions rewardOptions) {
