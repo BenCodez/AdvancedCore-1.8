@@ -2999,6 +2999,7 @@ public class RewardHandler {
 	public void stopSubmittingDelayedRewards() {
 		if (repeatTimer != null) repeatTimer.cancel();
 		if (delayedTimer != null) delayedTimer.shutdown();
+		AdvancedCoreUser.cancelTimedStorageWakeups(plugin);
 	}
 
 	public void shutdown() {

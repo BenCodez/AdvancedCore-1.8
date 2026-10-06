@@ -68,6 +68,8 @@ public class AdvancedCoreUser {
         final HashSet<String> occurrences=new HashSet<>();
         final HashMap<String,Integer> legacy=new HashMap<>();
         CompletableFuture<Void> tail=CompletableFuture.completedFuture(null);
+        TimedStorageWakeup timedStorageWakeup;
+        int timedStorageFailures;
     }
 
 	private static final ThreadLocal<AsyncActionCollection> ASYNC_ACTION_COLLECTION = new ThreadLocal<>();
@@ -1048,9 +1050,87 @@ public class AdvancedCoreUser {
         return owner.dispatchOffPrimary(()->dispatchTimedQueue(owner,runtime),TimeUnit.SECONDS.toMillis(30));
     }
 
+    private static final class TimedStorageWakeup {
+        volatile java.util.concurrent.ScheduledFuture<?> future;
+        final ServerThreadRewardDispatch owner;
+        TimedStorageWakeup(ServerThreadRewardDispatch owner){this.owner=owner;}
+    }
+
+    private static boolean isTimedStorageFailure(Throwable failure) {
+        for(int depth=0;failure!=null && depth<32;depth++,failure=failure.getCause())
+            if(failure instanceof java.sql.SQLException || failure instanceof java.io.IOException)return true;
+        return false;
+    }
+
+    /** Retry only before effects: post-effect failures require recovery of their retained progress. */
+    private void requestTimedStorageWakeup(ServerThreadRewardDispatch owner,Reward.ReplayState runtime) {
+        if(!plugin.isEnabled() || plugin.getRewardDispatch()!=owner)return;
+        java.util.concurrent.ScheduledExecutorService timer=plugin.getRewardHandler().getDelayedTimer();
+        if(timer==null || timer.isShutdown())return;
+        PersistedReplayClaims claims;TimedStorageWakeup wakeup=new TimedStorageWakeup(owner);TimedStorageWakeup predecessor;long delay;
+        synchronized(REPLAY_CLAIMS_LOCK) {
+            claims=REPLAY_CLAIMS.computeIfAbsent(plugin,unused->new HashMap<>()).computeIfAbsent(getUUID(),unused->new PersistedReplayClaims());
+            predecessor=claims.timedStorageWakeup;
+            if(predecessor!=null && predecessor.owner==owner)return;
+            claims.timedStorageWakeup=wakeup;
+            claims.timedStorageFailures=Math.min(8,claims.timedStorageFailures+1);
+            delay=Math.min(TimeUnit.MINUTES.toMillis(5),TimeUnit.SECONDS.toMillis(1L<<claims.timedStorageFailures));
+        }
+        if(predecessor!=null && predecessor.future!=null)predecessor.future.cancel(false);
+        final PersistedReplayClaims captured=claims;
+        try {
+            java.util.concurrent.ScheduledFuture<?> future=timer.schedule(()->{
+                synchronized(REPLAY_CLAIMS_LOCK) {
+                    if(captured.timedStorageWakeup!=wakeup)return;
+                    captured.timedStorageWakeup=null;
+                }
+                if(!plugin.isEnabled() || plugin.getRewardDispatch()!=owner){releaseTimedWakeupOwner(captured);return;}
+                owner.dispatchOffPrimary(()->dispatchTimedQueue(owner,runtime),TimeUnit.SECONDS.toMillis(30))
+                    .whenComplete((unused,failure)->{
+                        if(failure!=null)plugin.getLogger().warning("Timed storage recovery remains pending: "+failure.getMessage());
+                        releaseTimedWakeupOwner(captured);
+                    });
+            },delay,TimeUnit.MILLISECONDS);
+            boolean stale;
+            synchronized(REPLAY_CLAIMS_LOCK){wakeup.future=future;stale=captured.timedStorageWakeup!=wakeup;}
+            if(stale)future.cancel(false);
+        }catch(RuntimeException rejected) {
+            synchronized(REPLAY_CLAIMS_LOCK){if(captured.timedStorageWakeup==wakeup)captured.timedStorageWakeup=null;}
+            releaseTimedWakeupOwner(captured);
+            plugin.getLogger().warning("Timed storage recovery timer unavailable: "+rejected.getMessage());
+        }
+    }
+
+    /** Called after timer admission closes; a racing future publication observes the removed token. */
+    public static void cancelTimedStorageWakeups(AdvancedCorePlugin plugin) {
+        ArrayList<java.util.concurrent.ScheduledFuture<?>> futures=new ArrayList<>();
+        synchronized(REPLAY_CLAIMS_LOCK) {
+            HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);
+            if(users==null)return;
+            java.util.Iterator<PersistedReplayClaims> entries=users.values().iterator();
+            while(entries.hasNext()) {
+                PersistedReplayClaims claims=entries.next();TimedStorageWakeup wakeup=claims.timedStorageWakeup;
+                claims.timedStorageWakeup=null;
+                if(wakeup!=null && wakeup.future!=null)futures.add(wakeup.future);
+                if(claims.occurrences.isEmpty() && claims.tail.isDone())entries.remove();
+            }
+            if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);
+        }
+        for(java.util.concurrent.ScheduledFuture<?> future:futures)future.cancel(false);
+    }
+
+    private void releaseTimedWakeupOwner(PersistedReplayClaims captured) {
+        synchronized(REPLAY_CLAIMS_LOCK) {
+            HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);
+            if(captured.occurrences.isEmpty() && captured.tail.isDone() && captured.timedStorageWakeup==null && users!=null && users.get(getUUID())==captured){users.remove(getUUID());if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);}
+        }
+    }
+
     private CompletionStage<Void> dispatchTimedQueue(ServerThreadRewardDispatch owner,Reward.ReplayState runtime) {
         if(!plugin.getOptions().isProcessRewards())return CompletableFuture.completedFuture(null);
-        ArrayList<String> snapshot=getUserData().getStringListStrict("TimedRewards");
+        ArrayList<String> snapshot;
+        try{snapshot=getUserData().getStringListStrict("TimedRewards");}
+        catch(RuntimeException failure){if(isTimedStorageFailure(failure))requestTimedStorageWakeup(owner,runtime);throw failure;}
         HashSet<String> observed=new HashSet<>(),keys=new HashSet<>();
         for(String stored:snapshot){TimedQueueEntry entry=decodeTimedEntry(stored);if(!keys.add(entry.key))throw new IllegalStateException("Duplicate timed reward key");String id=occurrenceId(entry.key);if(id!=null && !observed.add(id))throw new IllegalStateException("Duplicate timed reward occurrence");}
         ArrayList<CompletableFuture<Void>> outcomes=new ArrayList<>();
@@ -1067,6 +1147,8 @@ public class AdvancedCoreUser {
             }
             final PersistedReplayClaims captured=claims;
             java.util.concurrent.atomic.AtomicReference<String> current=new java.util.concurrent.atomic.AtomicReference<>(stored);
+            java.util.concurrent.atomic.AtomicBoolean effectsStarted=new java.util.concurrent.atomic.AtomicBoolean();
+            java.util.concurrent.atomic.AtomicBoolean retryPublished=new java.util.concurrent.atomic.AtomicBoolean();
             CompletableFuture<Void> outcome=new CompletableFuture<Void>() {@Override public boolean cancel(boolean interrupt){return false;}};outcomes.add(outcome);
             previous.whenComplete((unused,priorFailure)->{
                 CompletionStage<Void> replay=owner.dispatchOffPrimary(()->{
@@ -1082,6 +1164,7 @@ public class AdvancedCoreUser {
                         mutateTimedQueue(pending->{int index=pending.indexOf(before);if(index<0)throw new IllegalStateException("Timed occurrence disappeared before checkpoint");pending.set(index,updated);return pending;});current.set(updated);
                     });
                     Reward.ReplayState replayState=Reward.replayStateFor(options);replayState.captureAdmittedRuntime(runtime);options.setAsyncReplayState(replayState);
+                    effectsStarted.set(true);
                     CompletionStage<Void> effect=plugin.getRewardHandler().givePersistedQueueRewardAsync(this,new PersistedQueueReference(metadata.rewardReference),options);
                     if(effect==null)throw new IllegalStateException("Timed reward omitted its completion stage");return effect;
                 },TimeUnit.SECONDS.toMillis(30));
@@ -1093,13 +1176,14 @@ public class AdvancedCoreUser {
                         long retryTime=System.currentTimeMillis()+Math.min(TimeUnit.MINUTES.toMillis(5),TimeUnit.SECONDS.toMillis(1L<<retry));
                         String key=withAsyncRetryCount(withAsyncReplayProgress(stripTimedExecutionMarker(pendingEntry.key),failure),retry);
                         String restored=encodeTimedEntry(key,retryTime);
-                        mutateTimedQueue(pending->{int index=pending.indexOf(before);if(index<0)throw new IllegalStateException("Timed occurrence disappeared during recovery");pending.set(index,restored);return pending;});current.set(restored);loadTimedDelayedTimer(retryTime);
+                        mutateTimedQueue(pending->{int index=pending.indexOf(before);if(index<0)throw new IllegalStateException("Timed occurrence disappeared during recovery");pending.set(index,restored);return pending;});current.set(restored);retryPublished.set(true);loadTimedDelayedTimer(retryTime);
                     }
                     return failure==null?CompletableFuture.<Void>completedFuture(null):AdvancedCoreUser.<Void>failedStage(failure);
                 },TimeUnit.SECONDS.toMillis(30))).thenCompose(stage->stage).whenComplete((ignored,failure)->{
                     synchronized(REPLAY_CLAIMS_LOCK){captured.occurrences.remove(id);if(existing==null){int count=captured.legacy.getOrDefault(stored,0);if(count<=1)captured.legacy.remove(stored);else captured.legacy.put(stored,count-1);}}
+                    if(failure!=null && !effectsStarted.get() && !retryPublished.get() && isTimedStorageFailure(failure))requestTimedStorageWakeup(owner,runtime);
                     if(failure==null)outcome.complete(null);else outcome.completeExceptionally(failure);tail.complete(null);
-                    synchronized(REPLAY_CLAIMS_LOCK){HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);if(captured.occurrences.isEmpty() && captured.tail.isDone() && users!=null && users.get(getUUID())==captured){users.remove(getUUID());if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);}}
+                    synchronized(REPLAY_CLAIMS_LOCK){HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);if(captured.occurrences.isEmpty() && captured.tail.isDone() && captured.timedStorageWakeup==null && users!=null && users.get(getUUID())==captured){users.remove(getUUID());if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);}}
                 });
             });
         }
@@ -1205,7 +1289,7 @@ public class AdvancedCoreUser {
                     tail.complete(null);
                     synchronized(REPLAY_CLAIMS_LOCK) {
                         HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);
-                        if(captured.occurrences.isEmpty() && captured.tail.isDone() && users!=null && users.get(getUUID())==captured){users.remove(getUUID());if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);}
+                        if(captured.occurrences.isEmpty() && captured.tail.isDone() && captured.timedStorageWakeup==null && users!=null && users.get(getUUID())==captured){users.remove(getUUID());if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);}
                     }
                 });
             });

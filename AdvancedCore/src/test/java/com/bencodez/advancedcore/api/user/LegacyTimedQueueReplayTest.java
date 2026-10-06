@@ -68,6 +68,74 @@ class LegacyTimedQueueReplayTest {
         String record=due();fixture(Arrays.asList(record,record),x->{assertThrows(CompletionException.class,()->x.f.user.checkDelayedTimedRewardsAsync().toCompletableFuture().join());assertEquals(record+"%line%"+record,pending(x));verify(x.rewards,never()).givePersistedQueueRewardAsync(any(),any(),any());});
     }
 
+    @Test void repairedStorageGetsAnotherTimerWakeupAfterFailedAdmission() {
+        String original=due();fixture(Collections.singletonList(original),x->{
+            List<Runnable> scheduled=new ArrayList<>();
+            ScheduledExecutorService timer=mock(ScheduledExecutorService.class);
+            ScheduledFuture<?> handle=mock(ScheduledFuture.class);
+            when(x.rewards.getDelayedTimer()).thenReturn(timer);
+            when(timer.schedule(any(Runnable.class),anyLong(),eq(TimeUnit.MILLISECONDS))).thenAnswer(call->{scheduled.add(call.getArgument(0));return handle;});
+            doCallRealMethod().when(x.f.user).loadTimedDelayedTimer(anyLong());
+            when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenReturn(CompletableFuture.completedFuture(null));
+            try {doThrow(new SQLException("temporary storage outage")).when(x.f.mysql).updateStrict(anyString(),anyList());}catch(SQLException failure){throw new AssertionError(failure);}
+            x.f.user.loadTimedDelayedTimer(System.currentTimeMillis()-1000);
+            assertEquals(1,scheduled.size());scheduled.remove(0).run();
+            assertEquals(original,pending(x));verify(x.rewards,never()).givePersistedQueueRewardAsync(any(),any(),any());
+            try {doNothing().when(x.f.mysql).updateStrict(anyString(),anyList());}catch(SQLException failure){throw new AssertionError(failure);}
+            assertEquals(1,scheduled.size(),"A temporary storage failure must retain one bounded timer wakeup for repaired storage");
+            scheduled.remove(0).run();
+            assertEquals("",pending(x));verify(x.rewards,times(1)).givePersistedQueueRewardAsync(any(),any(),any());
+        });
+    }
+
+    private List<Runnable> recoveryTimer(LegacyOfflineQueueReplayTest.Fixture x,ScheduledFuture<?> handle) {
+        List<Runnable> scheduled=new ArrayList<>();ScheduledExecutorService timer=mock(ScheduledExecutorService.class);
+        when(x.rewards.getDelayedTimer()).thenReturn(timer);
+        when(timer.schedule(any(Runnable.class),anyLong(),eq(TimeUnit.MILLISECONDS))).thenAnswer(call->{scheduled.add(call.getArgument(0));return handle;});
+        return scheduled;
+    }
+    @Test void repeatedStorageFailurePollsShareOneWakeup() {
+        fixture(Collections.singletonList(due()),x->{
+            List<Runnable> scheduled=recoveryTimer(x,mock(ScheduledFuture.class));
+            try{doThrow(new SQLException("outage")).when(x.f.mysql).updateStrict(anyString(),anyList());}catch(SQLException failure){throw new AssertionError(failure);}
+            for(int i=0;i<3;i++)assertThrows(CompletionException.class,()->x.f.user.checkDelayedTimedRewardsAsync().toCompletableFuture().join());
+            assertEquals(1,scheduled.size());scheduled.remove(0).run();assertEquals(1,scheduled.size());
+            AdvancedCoreUser.cancelTimedStorageWakeups(x.f.plugin);
+        });
+    }
+    @Test void coldReadOutageCanRecoverThroughTheSameTimer() {
+        fixture(Collections.emptyList(),x->{
+            List<Runnable> scheduled=recoveryTimer(x,mock(ScheduledFuture.class));
+            HashMap<String,DataValue> values=new HashMap<>();values.put("OfflineRewards",new DataValueString(""));x.f.cache.updateCache(values);
+            try{when(x.f.mysql.getExactStrict(anyString())).thenThrow(new SQLException("cold read"));}catch(SQLException failure){throw new AssertionError(failure);}
+            assertThrows(CompletionException.class,()->x.f.user.checkDelayedTimedRewardsAsync().toCompletableFuture().join());assertEquals(1,scheduled.size());
+            values.put("TimedRewards",new DataValueString(due()));x.f.cache.updateCache(values);
+            when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenReturn(CompletableFuture.completedFuture(null));
+            scheduled.remove(0).run();assertEquals("",pending(x));verify(x.rewards,times(1)).givePersistedQueueRewardAsync(any(),any(),any());
+        });
+    }
+    @Test void malformedMetadataDoesNotCreateARepeatedStorageWakeup() {
+        fixture(Collections.singletonList("missing-date"),x->{List<Runnable> scheduled=recoveryTimer(x,mock(ScheduledFuture.class));assertThrows(CompletionException.class,()->x.f.user.checkDelayedTimedRewardsAsync().toCompletableFuture().join());assertTrue(scheduled.isEmpty());});
+    }
+    @Test void storageWakeupIsCancelledAndCannotRunAfterRetirement() {
+        fixture(Collections.singletonList(due()),x->{
+            ScheduledFuture<?> handle=mock(ScheduledFuture.class);List<Runnable> scheduled=recoveryTimer(x,handle);
+            try{doThrow(new SQLException("outage")).when(x.f.mysql).updateStrict(anyString(),anyList());}catch(SQLException failure){throw new AssertionError(failure);}
+            assertThrows(CompletionException.class,()->x.f.user.checkDelayedTimedRewardsAsync().toCompletableFuture().join());
+            AdvancedCoreUser.cancelTimedStorageWakeups(x.f.plugin);verify(handle).cancel(false);
+            scheduled.remove(0).run();verify(x.rewards,never()).givePersistedQueueRewardAsync(any(),any(),any());
+        });
+    }
+    @Test void retiredRuntimeWakeupDoesNotUseTheReplacementDispatcher() {
+        fixture(Collections.singletonList(due()),x->{
+            List<Runnable> scheduled=recoveryTimer(x,mock(ScheduledFuture.class));
+            try{doThrow(new SQLException("outage")).when(x.f.mysql).updateStrict(anyString(),anyList());}catch(SQLException failure){throw new AssertionError(failure);}
+            assertThrows(CompletionException.class,()->x.f.user.checkDelayedTimedRewardsAsync().toCompletableFuture().join());
+            when(x.f.plugin.getRewardDispatch()).thenReturn(new ServerThreadRewardDispatch(x.f.plugin));
+            scheduled.remove(0).run();assertTrue(scheduled.isEmpty());verify(x.rewards,never()).givePersistedQueueRewardAsync(any(),any(),any());
+        });
+    }
+
     @Test void admissionFailureDoesNotStartEffectsOrLoseItsPredecessor() {
         String original=due();fixture(Collections.singletonList(original),x->{try {doThrow(new SQLException("storage")).when(x.f.mysql).updateStrict(anyString(),anyList());}catch(SQLException failure){throw new AssertionError(failure);}assertThrows(CompletionException.class,()->x.f.user.checkDelayedTimedRewardsAsync().toCompletableFuture().join());assertEquals(original,pending(x));verify(x.rewards,never()).givePersistedQueueRewardAsync(any(),any(),any());});
     }

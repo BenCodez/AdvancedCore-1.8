@@ -2568,3 +2568,51 @@ bulk-wipe concurrency, reload/shutdown ownership and the wider upstream ledger/
 platform matrix still require implementation or acceptance. No end-to-end exactly-
 once guarantee, complete-main claim or independent final review is implied.
 No source push or PR opening is authorized.
+
+
+### Timed admission storage-outage recovery (2026-10-06)
+
+A focused regression first failed against the preceding timed-replay candidate:
+a temporary checked SQL admission failure retained the entry but left no timer
+wakeup. The regression exercises the production delayed-timer callback with a
+controlled scheduler; the recorded failure is one test, one assertion failure,
+zero errors/skips. It now passes without weakening the assertion.
+
+Storage read/admission failures whose cause is SQLException/IOException now keep
+one coalesced wakeup per plugin/user under the existing persisted replay owner.
+The wakeup uses the existing delayed timer and captured dispatcher/runtime; bounded
+exponential backoff matches the existing retry policy. Repeated polls share that
+wakeup. Malformed metadata is not treated as a transient storage outage. Retirement
+cancels pending recovery futures, including a racing future publication; old
+runtime callbacks cannot use a replacement dispatcher. A successfully published
+normal retry does not also create a storage-recovery wakeup.
+
+Only failures before reward effects are admitted use this polling recovery.
+Failures after effects start still need retained-progress publication recovery;
+blindly polling that case could replay committed effects. This cohort does not
+claim that remaining post-effect failure path is repaired.
+
+Focused Java8 tests:20 timed+18 offline=38, zero failures/errors/skips.
+Full Java8 producer clean install:509 unit+18 artifact=527 tests.
+Exact workspace-local dependency consumer clean verify:45 unit+1 artifact=46 tests.
+Both full builds have zero failures/errors/skips. Existing Maven commands and
+workspace-local repository/temp-directory flags above were used unchanged.
+Base classes1832/2449,maxmajor52.
+SHA256: AdvancedCore `6470a918f51141f64a97a60759c2d8696b1906ee0ab0cbbcc155bdfb2cf8726a`;
+VotingPlugin `8237b555e08206e4a607963e73fa430bee806dfaff86b525083868460c1369b6`.
+
+Native Java8/Spigot1.8.8 fixture42c153c29b passed12 checks. A fixture-only SQLite
+trigger rejects updates to the non-empty timed queue. The producer successfully
+appends the entry, then actual timed admission fails. Before removing that trigger,
+the fixture verifies no native injection ran and the physical entry remains. After
+repair, the actual coalesced timer resumes automatically; the existing deliberate
+first injection failure is retried normally. Native effects, physical v3 checkpoint,
+completion removal, exactly3 overflow diamonds after clean restart, SQLite integrity
+and clean shutdown all pass. No production fault-injection hook or dependency was
+added. This proves pre-effect same-process SQL admission recovery, not post-effect
+storage recovery or offline/timed crash recovery.
+
+Remaining full scope includes retained-progress publication after effects, queued
+crash recovery, explicit clear/wipe concurrency, startup cold-read repair, broader
+lifecycle/platform acceptance and the complete pinned upstream ledger. Independent
+final review remains pending. No push or PR opening is authorized.
