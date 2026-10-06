@@ -122,6 +122,10 @@ class LegacyDirectUserDataTest {
             when(manager.getPlugin()).thenReturn(plugin);cache=spy(new UserDataCache(manager,UUID.randomUUID()));
             java.util.concurrent.ConcurrentHashMap<UUID,UserDataCache> registry=new java.util.concurrent.ConcurrentHashMap<>();registry.put(cache.getUuid(),cache);
             when(manager.getUserDataCache()).thenReturn(registry);when(users.getDataManager()).thenReturn(manager);
+            try {
+                java.lang.reflect.Field ownerField=UserDataManager.class.getDeclaredField("plugin");ownerField.setAccessible(true);ownerField.set(manager,plugin);
+                java.lang.reflect.Field registryField=UserDataManager.class.getDeclaredField("userDataCache");registryField.setAccessible(true);registryField.set(manager,registry);
+            } catch(ReflectiveOperationException failure){throw new AssertionError(failure);}
             doCallRealMethod().when(manager).writeDirect(any(),anyString(),any(),any());
             doCallRealMethod().when(manager).writeBatch(any(),anyMap(),any(),anyBoolean());
             doCallRealMethod().when(manager).removeFromStorage(any(),any());

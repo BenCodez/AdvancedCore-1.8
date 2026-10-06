@@ -361,6 +361,7 @@ public class UserData {
 
 	/** One checked storage snapshot; absent identities are empty, failures propagate. */
 	public HashMap<String, DataValue> getValuesStrict() throws SQLException, IOException {
+		try (com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Scope admission = user.getPlugin().getUserStorageOwnership().admit()) {
 		com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot owner = storageOwner();
 		owner.getLock().lock();
 		try {
@@ -368,6 +369,7 @@ public class UserData {
 			return readValuesStrictOwned();
 		}
 		finally { owner.getLock().unlock(); }
+			}
 	}
 
 	private com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot storageOwner() {
@@ -519,6 +521,7 @@ public class UserData {
 	}
 
 	private void writeTypedValue(UserStorage storage, String key, DataValue value, boolean queue, boolean async) {
+		try (com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Scope admission = user.getPlugin().getUserStorageOwnership().admit()) {
 		UserDataCache cache = user.isCached() ? user.getCache() : null;
 		if (queue && cache != null) {
 			if (value instanceof DataValueInt) cache.addChange(new UserDataChangeInt(key, value.getInt()), true);
@@ -533,8 +536,9 @@ public class UserData {
 			};
 			user.getPlugin().getUserManager().getDataManager().writeDirect(user, key, value, storageWrite);
 		};
-		if (async) user.getPlugin().getTimer().execute(write);
+		if (async) user.getPlugin().getUserStorageOwnership().submit(user.getPlugin().getTimer(), write);
 		else write.run();
+			}
 	}
 
 	public void setStringList(final String key, final ArrayList<String> value) {
@@ -589,6 +593,7 @@ public class UserData {
 	/** Checked explicit-storage overload for compatibility setters and converters. */
 	public void setValuesStrict(UserStorage storage, Map<String, DataValue> values) throws SQLException, IOException {
 		if (values.isEmpty()) return;
+		try (com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Scope admission = user.getPlugin().getUserStorageOwnership().admit()) {
 		com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot owner = storageOwner();
 		owner.getLock().lock();
 		try {
@@ -597,6 +602,7 @@ public class UserData {
 				writeValuesStrictOwned(storage, values);
 			} finally { owner.endWrite(); }
 		} finally { owner.getLock().unlock(); }
+			}
 	}
 
 	private void writeValuesStrictOwned(UserStorage storage, Map<String, DataValue> values) throws SQLException, IOException {

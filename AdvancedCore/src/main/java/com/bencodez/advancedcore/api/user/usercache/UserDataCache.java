@@ -54,6 +54,7 @@ public class UserDataCache {
 	}
 
 	public synchronized void addChange(UserDataChange change, boolean queue) {
+		try (UserStorageOwnership.Scope admission = manager.getPlugin().getUserStorageOwnership().admit()) {
 		if (cache == null || cachedChanges == null || removing) {
 			throw new IllegalStateException("User cache is retiring or retired");
 		}
@@ -66,9 +67,11 @@ public class UserDataCache {
 			}
 		}
 
+			}
 	}
 
 	public UserDataCache cache() {
+		try (UserStorageOwnership.Scope admission = manager.getPlugin().getUserStorageOwnership().admit()) {
 		final UUID currentUuid;
 		final long expectedVersion;
 		final HashMap<String, DataValue> before;
@@ -121,6 +124,7 @@ public class UserDataCache {
 		if (!changedKeys.isEmpty()) manager.getPlugin().getUserManager().onChange(user, ArrayUtils.convert(changedKeys));
 		if (!keys.isEmpty()) manager.getPlugin().devDebug("Caching additional keys: " + ArrayUtils.makeStringList(keys));
 		return this;
+			}
 	}
 
 	private ArrayList<String> additionalKeysAndDefaults(HashMap<String, DataValue> refreshed) {
@@ -133,11 +137,14 @@ public class UserDataCache {
 	}
 
 	public void clearCache() {
-		Runnable notification = finishCache(false);
-		if (notification != null) notification.run();
+		try (UserStorageOwnership.Scope admission = manager.getPlugin().getUserStorageOwnership().admit()) {
+			Runnable notification = finishCache(false);
+			if (notification != null) notification.run();
+		}
 	}
 
 	private Runnable finishCache(boolean retire) {
+		try (UserStorageOwnership.Scope admission = manager.getPlugin().getUserStorageOwnership().admit()) {
 		Runnable notification = null;
 		boolean markedRemoval = false;
 		batchOwner.lock();
@@ -165,6 +172,7 @@ public class UserDataCache {
 			batchOwner.unlock();
 		}
 		return notification;
+			}
 	}
 
 	/** Manager holds canonical ownership; return older-prefix notification through its holder. */
@@ -224,8 +232,10 @@ public class UserDataCache {
 	}
 
 	public void dump() {
-		Runnable notification = finishCache(true);
-		if (notification != null) notification.run();
+		try (UserStorageOwnership.Scope admission = manager.getPlugin().getUserStorageOwnership().admit()) {
+			Runnable notification = finishCache(true);
+			if (notification != null) notification.run();
+		}
 	}
 
 	public AdvancedCoreUser getUser() {
@@ -253,11 +263,13 @@ public class UserDataCache {
 	}
 
 	public void processChanges() {
+		try (UserStorageOwnership.Scope admission = manager.getPlugin().getUserStorageOwnership().admit()) {
 		Runnable notification;
 		batchOwner.lock();
 		try { notification = flushClaimedChanges(); }
 		finally { batchOwner.unlock(); }
 		if (notification != null) notification.run();
+			}
 	}
 
 	/** Serialize a direct checked write with queued batches and retirement. */
@@ -282,6 +294,7 @@ public class UserDataCache {
 
 	private DataValue mutateDirectInternal(String key, java.util.function.Function<DataValue, DataValue> transform,
 			java.util.function.Consumer<DataValue> storageWrite, boolean requireValue) {
+		try (UserStorageOwnership.Scope admission = manager.getPlugin().getUserStorageOwnership().admit()) {
 		DataValue committedValue = null;
 		Runnable pendingNotification = null;
 		Runnable directNotification = null;
@@ -336,10 +349,12 @@ public class UserDataCache {
 			}
 		}
 		return committedValue;
+			}
 	}
 
 	/** Publish a checked bulk replacement without adding legacy bulk change callbacks. */
 	public void writeDirectBatch(java.util.Map<String, DataValue> values, Runnable storageWrite) {
+		try (UserStorageOwnership.Scope admission = manager.getPlugin().getUserStorageOwnership().admit()) {
 		HashMap<String, DataValue> candidate = new HashMap<>(values);
 		if (candidate.isEmpty()) return;
 		Objects.requireNonNull(storageWrite, "storageWrite");
@@ -385,6 +400,7 @@ public class UserDataCache {
 				else throw rejected;
 			}
 		}
+			}
 	}
 
 	/** Called only by the batch owner; claims a finite batch under the cache monitor. */
@@ -455,6 +471,8 @@ public class UserDataCache {
 	}
 
 	private synchronized void scheduleChanges() {
+		// A synchronous unload mutation is included in the final owned flush, not a stopped timer.
+		if (manager.getPlugin().getUserStorageOwnership().isFinalFlush()) return;
 		if (scheduled || cachedChanges == null || cachedChanges.isEmpty()) {
 			return;
 		}

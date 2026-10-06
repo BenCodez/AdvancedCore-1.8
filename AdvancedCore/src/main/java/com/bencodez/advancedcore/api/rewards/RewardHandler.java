@@ -2927,15 +2927,21 @@ public class RewardHandler {
 		}
 	}
 
+	/** Stop submissions before other plugin producers are awaited. */
+	public void stopSubmittingDelayedRewards() {
+		if (repeatTimer != null) repeatTimer.cancel();
+		if (delayedTimer != null) delayedTimer.shutdown();
+	}
+
 	public void shutdown() {
-		delayedTimer.shutdown();
+		stopSubmittingDelayedRewards();
+		if (delayedTimer == null) return;
 		try {
-			delayedTimer.awaitTermination(10, TimeUnit.SECONDS);
-		} catch (InterruptedException e) {
-			e.printStackTrace();
+			if (!delayedTimer.awaitTermination(10, TimeUnit.SECONDS)) throw new IllegalStateException("Delayed reward work has not settled; storage provider remains open");
+		} catch (InterruptedException interrupted) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("Delayed reward shutdown interrupted; storage provider remains open", interrupted);
 		}
-		delayedTimer.shutdownNow();
-		repeatTimer.cancel();
 	}
 
 	public void sortInjectedRequirements() {

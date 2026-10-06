@@ -899,42 +899,68 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 		advancedCoreBuildNumber = conf.getString("buildnumber", "NOTSET");
 	}
 
+	/** Stop subclass producers while the shared storage executor is still available. */
+	public void onPreUnLoad() {
+	}
+
 	@Override
 	public void onDisable() {
-		rewardDispatch.close();
-
-		if (getOptions().getStorageType().equals(UserStorage.MYSQL)) {
-			getMysql().close();
-		}
-		getServerDataFile().setLastUpdated();
-		timer.shutdown();
-		loginTimer.shutdown();
-		timeChecker.getTimer().shutdown();
-		inventoryTimer.shutdown();
-		try {
-			getLogger().info("Allowing background tasks to finish, this could take up to 5 seconds");
-			loginTimer.awaitTermination(2, TimeUnit.SECONDS);
-			timer.awaitTermination(2, TimeUnit.SECONDS);
-			timeChecker.getTimer().awaitTermination(2, TimeUnit.SECONDS);
-			inventoryTimer.awaitTermination(1, TimeUnit.SECONDS);
-		} catch (InterruptedException e) {
-			debug(e);
-		}
-		rewardHandler.shutdown();
-		loginTimer.shutdownNow();
-		timer.shutdownNow();
-		inventoryTimer.shutdownNow();
-		timeChecker.getTimer().shutdownNow();
-		onUnLoad();
-		getSkullCacheHandler().close();
-		fullInventoryHandler.save();
+		if (rewardDispatch != null) rewardDispatch.close();
+		if (rewardHandler != null) rewardHandler.stopSubmittingDelayedRewards();
+		onPreUnLoad();
+		if (rewardHandler != null) rewardHandler.shutdown();
+		if (serverDataFile != null) serverDataFile.setLastUpdated();
+		ScheduledExecutorService timeTimer = timeChecker == null ? null : timeChecker.getTimer();
+		ScheduledExecutorService cacheTimer = userManager == null || userManager.getDataManager() == null
+				? null : userManager.getDataManager().getTimer();
+		shutdownProducer(loginTimer);
+		shutdownProducer(timeTimer);
+		shutdownProducer(inventoryTimer);
+		shutdownProducer(cacheTimer);
+		long started = System.nanoTime();
+		long grace = TimeUnit.SECONDS.toNanos(5);
+		getLogger().info("Allowing accepted background work to finish before storage retirement");
+		// Producer tasks may submit storage work; keep the shared timer open until they settle.
+		awaitProducer(loginTimer, started, grace, "login");
+		awaitProducer(timeTimer, started, grace, "time checker");
+		awaitProducer(inventoryTimer, started, grace, "inventory");
+		awaitProducer(cacheTimer, started, grace, "user cache");
+		shutdownProducer(timer);
+		awaitProducer(timer, started, grace, "shared storage");
+		long remaining = Math.max(0L, grace - (System.nanoTime() - started));
+		userStorageOwnership.retire(remaining, TimeUnit.NANOSECONDS, () -> {
+			onUnLoad();
+			if (userManager != null && userManager.getDataManager() != null) userManager.getDataManager().clearCacheForShutdown();
+		}, () -> {
+			if (mysql != null) mysql.close();
+			if (database != null && database.getDB() != null) {
+				java.sql.Connection connection = database.getDB().getConnection();
+				if (connection != null) try { connection.close(); }
+				catch (java.sql.SQLException failure) { throw new IllegalStateException("SQLite provider close was not acknowledged", failure); }
+			}
+		});
+		if (skullCacheHandler != null) skullCacheHandler.close();
+		if (fullInventoryHandler != null) fullInventoryHandler.save();
 		unRegisterValueRequest();
-
-		if (getPermissionHandler() != null) {
-			getPermissionHandler().shutDown();
-		}
-
+		if (permissionHandler != null) permissionHandler.shutDown();
 		javaPlugin = null;
+	}
+
+	private static void shutdownProducer(ScheduledExecutorService executor) {
+		if (executor != null) executor.shutdown();
+	}
+
+	private static void awaitProducer(ScheduledExecutorService executor, long started, long grace, String name) {
+		if (executor == null || executor.isTerminated()) return;
+		long remaining = Math.max(0L, grace - (System.nanoTime() - started));
+		try {
+			if (!executor.awaitTermination(remaining, TimeUnit.NANOSECONDS)) {
+				throw new IllegalStateException("The " + name + " executor has not settled; storage provider remains open");
+			}
+		} catch (InterruptedException interrupted) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("Shutdown interrupted; storage provider remains open", interrupted);
+		}
 	}
 
 	@Override

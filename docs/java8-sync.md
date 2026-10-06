@@ -956,3 +956,76 @@ strict reward queue provenance/checkpoint/replay/root deferral and the full
 upstream ledger are incomplete. The current live acceptance is SQLite-only;
 full live MySQL/FLAT/proxy and failed-shutdown acceptance remain to be completed.
 The entire backport and final independent review are not yet ready for PRs.
+
+
+### Native storage admission and shutdown drain (partial lifecycle backport)
+
+The existing plugin-local UUID owner now also tracks accepted checked operations
+with a counter and nested thread scope. Async typed setters reserve before executor
+submission and release only when their physical body settles; rejection and body
+failure release exactly once. Retirement seals new root admission, waits with a
+monotonic caller deadline, permits only retiring-thread synchronous final writes,
+and closes providers after an acknowledged final flush. Failure/interruption stays
+visible and leaves the provider open; explicit retry is supported. No monitor is
+held across UUID ownership, I/O or callbacks. Final cache retirement suppresses
+change notifications, retains failed pending data, and removes only acknowledged
+generations. Ordinary cache clear/dump/manager retirement notifications remain
+inside admission but outside UUID ownership; a callback cannot retire its own work.
+
+AdvancedCore adds a default no-op onPreUnLoad hook, stops known producers while
+keeping their shared storage executor available, drains them, then drains that
+executor and flushes caches before closing initialized MySQL/SQLite providers.
+Partial startup avoids lazy manager/connection creation. False await results and
+interruption no longer become apparent success or shutdownNow on accepted work.
+VotingPlugin uses the prehook to stop legacy socket ingress/global producers and
+await vote work before its final unload/provider cleanup. Existing reward/global/
+vote wait bounds remain 10/5/1 seconds; core producers share a 5-second grace.
+These bounds can report failure; they are not permission to close under live work.
+
+Live acceptance exposed an important delayed-task distinction: voteTimer retained
+TimeQueueHandler's 120-second startup processor wake-up after shutdown. The initial
+DrainNativeSQL process exited 0 but Bukkit logged disable failures on both runs.
+Its evidence was corrected to FAIL, and the fixture now rejects disable errors.
+The fix cancels only owned delayed queue wake-ups with cancel(false), retains
+actual votes for the existing save path, and still awaits executor termination
+for any running body. It does not cancel queued immediate vote submissions or
+alter ScheduledExecutorService's global delayed-task shutdown policy. Wake-up
+handles track the existing pending scheduler tasks, not a second vote queue.
+
+New tests cover actual native disable ordering, failed flush/retry, timeout,
+interruption, partial startup, producer-to-storage submission, final synchronous
+unload writes, admission accounting and notification ownership. Real Java 8
+scheduled-executor tests prove delayed wake-up cancellation, physical running-body
+fencing, accepted immediate-work completion, retained vote payloads, and rejected
+late date-change wake-ups. The notification test failed before the guard fix.
+Final Java 8 builds pass AdvancedCore 250 unit + 16 artifact tests and VotingPlugin
+28 unit + 1 artifact test, all zero failures/errors/skips, maximum base major 52.
+Commands used the dedicated workspace Maven repository/temp directory, wagon
+transport, Temurin 1.8.0_504 and Maven 3.9.9: AdvancedCore/pom.xml clean install,
+then VotingPlugin/pom.xml clean verify against that exact producer artifact.
+Evidence: native-admission-final-build-results.json and corresponding build logs.
+
+Exact final consumer SHA256
+7a833c943b731f40fe275d9e1c0a2aaf995e58513a5fc8c0fce974ba1ba9b0fd
+passes real Spigot 1.8.8 / Java 8 DrainNotifySQL SQLite acceptance: packaged async
+receipt, checked reward snapshot, mutation, uncached write/repopulation, bulk,
+removal, vote/reward, points10/total1, clean disable on both runs, integrity and
+restart persistence. Logs were separately inspected for disable, linkage,
+rejected-executor, unsettled-work and retired-admission errors; none observed.
+This is SQLite-only clean shutdown evidence, not live failed-shutdown/MySQL/FLAT/
+proxy acceptance. The earlier DrainFixedSQL candidate also passed but does not
+prove the later notification-guard candidate.
+
+Remaining lifecycle work is explicit: raw legacy backend APIs and the mutable
+cache map can bypass admission; provider replacement, global wipes/migrations,
+same-instance disable/re-enable and hot recovery remain unaudited. Producer drain
+failure before storage retirement keeps shared admission/provider available for
+already queued raw jobs, rather than claiming a global seal. Long delayed rewards
+can still exceed their bound; durable root deferral/checkpoint/replay is incomplete.
+BungeeHandler.loadGlobalMysql still ignores its old await result and uses
+shutdownNow during reload. Its borrowed GlobalMySQL wrapper also unconditionally
+disconnects the main pool: GlobalData.UseMainMySQL needs captured provider ownership
+before global cleanup can be claimed safe alongside core final cache flush. Redis/
+MQTT transport producer retirement needs inspection. No full lifecycle/main parity,
+full upstream ledger, final independent-review result or PR readiness is claimed.
+No production dependency, config key/default, schema, wire or version changed.

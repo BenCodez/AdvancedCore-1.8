@@ -88,6 +88,7 @@ public class UserDataManager {
 	}
 
 	private UserDataCache getOrPopulate(UUID uuid) {
+		try (UserStorageOwnership.Scope admission = getPlugin().getUserStorageOwnership().admit()) {
 		UserDataCache current = userDataCache.get(uuid);
 		if (current != null && !current.isRetired()) return current;
 		UserStorageOwnership.Slot owner = plugin.getUserStorageOwnership().owner(uuid);
@@ -105,6 +106,7 @@ public class UserDataManager {
 			return userDataCache.compute(uuid, (key, registered) ->
 					registered == null || registered.isRetired() ? prepared : registered);
 		} finally { owner.getLock().unlock(); }
+			}
 	}
 
 	public void cacheUserIfNeeded(UUID uuid) {
@@ -120,7 +122,20 @@ public class UserDataManager {
 		}
 	}
 
+	/** Final shutdown cannot deliver change notifications that admit new work. */
+	public void clearCacheForShutdown() {
+		getPlugin().getUserStorageOwnership().requireFinalFlush();
+		for (java.util.Map.Entry<UUID, UserDataCache> entry : new ArrayList<>(getUserDataCache().entrySet())) {
+			retire(entry.getKey(), entry.getValue(), false);
+		}
+	}
+
 	private void retire(UUID uuid, UserDataCache cache) {
+		retire(uuid, cache, true);
+	}
+
+	private void retire(UUID uuid, UserDataCache cache, boolean notify) {
+		try (UserStorageOwnership.Scope admission = getPlugin().getUserStorageOwnership().admit()) {
 		UserStorageOwnership.Slot owner = plugin.getUserStorageOwnership().owner(uuid);
 		Runnable notification;
 		owner.getLock().lock();
@@ -128,12 +143,14 @@ public class UserDataManager {
 			notification = cache.retireForManager();
 			userDataCache.remove(uuid, cache);
 		} finally { owner.getLock().unlock(); }
-		if (notification != null) notification.run();
+		if (notify && notification != null) notification.run();
+		}
 	}
 
 	/** Resolve cached/uncached ownership at execution, not asynchronous admission. */
 	public void writeDirect(com.bencodez.advancedcore.api.user.AdvancedCoreUser user, String key,
 			com.bencodez.simpleapi.sql.data.DataValue value, Runnable storageWrite) {
+		try (UserStorageOwnership.Scope admission = getPlugin().getUserStorageOwnership().admit()) {
 		UUID identity = UUID.fromString(user.getUUID());
 		UserStorageOwnership.Slot owner = getPlugin().getUserStorageOwnership().owner(identity);
 		UserDataCache current;
@@ -147,12 +164,14 @@ public class UserDataManager {
 		// Releasing before this call keeps notifications outside ownership.
 		// If retirement wins this gap, the retired handle rejects visibly.
 		else current.writeDirect(key, value, storageWrite);
+			}
 	}
 
 	/** Bulk writes preserve the legacy absence of their own change notification. */
 	public void writeBatch(com.bencodez.advancedcore.api.user.AdvancedCoreUser user,
 			java.util.Map<String, com.bencodez.simpleapi.sql.data.DataValue> values,
 			Runnable storageWrite, boolean publishActiveCache) {
+		try (UserStorageOwnership.Scope admission = getPlugin().getUserStorageOwnership().admit()) {
 		if (values.isEmpty()) return;
 		java.util.Objects.requireNonNull(storageWrite, "storageWrite");
 		UUID identity = UUID.fromString(user.getUUID());
@@ -165,10 +184,12 @@ public class UserDataManager {
 			if (current == null) storageWrite.run();
 		} finally { owner.getLock().unlock(); }
 		if (current != null) current.writeDirectBatch(values, storageWrite);
+			}
 	}
 
 	/** Flush and delete one identity before retiring its active cache generation. */
 	public void removeFromStorage(com.bencodez.advancedcore.api.user.AdvancedCoreUser user, Runnable storageDelete) {
+		try (UserStorageOwnership.Scope admission = getPlugin().getUserStorageOwnership().admit()) {
 		java.util.Objects.requireNonNull(storageDelete, "storageDelete");
 		UUID identity = UUID.fromString(user.getUUID());
 		UserStorageOwnership.Slot owner = getPlugin().getUserStorageOwnership().owner(identity);
@@ -194,6 +215,7 @@ public class UserDataManager {
 				else throw rejected;
 			}
 		}
+			}
 	}
 
 	public void clearCacheBasic() {
