@@ -49,8 +49,10 @@ the producer directory failed because its POM path did not exist; its separate
 log is retained. The correctly located consumer build passed.
 
 This does not complete the shared user runtime/cache adapter, generation gates,
-owned MySQL backend, native prepared-definition integration, or the full upstream
-change ledger. Those remain required work; the presence of these classes must
+owned MySQL backend or the full upstream change ledger. Those remain required
+work. Prepared catalog/keyed-action integration was explicitly removed upstream
+by `3a85ec26ea7b9654b6368fbba443884c715b5723`; see
+`upstream-prepared-reward-removal.md`. The presence of these classes must
 not be used as evidence that native Bukkit rewards use this orchestrator.
 
 Exact final results: 776 unit + 78 artifact = 854 producer tests PASS;
