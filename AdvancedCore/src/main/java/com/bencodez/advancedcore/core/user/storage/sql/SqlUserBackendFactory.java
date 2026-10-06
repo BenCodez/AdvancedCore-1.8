@@ -60,4 +60,42 @@ public final class SqlUserBackendFactory {
         }
         return new JdbcSqlUserStorage(storage, uuid, tableName, schema, connections::open, dialect, logger);
     }
+
+    /**
+     * Checked adapter for a legacy SimpleAPI MySQL/MariaDB pool. A closed pool
+     * is unavailable; this path never uses getConnection()'s reopen/null fallback.
+     * The platform still owns lifecycle admission, schema and native cache fencing.
+     */
+    public static SqlUserStorage existingMysqlUser(UUID uuid, String tableName, SqlUserSchema schema,
+            com.bencodez.simpleapi.sql.mysql.MySQL mysql, DatabaseType databaseType, SqlBackendLogger logger) {
+        Objects.requireNonNull(mysql, "mysql");
+        Objects.requireNonNull(databaseType, "databaseType");
+        if (databaseType == DatabaseType.POSTGRESQL) {
+            throw new IllegalArgumentException("Legacy MySQL provider cannot select PostgreSQL; supply an explicit connection opener");
+        }
+        return existingUser(UserStorage.MYSQL, uuid, tableName, schema,
+                () -> openLegacyMysqlConnection(mysql), databaseType, logger);
+    }
+
+    private static Connection openLegacyMysqlConnection(com.bencodez.simpleapi.sql.mysql.MySQL mysql)
+            throws SQLException {
+        com.bencodez.simpleapi.sql.mysql.ConnectionManager manager = mysql.getConnectionManager();
+        if (manager == null) throw new SQLException("MySQL connection manager is unavailable");
+        if (manager.isClosed()) throw new SQLException("MySQL connection pool is unavailable");
+        // The legacy method's concrete return type is Java 11 in the compile
+        // dependency. Packaging replaces it with the verified Java 8 pool.
+        // Reflect only this fixed public getter; use the standard JDBC contract.
+        Object value;
+        try {
+            value = com.bencodez.simpleapi.sql.mysql.ConnectionManager.class
+                    .getMethod("getDataSource").invoke(manager);
+        } catch (ReflectiveOperationException accessFailure) {
+            throw new SQLException("Cannot access legacy MySQL connection pool", accessFailure);
+        }
+        if (!(value instanceof javax.sql.DataSource)) throw new SQLException("MySQL connection pool is unavailable");
+        Connection connection = ((javax.sql.DataSource) value).getConnection();
+        if (connection == null) throw new SQLException("MySQL connection is unavailable");
+        return connection;
+    }
+
 }
