@@ -428,7 +428,57 @@ public class Reward {
 	 * @param rewardOptions rewardOptions
 	 */
 	public void giveRewardUser(AdvancedCoreUser user, HashMap<String, String> phs, RewardOptions rewardOptions) {
+		RewardOptions effectiveOptions = rewardOptions == null ? new RewardOptions() : rewardOptions;
+		if (hasAsyncRewardInjection()) {
+			giveRewardUserAsync(user, phs, effectiveOptions).exceptionally(failure -> {
+				plugin.getLogger().log(java.util.logging.Level.WARNING, "Failed asynchronous reward delivery", failure);
+				return null;
+			});
+			return;
+		}
+		HashMap<String, String> placeholders = prepareRewardUser(user, phs);
+		if (placeholders == null) return;
+		giveInjectedRewards(user, placeholders);
+		finishRewardUser(user, effectiveOptions);
+	}
 
+	/** Await opted-in effects and schedule repeats only after successful completion. */
+	public CompletionStage<Void> giveRewardUserAsync(AdvancedCoreUser user, HashMap<String, String> phs,
+			RewardOptions rewardOptions) {
+		HashMap<String, String> requested = phs == null ? new HashMap<>() : new HashMap<>(phs);
+		RewardOptions options = rewardOptions == null ? new RewardOptions() : rewardOptions.copyForDispatch();
+		ServerThreadRewardDispatch owner = plugin.getRewardDispatch();
+		return owner.dispatch(() -> {
+			HashMap<String, String> placeholders = prepareRewardUser(user, requested);
+			if (placeholders == null) {
+				CompletableFuture<Void> unavailable = new CompletableFuture<>();
+				unavailable.completeExceptionally(new IllegalStateException("Player unavailable before asynchronous reward delivery"));
+				return unavailable;
+			}
+			return giveInjectedRewardsAsyncOwned(user, placeholders, owner)
+					.thenCompose(ignored -> owner.dispatch(() -> {
+						finishRewardUser(user, options);
+						return CompletableFuture.<Void>completedFuture(null);
+					}, getServerThreadDispatchTimeoutMillis()));
+		}, getServerThreadDispatchTimeoutMillis());
+	}
+
+	private boolean hasAsyncRewardInjection() {
+		for (RewardInject inject : plugin.getRewardHandler().getInjectedRewards()) {
+			if (inject.supportsAsyncRequest() && (!inject.requiresConfiguredDataForAsync()
+					|| inject.isAlwaysForceNoData() || getConfig().getConfigData().contains(inject.getPath()))) return true;
+		}
+		return false;
+	}
+
+	private void finishRewardUser(AdvancedCoreUser user, RewardOptions options) {
+		plugin.debug("Gave " + user.getPlayerName() + " reward " + name);
+		if (options.isCheckRepeat() && repeatHandle.isEnabled() && !repeatHandle.isRepeatOnStartup()) {
+			repeatHandle.giveRepeat(plugin, user);
+		}
+	}
+
+	private HashMap<String, String> prepareRewardUser(AdvancedCoreUser user, HashMap<String, String> phs) {
 		Player player = user.getPlayer();
 		if (player == null) {
 			player = Bukkit.getPlayer(user.getPlayerName());
@@ -456,20 +506,12 @@ public class Reward {
 				}
 			}
 
-			final HashMap<String, String> placeholders = new HashMap<>(phs);
+			return new HashMap<>(phs);
 
-			giveInjectedRewards(user, placeholders);
-
-			plugin.debug("Gave " + user.getPlayerName() + " reward " + name);
-
-			if (rewardOptions.isCheckRepeat()) {
-				if (repeatHandle.isEnabled() && !repeatHandle.isRepeatOnStartup()) {
-					repeatHandle.giveRepeat(plugin, user);
-				}
-			}
 		} else {
 			plugin.debug(getRewardName() + ": Player == null & forceoffline false, player: " + user.getPlayerName()
 					+ "/" + user.getUUID());
+			return null;
 		}
 	}
 

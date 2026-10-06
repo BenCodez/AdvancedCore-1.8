@@ -583,3 +583,45 @@ No exception/linkage/checked-write failure markers appear in first/restart
 logs. Evidence checked-cache-runtime-results-RewardPipeSQL.json. Fixture-only
 acceptance jar removed and all owned fixture processes stopped. This is not
 MySQL/FLAT/proxy/failed-shutdown or durable queued-replay acceptance.
+
+## Awaited user delivery and caller-state isolation
+
+The established giveRewardUser now routes applicable opted-in injections
+through giveRewardUserAsync. Ordinary synchronous injections keep the legacy
+inline path; an async feature requiring absent configuration does not move
+unrelated rewards to that path. Player/UUID/display placeholders are prepared
+on the captured Bukkit owner. The returned stage waits for injection and
+post-reward settlement before success notification and repeat scheduling.
+Failures or unavailable players do not schedule repeats. Existing config
+ForceOffline handling, RepeatOnStartup and CheckRepeat behavior are retained.
+
+Caller placeholders and all existing RewardOptions fields are copied before
+admission, including CheckRepeat and the unset OnlineSet distinction. The
+copy does not share mutable maps or insert a new Server placeholder. Existing
+public option signatures and serialized/configuration/data/wire formats stay
+unchanged. Null user-delivery options use defaults. Ordinary legacy callbacks
+still have their logged exception-isolation contract; hidden scheduled work
+is not made durable by this bridge.
+
+Seven added user-delivery tests plus a complete legacy option-copy regression
+pass. ActualJava8 producer clean install169unit+12artifact and exactconsumer
+clean verify19unit+1artifact, all zero failures/errors/skips; base major<=52.
+Evidence reward-user-build-results.json and paired clean build logs.
+
+Root giveRewardAsync/event/requirements/deferral and checked queue persistence
+still require integration. PlayerRewardEvent declares an asynchronous event;
+it must remain off-primary while Bukkit state phases use the owner. Deferred
+snapshot/file and queue writes need their own checked acknowledgements, not
+completion inferred from existing void addOfflineRewards. Native async action
+receipts, persisted provenance/checkpoints/replay, global storage lifecycle
+and generated snapshot quarantine remain incomplete. Temp-cache player-name
+lookup may read storage; the coordinated root preflight must resolve this
+off-owner before live preparation. No complete durability/backport claim.
+
+Exactconsumer8c7f497a... passes actualJava8/Spigot1.8.8 packaged
+giveRewardUserAsync with dynamic player/UUID placeholders, worker settlement
+and owner completion. RewardUserSQL vote/reward,points10,total1,stop/restart
+pass; logs show no exception/linkage/checked-write failure markers. Evidence
+checked-cache-runtime-results-RewardUserSQL.json. Fixture-only jar removed,
+owned processes stopped. Not MySQL/FLAT/proxy/failed-shutdown/queued-replay
+acceptance. The full upstream commit remains partial.

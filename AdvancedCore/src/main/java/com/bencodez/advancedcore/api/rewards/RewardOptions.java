@@ -49,6 +49,26 @@ public class RewardOptions {
 	public RewardOptions() {
 	}
 
+	/** Copy one dispatch's mutable options before crossing a scheduler boundary. */
+	RewardOptions copyForDispatch() {
+		RewardOptions copy = new RewardOptions();
+		copy.checkRepeat = checkRepeat;
+		copy.checkTimed = checkTimed;
+		copy.forceOffline = forceOffline;
+		copy.giveOffline = giveOffline;
+		copy.ignoreChance = ignoreChance;
+		copy.ignoreRequirements = ignoreRequirements;
+		copy.online = online;
+		copy.onlineSet = onlineSet;
+		copy.placeholders = new HashMap<>(placeholders);
+		copy.prefix = prefix;
+		copy.server = server;
+		copy.suffix = suffix;
+		copy.useDefaultWorlds = useDefaultWorlds;
+		copy.orginalTrigger = orginalTrigger;
+		return copy;
+	}
+
 	public RewardOptions addPlaceholder(String arg1, String arg2) {
 		getPlaceholders().put(arg1, arg2);
 		return this;
