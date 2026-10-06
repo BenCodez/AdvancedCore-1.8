@@ -2507,3 +2507,64 @@ queue and has not been redesigned; disappearance now rejects a checkpoint instea
 of silently permitting the next effect. No claim of end-to-end exactly-once effects.
 The complete upstream ledger, other platform matrix and independent final review
 remain unfinished. No source push or PR opening is authorized.
+
+## Production timed replay and actual delayed-timer retry
+
+Timed producer and dispatcher now use the same per-plugin/per-UUID serial owner as
+offline replay. A due entry receives a durable occurrence before effects, retains
+its existing %ExecutionTime/% encoding and execution date, and checkpoints only
+its own current key. Completion removes that occurrence after awaited effects;
+new appends survive checkpoints/removal. New admissions retain generated snapshot
+provenance and use UUIDs so equal reward/due-time admissions remain distinct.
+Owner-thread void admissions schedule checked writes off-owner; the async receipt
+checkDelayedTimedRewardsAsync covers the work admitted by that poll.
+
+Failure retains progress/occurrence, physically publishes a retry date/count and
+requests the existing delayed timer only after publication. The exponential policy
+is adapted from pinned main (count capped8, delay bounded5minutes); the existing
+500ms timer margin is retained. Deferred durable work stays in the timed queue
+rather than creating a second offline entry. Future and zero-date entries do not
+run. Invalid dates/retry metadata and duplicate timed keys/occurrences fail before
+effects. Reference marker handling excludes placeholders; the ordinary public
+getTimedRewards reader also uses the final execution-date delimiter so marker text
+inside placeholder values cannot confuse startup scheduling.
+
+Fourteen new focused regressions cover pending retention, active polling, shared
+offline/timed serialization, future/zero dates, retry publication/scheduling,
+checkpoint/removal with a new append, malformed/cold reads, admission/checkpoint
+write failures, notification-after-commit failures, equal admission dates, literal
+markers in placeholders and duplicate legacy keys. The first8 plus existing18
+focused replay tests pass(26); the final14 pass in the complete suite. There were
+no compilation/test/runtime failures in this cohort.
+
+Actual Java8 build commands (Temurin8u504; workspace-local dependencies/tmpdir):
+
+- mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install
+- mvn -B -f VotingPlugin/pom.xml with the same properties clean verify
+- same producer properties, -Dtest=LegacyTimedQueueReplayTest,LegacyOfflineQueueReplayTest test
+
+Final full builds:503 unit+18 artifact(521) AdvancedCore tests;45 unit+1 artifact(46)
+VotingPlugin tests, zero failures/errors/skips. Base classes1831/2448,maxmajor52.
+SHA256: AdvancedCore `588aab8d550daf5a22877bbf76f3ce8b7feb4a7d8d67f6569d51ff2533c8c659`;
+VotingPlugin `9f99dea335cd258ff2f849e869a0c0f5ec0b577173b1ad09e1efea7d457208b6`.
+
+Native Java8/Spigot1.8.8 fixture429dee82a2 uses the actual timed producer and delayed
+timer. Its first injection deliberately fails before any native effect. The timer
+retries the same occurrence; the successful attempt gives7 experience, a potion
+and3 diamonds once. An independent checked SQL read observes the timed occurrence
+and v3 checkpoint before completion; a later checked read verifies removal. The
+connected client receives exactly3 overflow diamonds after clean restart. All11
+checks pass, including generated user restriction, SQLite integrity and clean
+shutdown. Earlier fixturee9d65060bd passed on the earlier candidate; the final
+fixture above belongs to the final artifact.
+
+Recovery remains incomplete. If retry-state publication itself fails, the original
+entry is retained, but a later same-process timer wakeup is not guaranteed. Add a
+bounded/coalesced storage-outage retry under the existing timer/owner after proving
+that path. Offline/timed crash recovery, partial native-effect restart, queue clear/
+bulk-wipe concurrency, reload/shutdown ownership and the wider upstream ledger/
+platform matrix still require implementation or acceptance. No end-to-end exactly-
+once guarantee, complete-main claim or independent final review is implied.
+No source push or PR opening is authorized.

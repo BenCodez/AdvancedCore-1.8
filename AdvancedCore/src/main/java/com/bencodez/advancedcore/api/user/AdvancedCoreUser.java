@@ -62,9 +62,9 @@ public class AdvancedCoreUser {
     private static final String ASYNC_PROGRESS_DELIMITER="%asyncprogress%";
     private static final String ASYNC_RETRY_DELIMITER="%asyncretry%";
     private static final String ASYNC_OCCURRENCE_DELIMITER="%asyncoccurrence%";
-    private static final Object OFFLINE_CLAIMS_LOCK=new Object();
-    private static final java.util.WeakHashMap<AdvancedCorePlugin,HashMap<String,OfflineReplayClaims>> OFFLINE_CLAIMS=new java.util.WeakHashMap<>();
-    private static final class OfflineReplayClaims {
+    private static final Object REPLAY_CLAIMS_LOCK=new Object();
+    private static final java.util.WeakHashMap<AdvancedCorePlugin,HashMap<String,PersistedReplayClaims>> REPLAY_CLAIMS=new java.util.WeakHashMap<>();
+    private static final class PersistedReplayClaims {
         final HashSet<String> occurrences=new HashSet<>();
         final HashMap<String,Integer> legacy=new HashMap<>();
         CompletableFuture<Void> tail=CompletableFuture.completedFuture(null);
@@ -722,9 +722,9 @@ public class AdvancedCoreUser {
         pending.add(added);
         while(String.join("%line%",pending).getBytes(StandardCharsets.UTF_8).length>65535) {
             int removable=-1;
-            synchronized(OFFLINE_CLAIMS_LOCK) {
-                HashMap<String,OfflineReplayClaims> users=OFFLINE_CLAIMS.get(plugin);
-                OfflineReplayClaims claims=users==null?null:users.get(getUUID());
+            synchronized(REPLAY_CLAIMS_LOCK) {
+                HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);
+                PersistedReplayClaims claims=users==null?null:users.get(getUUID());
                 for(int i=0;i<pending.size()-1;i++) {
                     String candidate=pending.get(i),id=occurrenceId(candidate);
                     boolean active=claims!=null && (id==null?claims.legacy.getOrDefault(candidate,0)>0:claims.occurrences.contains(id));
@@ -883,14 +883,14 @@ public class AdvancedCoreUser {
 				+ Base64.getUrlEncoder().withoutPadding().encodeToString(encoded.toString().getBytes(StandardCharsets.UTF_8));
 	}
 
-	private static String stripTimedExecutionMarker(String storedReference) {
-		int marker = storedReference.indexOf("%extime%");
-		if (marker < 0) return stripAsyncRetryMarker(storedReference);
-		int valueStart = marker + "%extime%".length();
-		int nextMarker = storedReference.indexOf('%', valueStart);
-		return stripAsyncRetryMarker(storedReference.substring(0, marker)
-				+ (nextMarker < 0 ? "" : storedReference.substring(nextMarker)));
-	}
+    private static String stripTimedExecutionMarker(String storedReference) {
+        int placeholders=storedReference.indexOf("%placeholders%");
+        String suffix=placeholders<0?"":storedReference.substring(placeholders);
+        String reference=placeholders<0?storedReference:storedReference.substring(0,placeholders);
+        int marker=reference.indexOf("%extime%");
+        if(marker>=0){int next=reference.indexOf('%',marker+"%extime%".length());reference=reference.substring(0,marker)+(next<0?"":reference.substring(next));}
+        return stripAsyncRetryMarker(reference)+suffix;
+    }
 
 	private static String stripAsyncRetryMarker(String storedReference) {
 		int marker = storedReference.indexOf(ASYNC_RETRY_DELIMITER);
@@ -900,14 +900,14 @@ public class AdvancedCoreUser {
 		return storedReference.substring(0, marker) + (nextMarker < 0 ? "" : storedReference.substring(nextMarker));
 	}
 
-	private static int asyncRetryCount(String rewardEntry) {
-		int marker = rewardEntry.indexOf(ASYNC_RETRY_DELIMITER);
-		if (marker < 0) return 0;
-		int valueStart = marker + ASYNC_RETRY_DELIMITER.length();
-		int nextMarker = rewardEntry.indexOf('%', valueStart);
-		try { return Integer.parseInt(rewardEntry.substring(valueStart, nextMarker < 0 ? rewardEntry.length() : nextMarker)); }
-		catch (NumberFormatException ignored) { return 0; }
-	}
+    private static int asyncRetryCount(String rewardEntry) {
+        int placeholders=rewardEntry.indexOf("%placeholders%");
+        if(placeholders>=0)rewardEntry=rewardEntry.substring(0,placeholders);
+        int marker=rewardEntry.indexOf(ASYNC_RETRY_DELIMITER);if(marker<0)return 0;
+        int start=marker+ASYNC_RETRY_DELIMITER.length(),end=rewardEntry.indexOf('%',start);
+        int count=Integer.parseInt(rewardEntry.substring(start,end<0?rewardEntry.length():end));
+        if(count<0 || count>8)throw new IllegalArgumentException("Invalid timed retry count");return count;
+    }
 
 	private static String withAsyncRetryCount(String rewardEntry, int count) {
 		int placeholders = rewardEntry.indexOf("%placeholders%");
@@ -992,15 +992,18 @@ public class AdvancedCoreUser {
 		plugin.getPermissionHandler().addPermission(player, permission, delay);
 	}
 
-	public synchronized void addTimedReward(Reward reward, HashMap<String, String> placeholders, long epochMilli) {
-		HashMap<String, Long> timed = getTimedRewards();
-		String rewardName = reward.getRewardName();
-		rewardName += "%extime%" + System.currentTimeMillis();
+    public void addTimedReward(Reward reward,HashMap<String,String> placeholders,long epochMilli) {
+        if(epochMilli<0)throw new IllegalArgumentException("Negative timed reward date");
+        final String key=queuedRewardReference(reward)+"%extime%"+System.currentTimeMillis()+"%placeholders%"+ArrayUtils.makeString(placeholders);
+        Runnable append=()->{mutateTimedQueue(pending->{pending.add(encodeTimedEntry(key,epochMilli));return pending;});loadTimedDelayedTimer(epochMilli);};
+        if(Bukkit.isPrimaryThread()) {
+            ServerThreadRewardDispatch owner=plugin.getRewardDispatch();
+            if(owner==null)throw new IllegalStateException("Reward dispatcher unavailable for timed admission");
+            owner.dispatchOffPrimary(()->{append.run();return CompletableFuture.<Void>completedFuture(null);},TimeUnit.SECONDS.toMillis(30))
+                .whenComplete((ignored,failure)->{if(failure!=null)plugin.getLogger().warning("Timed reward admission failed: "+failure.getMessage());});
+        }else append.run();
+    }
 
-		timed.put(rewardName + "%placeholders%" + ArrayUtils.makeString(placeholders), epochMilli);
-		setTimedRewards(timed);
-		loadTimedDelayedTimer(epochMilli);
-	}
 
 	public void addUnClaimedChoiceReward(String name) {
 		ArrayList<String> choices = getUnClaimedChoices();
@@ -1031,38 +1034,96 @@ public class AdvancedCoreUser {
 		plugin.getUserManager().getDataManager().cacheUserIfNeeded(UUID.fromString(uuid));
 	}
 
-	public void checkDelayedTimedRewards() {
-		plugin.debug("Checking timed/delayed for " + getPlayerName());
-		HashMap<String, Long> timed = getTimedRewards();
-		HashMap<String, Long> newTimed = new HashMap<>();
-		for (Entry<String, Long> entry : timed.entrySet()) {
-			long time = entry.getValue();
+    public void checkDelayedTimedRewards() {
+        checkDelayedTimedRewardsAsync().whenComplete((ignored,failure)->{
+            if(failure!=null)plugin.getLogger().warning("Timed reward replay remains pending: "+failure.getMessage());
+        });
+    }
 
-			if (time != 0) {
-				Date timeDate = new Date(time);
-				if (new Date().after(timeDate)) {
-					String[] data = entry.getKey().split("%placeholders%");
-					String rewardName = data[0];
-					rewardName = rewardName.split("%extime%")[0];
-					String placeholders = "";
-					if (data.length > 1) {
-						placeholders = data[1];
-					}
-					new RewardBuilder(plugin.getRewardHandler().getReward(rewardName)).setCheckTimed(false)
-							.withPlaceHolder(ArrayUtils.fromString(placeholders))
-							.withPlaceHolder("date",
-									"" + new SimpleDateFormat("EEE, d MMM yyyy HH:mm").format(new Date(time)))
-							.send(this);
-					plugin.debug("Giving timed/delayed reward " + rewardName + " for " + getPlayerName()
-							+ " with placeholders " + ArrayUtils.fromString(placeholders));
-				} else {
-					newTimed.put(entry.getKey(), time);
-				}
-			}
+    public CompletionStage<Void> checkDelayedTimedRewardsAsync() {
+        if(!plugin.getOptions().isProcessRewards())return CompletableFuture.completedFuture(null);
+        Reward.ReplayState runtime=Reward.replayStateFor(new RewardOptions());runtime.captureRuntime(plugin);
+        ServerThreadRewardDispatch owner=runtime.getActionDispatchOwner();
+        if(owner==null)return failedStage(new IllegalStateException("Reward dispatcher unavailable"));
+        return owner.dispatchOffPrimary(()->dispatchTimedQueue(owner,runtime),TimeUnit.SECONDS.toMillis(30));
+    }
 
-		}
-		setTimedRewards(newTimed);
-	}
+    private CompletionStage<Void> dispatchTimedQueue(ServerThreadRewardDispatch owner,Reward.ReplayState runtime) {
+        if(!plugin.getOptions().isProcessRewards())return CompletableFuture.completedFuture(null);
+        ArrayList<String> snapshot=getUserData().getStringListStrict("TimedRewards");
+        HashSet<String> observed=new HashSet<>(),keys=new HashSet<>();
+        for(String stored:snapshot){TimedQueueEntry entry=decodeTimedEntry(stored);if(!keys.add(entry.key))throw new IllegalStateException("Duplicate timed reward key");String id=occurrenceId(entry.key);if(id!=null && !observed.add(id))throw new IllegalStateException("Duplicate timed reward occurrence");}
+        ArrayList<CompletableFuture<Void>> outcomes=new ArrayList<>();
+        for(String stored:snapshot) {
+            TimedQueueEntry entry=decodeTimedEntry(stored);
+            if(entry.time==0 || entry.time>=System.currentTimeMillis())continue;
+            String existing=occurrenceId(entry.key);final String id=existing==null?UUID.randomUUID().toString():existing;
+            PersistedReplayClaims claims;CompletableFuture<Void> previous,tail=new CompletableFuture<>();
+            synchronized(REPLAY_CLAIMS_LOCK) {
+                claims=REPLAY_CLAIMS.computeIfAbsent(plugin,unused->new HashMap<>()).computeIfAbsent(getUUID(),unused->new PersistedReplayClaims());
+                if(claims.occurrences.contains(id))continue;
+                if(existing==null){int count=0;for(String pending:snapshot)if(stored.equals(pending))count++;int active=claims.legacy.getOrDefault(stored,0);if(active>=count)continue;claims.legacy.put(stored,active+1);}
+                claims.occurrences.add(id);previous=claims.tail;claims.tail=tail;
+            }
+            final PersistedReplayClaims captured=claims;
+            java.util.concurrent.atomic.AtomicReference<String> current=new java.util.concurrent.atomic.AtomicReference<>(stored);
+            CompletableFuture<Void> outcome=new CompletableFuture<Void>() {@Override public boolean cancel(boolean interrupt){return false;}};outcomes.add(outcome);
+            previous.whenComplete((unused,priorFailure)->{
+                CompletionStage<Void> replay=owner.dispatchOffPrimary(()->{
+                    String key=existing==null?withAsyncOccurrence(entry.key,id):entry.key;
+                    String admitted=encodeTimedEntry(key,entry.time);
+                    mutateTimedQueue(pending->{int index=pending.indexOf(stored);if(index<0)throw new IllegalStateException("Timed occurrence disappeared before admission");pending.set(index,admitted);return pending;});current.set(admitted);
+                    asyncRetryCount(key);
+                    String[] parts=key.split("%placeholders%",2);QueuedReplay metadata=parseQueuedReplay(stripTimedExecutionMarker(parts[0]));
+                    RewardOptions options=new RewardOptions().setCheckTimed(false).withPlaceHolder(ArrayUtils.fromString(parts.length>1?parts[1]:""));
+                    options.addPlaceholder("date",new SimpleDateFormat("EEE, d MMM yyyy HH:mm").format(new Date(entry.time)));
+                    options.setCompletedAsyncInjections(metadata.completedAsyncInjections);options.setAsyncReplayProgress(metadata.asyncReplayProgress);options.setAsyncReplayRegistryFingerprints(metadata.asyncReplayRegistryFingerprints);options.setLegacyAsyncReplayCheckpoint(metadata.legacyAsyncReplayCheckpoint);options.setAsyncReplayOccurrenceId(id);
+                    options.setAsyncReplayCheckpointConsumer(checkpoint->{String before=current.get();TimedQueueEntry pendingEntry=decodeTimedEntry(before);String updated=encodeTimedEntry(withAsyncReplayProgress(stripTimedExecutionMarker(pendingEntry.key),checkpoint),pendingEntry.time);
+                        mutateTimedQueue(pending->{int index=pending.indexOf(before);if(index<0)throw new IllegalStateException("Timed occurrence disappeared before checkpoint");pending.set(index,updated);return pending;});current.set(updated);
+                    });
+                    Reward.ReplayState replayState=Reward.replayStateFor(options);replayState.captureAdmittedRuntime(runtime);options.setAsyncReplayState(replayState);
+                    CompletionStage<Void> effect=plugin.getRewardHandler().givePersistedQueueRewardAsync(this,new PersistedQueueReference(metadata.rewardReference),options);
+                    if(effect==null)throw new IllegalStateException("Timed reward omitted its completion stage");return effect;
+                },TimeUnit.SECONDS.toMillis(30));
+                replay.handle((ignored,failure)->owner.dispatchOffPrimary(()->{
+                    if(failure==null)mutateTimedQueue(pending->{if(!pending.remove(current.get()))throw new IllegalStateException("Timed occurrence disappeared before completion");return pending;});
+                    else {
+                        String before=current.get();TimedQueueEntry pendingEntry=decodeTimedEntry(before);
+                        int retry=Math.min(8,asyncRetryCount(pendingEntry.key)+1);
+                        long retryTime=System.currentTimeMillis()+Math.min(TimeUnit.MINUTES.toMillis(5),TimeUnit.SECONDS.toMillis(1L<<retry));
+                        String key=withAsyncRetryCount(withAsyncReplayProgress(stripTimedExecutionMarker(pendingEntry.key),failure),retry);
+                        String restored=encodeTimedEntry(key,retryTime);
+                        mutateTimedQueue(pending->{int index=pending.indexOf(before);if(index<0)throw new IllegalStateException("Timed occurrence disappeared during recovery");pending.set(index,restored);return pending;});current.set(restored);loadTimedDelayedTimer(retryTime);
+                    }
+                    return failure==null?CompletableFuture.<Void>completedFuture(null):AdvancedCoreUser.<Void>failedStage(failure);
+                },TimeUnit.SECONDS.toMillis(30))).thenCompose(stage->stage).whenComplete((ignored,failure)->{
+                    synchronized(REPLAY_CLAIMS_LOCK){captured.occurrences.remove(id);if(existing==null){int count=captured.legacy.getOrDefault(stored,0);if(count<=1)captured.legacy.remove(stored);else captured.legacy.put(stored,count-1);}}
+                    if(failure==null)outcome.complete(null);else outcome.completeExceptionally(failure);tail.complete(null);
+                    synchronized(REPLAY_CLAIMS_LOCK){HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);if(captured.occurrences.isEmpty() && captured.tail.isDone() && users!=null && users.get(getUUID())==captured){users.remove(getUUID());if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);}}
+                });
+            });
+        }
+        return CompletableFuture.allOf(outcomes.toArray(new CompletableFuture<?>[0]));
+    }
+
+    private static final String TIMED_EXECUTION_DELIMITER="%ExecutionTime/%";
+    private static final class TimedQueueEntry {
+        final String key;final long time;
+        TimedQueueEntry(String key,long time){this.key=key;this.time=time;}
+    }
+    private static TimedQueueEntry decodeTimedEntry(String stored) {
+        if(stored==null)throw new IllegalArgumentException("Timed entry omitted");
+        int marker=stored.lastIndexOf(TIMED_EXECUTION_DELIMITER);
+        if(marker<=0)throw new IllegalArgumentException("Timed execution date omitted");
+        long time=Long.parseLong(stored.substring(marker+TIMED_EXECUTION_DELIMITER.length()));
+        if(time<0)throw new IllegalArgumentException("Negative timed execution date");
+        return new TimedQueueEntry(stored.substring(0,marker),time);
+    }
+    private static String encodeTimedEntry(String key,long time){return key+TIMED_EXECUTION_DELIMITER+time;}
+    private ArrayList<String> mutateTimedQueue(java.util.function.UnaryOperator<ArrayList<String>> transform) {
+        try{return getUserData().mutateStringListStrict("TimedRewards",transform);}
+        catch(com.bencodez.advancedcore.api.user.usercache.CommittedUserDataMutationException committed){plugin.getLogger().warning("Timed queue edit committed; change notification failed");String stored=committed.getCommittedValue().getString();return stored==null || stored.isEmpty()?new ArrayList<>():new ArrayList<>(java.util.Arrays.asList(stored.split("%line%")));}
+    }
 
 	/**
 	 * Check offline rewards.
@@ -1093,10 +1154,10 @@ public class AdvancedCoreUser {
             if(stored==null || stored.equals("null"))continue;
             final String existingId=occurrenceId(stored);
             final String id=existingId==null?UUID.randomUUID().toString():existingId;
-            OfflineReplayClaims claims;
+            PersistedReplayClaims claims;
             CompletableFuture<Void> previous,tail=new CompletableFuture<>();
-            synchronized(OFFLINE_CLAIMS_LOCK) {
-                claims=OFFLINE_CLAIMS.computeIfAbsent(plugin,unused->new HashMap<>()).computeIfAbsent(getUUID(),unused->new OfflineReplayClaims());
+            synchronized(REPLAY_CLAIMS_LOCK) {
+                claims=REPLAY_CLAIMS.computeIfAbsent(plugin,unused->new HashMap<>()).computeIfAbsent(getUUID(),unused->new PersistedReplayClaims());
                 if(claims.occurrences.contains(id))continue;
                 if(existingId==null) {
                     int count=0;for(String pending:snapshot)if(stored.equals(pending))count++;
@@ -1105,7 +1166,7 @@ public class AdvancedCoreUser {
                 }
                 claims.occurrences.add(id);previous=claims.tail;claims.tail=tail;
             }
-            final OfflineReplayClaims captured=claims;
+            final PersistedReplayClaims captured=claims;
             java.util.concurrent.atomic.AtomicReference<String> current=new java.util.concurrent.atomic.AtomicReference<>(stored);
             CompletableFuture<Void> result=new CompletableFuture<Void>() {@Override public boolean cancel(boolean interrupt){return false;}};
             outcomes.add(result);
@@ -1136,15 +1197,15 @@ public class AdvancedCoreUser {
                     }
                     return failure==null || Reward.isOfflineReplayDeferred(failure)?CompletableFuture.<Void>completedFuture(null):AdvancedCoreUser.<Void>failedStage(failure);
                 },TimeUnit.SECONDS.toMillis(30))).thenCompose(stage->stage).whenComplete((value,failure)->{
-                    synchronized(OFFLINE_CLAIMS_LOCK) {
+                    synchronized(REPLAY_CLAIMS_LOCK) {
                         captured.occurrences.remove(id);
                         if(existingId==null){int count=captured.legacy.getOrDefault(stored,0);if(count<=1)captured.legacy.remove(stored);else captured.legacy.put(stored,count-1);}
                     }
                     if(failure==null)result.complete(null);else result.completeExceptionally(failure);
                     tail.complete(null);
-                    synchronized(OFFLINE_CLAIMS_LOCK) {
-                        HashMap<String,OfflineReplayClaims> users=OFFLINE_CLAIMS.get(plugin);
-                        if(captured.occurrences.isEmpty() && captured.tail.isDone() && users!=null && users.get(getUUID())==captured){users.remove(getUUID());if(users.isEmpty())OFFLINE_CLAIMS.remove(plugin);}
+                    synchronized(REPLAY_CLAIMS_LOCK) {
+                        HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);
+                        if(captured.occurrences.isEmpty() && captured.tail.isDone() && users!=null && users.get(getUUID())==captured){users.remove(getUUID());if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);}
                     }
                 });
             });
@@ -1303,23 +1364,12 @@ public class AdvancedCoreUser {
 		return getData().getInt("Repeat" + reward.getName(), cacheData, waitForCache);
 	}
 
-	public HashMap<String, Long> getTimedRewards() {
-		ArrayList<String> timedReward = getUserData().getStringList("TimedRewards", cacheData, waitForCache);
-		HashMap<String, Long> timedRewards = new HashMap<>();
-		for (String str : timedReward) {
-			if (str != null && !str.equals("null")) {
-				String[] data = str.split("%ExecutionTime/%");
-				plugin.extraDebug("TimedReward: " + str);
-				if (data.length > 1) {
-					String name = data[0];
-
-					String timeStr = data[1];
-					timedRewards.put(name, Long.valueOf(timeStr));
-				}
-			}
-		}
-		return timedRewards;
-	}
+    public HashMap<String,Long> getTimedRewards() {
+        ArrayList<String> stored=getUserData().getStringList("TimedRewards",cacheData,waitForCache);
+        HashMap<String,Long> result=new HashMap<>();
+        for(String record:stored)if(record!=null && !record.equals("null")){TimedQueueEntry entry=decodeTimedEntry(record);if(result.put(entry.key,entry.time)!=null)throw new IllegalArgumentException("Duplicate timed reward key");}
+        return result;
+    }
 
 	public ArrayList<String> getUnClaimedChoices() {
 		return getData().getStringList("UnClaimedChoices", cacheData, waitForCache);

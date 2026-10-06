@@ -15,7 +15,7 @@ import com.bencodez.advancedcore.api.rewards.*;
 import com.bencodez.simpleapi.sql.data.*;
 
 class LegacyOfflineQueueReplayTest {
-    private void fixture(List<String> pending,Consumer<Fixture> body) {
+    void fixture(List<String> pending,Consumer<Fixture> body) {
         LegacyDirectUserDataTest.Fixture f=new LegacyDirectUserDataTest.Fixture();
         doCallRealMethod().when(f.manager).mutateDirect(any(),anyString(),any(),any(),any());
         AdvancedCoreConfigOptions options=mock(AdvancedCoreConfigOptions.class);when(options.isProcessRewards()).thenReturn(true);when(f.plugin.getOptions()).thenReturn(options);when(f.plugin.isEnabled()).thenReturn(true);when(f.plugin.getLogger()).thenReturn(java.util.logging.Logger.getAnonymousLogger());when(f.users.getOfflineRewardsPath()).thenReturn("OfflineRewards");
