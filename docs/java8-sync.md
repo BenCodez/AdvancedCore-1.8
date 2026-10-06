@@ -3772,3 +3772,52 @@ stores. It does not complete retained physical type/default migration, UUID uniq
 full borrowed-schema reconciliation or the broader storage ledger. No new dependency,
 release change, configuration/wire change, final independent review, push or PR readiness
 is claimed. Remaining upstream entries keep their partial/pending dispositions.
+
+## Checked retained numeric-to-string SQL migration
+
+Registered string columns with text/character declarations now reconcile retained
+numeric/boolean physical storage before the first checked write. Cached membership
+alone cannot bypass that inspection; a successfully reconciled declaration is remembered
+only after connection cleanup, and a changed declaration triggers another check.
+Unknown dynamic columns, deliberately numeric declarations and legacy boolean-string
+keys retain their existing storage contract. Extension callbacks run outside registration
+and schema monitors. Existing public signatures, configuration/data/wire/release values
+and pool ownership are preserved.
+
+Migration preserves observed nullability, default and comment rather than replacing them
+with new-key defaults. Generated/automatic attributes, unsafe defaults/comments and missing
+metadata fail visibly. A peer completing between inspections or after DDL failure is accepted
+only with matching target type and retained attributes. Statement/connection cleanup failures
+cannot publish successful schema membership or the reconciled declaration.
+
+A live permissive-mode counterexample found VARCHAR(1) truncating an existing17. Migration
+now temporarily adds STRICT_ALL_TABLES on the borrowed connection and restores its original
+session mode before return. Unavailable mode evidence prevents DDL. Restoration failure is
+reported and invokes the installed pool's public eviction API for that connection, without
+closing the pool. The narrow reflective bridge is required because the compile dependency's
+embedded datasource is Java11 while the packaged replacement is Java8; it accesses only
+getDataSource/evictConnection and never imports or loads the incompatible class in Java8.
+An initial raw-connection-close candidate allowed an immediate closed Hikari handle to be
+borrowed again; the live countercheck caught it and supported eviction replaced it.
+
+ActualJava8 final producer clean install625 unit +50 artifact =675 PASS; exact locally
+installed producer consumer clean verify45 unit +1 artifact =46 PASS, zero failures/errors/skips.
+Producer SHA256 `da6deba2a3623ef12de2b4c0ddfa226cbbf7251dc2390f93d011b88d9239f1a7`;
+consumer SHA256 `a16036fa2e1c5c640aeb76888a7445700e717b347b73d6b65c8fbc84c8f16ef7`.
+All1838/2455 base classes respectively have major<=52. RealJava8/MariaDB validates successful
+TEXT conversion with17/default7/not-null/comment preserved, rejected narrowed conversion
+(SQL1406/22001) preserving originalINT/17/attributes and restored session mode, and injected
+restoration failure evicting the affected physical connection while the live Hikari pool
+continues with a fresh original-mode connection. The fault wrapper's fixture adapter forwards
+eviction to the underlying real Hikari handle. Nine exact-consumer Java8/Spigot1.8.8 checks pass.
+
+One earlier full build failed an existing inventory queued-lock assertion; its unchanged
+focused11-test rerun and subsequent full builds passed. Its intermittent cause remains
+unproven and the failure evidence is retained; this SQL change does not claim to fix it.
+
+This is a partial native-store adaptation of5ef372ddea971d00aa92ec9f6c61803b2ce9bd65,
+5198b9615dae66ff57021a66c7d933f3cf57f4d9 and related final pinned main reconciliation.
+Declared numeric precision/unsigned changes, nonstandard declarations, all-registry schema
+reconciliation, UUID constraints, headless lifecycle/paging and remaining upstream changes
+still require work. PostgreSQL and a separate real MySQL server are not runtime-verified.
+No whole-main parity, independent final review, push or PR readiness is claimed.

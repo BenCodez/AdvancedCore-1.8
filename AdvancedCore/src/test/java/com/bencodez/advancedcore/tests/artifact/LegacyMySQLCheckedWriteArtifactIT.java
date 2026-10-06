@@ -133,6 +133,7 @@ class LegacyMySQLCheckedWriteArtifactIT {
             loader=new URLClassLoader(new URL[]{artifact},getClass().getClassLoader()) {
                 private boolean child(String name) {
                     return name.startsWith("com.bencodez.advancedcore.api.user.userstorage.mysql.MySQL")
+                        ||name.startsWith("com.bencodez.advancedcore.api.user.userstorage.mysql.RetainedStringColumn")
                         ||name.startsWith("com.bencodez.advancedcore.api.user.userstorage.SqlColumnNames")
                         ||name.startsWith("com.bencodez.advancedcore.api.user.userstorage.CompleteUserRows")
                         ||name.startsWith("com.bencodez.simpleapi.sql.mysql.")
@@ -159,9 +160,9 @@ class LegacyMySQLCheckedWriteArtifactIT {
             Object driver=mock(driverType,withSettings().defaultAnswer(call ->
                 call.getMethod().getName().equals("getConnectionManager") ? manager : RETURNS_DEFAULTS.answer(call)));
             when(connection.getAutoCommit()).thenReturn(true);when(connection.prepareStatement(anyString())).thenReturn(statement);
-            set("name","users");set("plugin",mock(AdvancedCorePlugin.class));set("mysql",driver);
+            set("name","users");set("plugin",mock(AdvancedCorePlugin.class,RETURNS_DEEP_STUBS));set("mysql",driver);
             set("object2",new Object());set("object4",new Object());set("columns",new ArrayList<>(Arrays.asList("PlayerName","Enabled")));
-            set("uuids",uuids);set("names",names);
+            set("uuids",uuids);set("names",names);set("reconciledStringColumns",new java.util.concurrent.ConcurrentHashMap<String,String>());
         }
         void write(List<Column> values)throws Exception {storeType.getMethod("updateStrict",String.class,List.class).invoke(store,uuid,values);}
         void set(String name,Object value)throws Exception {Field field=storeType.getDeclaredField(name);field.setAccessible(true);field.set(store,value);}

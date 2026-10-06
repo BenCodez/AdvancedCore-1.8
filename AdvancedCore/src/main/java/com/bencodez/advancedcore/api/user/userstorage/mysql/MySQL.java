@@ -35,6 +35,7 @@ import lombok.Getter;
 
 public class MySQL {
 	private List<String> columns = Collections.synchronizedList(new ArrayList<String>());
+	private final java.util.Map<String, String> reconciledStringColumns = new ConcurrentHashMap<>();
 
 	// private List<String> intColumns;
 
@@ -132,9 +133,12 @@ public class MySQL {
 		// Resolve extension-defined types outside the column-add lock. Missing
 		// registered keys must expand using the same definition as initial CREATE.
 		String sqlType = "text";
+		boolean registeredString = false;
 		for (UserDataKey key : plugin.getUserManager().getDataManager().getRegisteredKeysSnapshot()) {
 			if (key.getKey().equalsIgnoreCase(column)) {
 				sqlType = key.getColumnType();
+				registeredString = key instanceof com.bencodez.advancedcore.api.user.usercache.keys.UserDataKeyString
+					&& !plugin.getUserManager().getDataManager().isBoolean(key.getKey());
 				if (sqlType == null || sqlType.trim().isEmpty()) {
 					throw new IllegalArgumentException("Registered SQL column has no type: " + column);
 				}
@@ -149,7 +153,8 @@ public class MySQL {
 				try (Connection connection = mysql.getConnectionManager().getConnection()) {
 					if (connection == null) throw new SQLException("MySQL connection is unavailable");
 					if (!connection.getAutoCommit()) throw new SQLException("Checked schema changes require auto-commit");
-					if (!hasLiveColumn(connection, column)) {
+					boolean retained = hasLiveColumn(connection, column);
+					if (!retained) {
 						try (PreparedStatement statement = connection.prepareStatement(sql)) {
 							statement.executeUpdate();
 						} catch (SQLException ddlFailure) {
@@ -159,17 +164,33 @@ public class MySQL {
 									|| ddlFailure.getSuppressed().length != 0) throw ddlFailure;
 							try {
 								if (!hasLiveColumn(connection, column)) throw ddlFailure;
+								retained = true;
 							} catch (SQLException inspectionFailure) {
 								if (inspectionFailure != ddlFailure) ddlFailure.addSuppressed(inspectionFailure);
 								throw ddlFailure;
 							}
 						}
 					}
+					if (retained && registeredString) RetainedStringColumn.reconcile(connection, getName(), column, sqlType, this::discardSchemaConnection);
 				}
 				rememberColumn(column);
+				if (registeredString) reconciledStringColumns.put(column.toLowerCase(java.util.Locale.ROOT), sqlType);
 			} catch (SQLException failure) {
 				throw new IllegalStateException("Failed to initialize registered SQL column: " + column, failure);
 			}
+		}
+	}
+
+	/** Use the installed pool's public eviction API without importing its upstream Java11 class. */
+	private void discardSchemaConnection(Connection connection) throws SQLException {
+		try {
+			Object pool = mysql.getConnectionManager().getClass().getMethod("getDataSource").invoke(mysql.getConnectionManager());
+			if (pool == null) throw new SQLException("MySQL pool unavailable for connection eviction");
+			pool.getClass().getMethod("evictConnection", Connection.class).invoke(pool, connection);
+		} catch (java.lang.reflect.InvocationTargetException failure) {
+			throw new SQLException("Failed to evict schema connection", failure.getCause());
+		} catch (ReflectiveOperationException | RuntimeException failure) {
+			throw new SQLException("Failed to access schema connection eviction", failure);
 		}
 	}
 
@@ -185,11 +206,21 @@ public class MySQL {
 	}
 
 	public void checkColumn(String column, DataType dataType) {
+		String registeredType = null;
+		for (UserDataKey key : plugin.getUserManager().getDataManager().getRegisteredKeysSnapshot()) {
+			if (key.getKey().equalsIgnoreCase(column) && key instanceof com.bencodez.advancedcore.api.user.usercache.keys.UserDataKeyString
+					&& !plugin.getUserManager().getDataManager().isBoolean(key.getKey())) {
+				registeredType = key.getColumnType();
+				if (registeredType == null || registeredType.trim().isEmpty()) throw new IllegalArgumentException("Registered SQL column has no type: " + column);
+				break;
+			}
+		}
 		synchronized (object4) {
 			List<String> known = columns;
 			if (known != null) {
 				synchronized (known) {
-					for (String existing : known) if (column.equalsIgnoreCase(existing)) return;
+					for (String existing : known) if (column.equalsIgnoreCase(existing)
+							&& (registeredType == null || registeredType.equals(reconciledStringColumns.get(column.toLowerCase(java.util.Locale.ROOT))))) return;
 				}
 			}
 			// addColumn owns checked live inspection and peer-race reconciliation.
