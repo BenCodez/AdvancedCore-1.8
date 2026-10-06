@@ -979,7 +979,7 @@ public class AdvancedCoreUser {
 		int marker = rewardEntry.indexOf("%placeholders%");
 		String reference = marker < 0 ? rewardEntry : rewardEntry.substring(0, marker);
 		QueuedReplay queuedReplay = parseQueuedReplay(stripAsyncRetryMarker(reference));
-        if (!queuedReplay.asyncReplayProgress.isEmpty() && !checkpoint.getReplayProgress().isEmpty()) {
+        if (!queuedReplay.asyncReplayProgress.isEmpty()) {
             boolean storedCovers = checkpointCovers(queuedReplay.asyncReplayProgress,
                     queuedReplay.asyncReplayRegistryFingerprints, checkpoint.getReplayProgress(),
                     checkpoint.getReplayRegistryFingerprints());

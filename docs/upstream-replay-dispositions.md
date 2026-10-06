@@ -346,3 +346,38 @@ Workspace evidence is `evidence/checkpoint-acknowledgement-order-*`, including t
 red-before-fix run, commands/build logs, exact hashes and unchanged-original audit.
 All 167 originals and both pinned references remain unchanged. Full scope and the
 independent final review remain incomplete.
+
+## Empty acknowledgement and lifecycle-test observation
+
+A further red-before-fix regression showed that an empty successful
+acknowledgement erased a non-empty persisted v3 checkpoint. The ordering guard
+now also treats empty proposed progress as an older checkpoint. Initial empty
+metadata publication and later cursor-zero/forward publication remain valid;
+regressions exercise both production offline and timed consumers. This extends
+non-empty v3 protection; equal-count nested metadata and legacy ordinal state
+remain separate unresolved cases.
+
+The full build also exposed a lifecycle-test observation race: the test read
+`hasQueuedThreads()` twice and required both transient observations to be true.
+It now captures the actual saving worker and awaits `hasQueuedThread(worker)`.
+It still requires save to remain incomplete until delivery is released and then
+checks the overflow item in the saved configuration. No inventory production
+code or existing behavioral assertion was removed.
+
+The nested-metadata audit identified an important valid exception for future
+ordering work: `AsyncActionCollection` removes an unstarted action reservation
+from its snapshot after `LegacyActionNotStartedException` and checkpoints that
+release. Snapshot shrinkage alone therefore cannot establish stale publication.
+A comparator must retain that proven-not-started release behavior. No general
+nested-metadata comparator or process-crash guarantee is claimed here.
+
+Validation of the combined current Java 8 worktree: 53 focused offline/timed/order
+tests PASS; 16 focused checkpoint/inventory lifecycle tests PASS; corrected clean
+install 819 unit + 78 artifact = 897 PASS; exact-dependency consumer clean verify
+46 PASS. Zero failures/errors/skips in those passing runs. Both jars remain
+maximum major 52, and the installed producer matches its target byte-for-byte.
+Actual Spigot 1.8.8 recovery fixture: 12 existing checks PASS. The initial red run
+and the initial full-build lifecycle-test failure are retained alongside the
+corrected logs in workspace `evidence/checkpoint-empty-acknowledgement-*`.
+All 167 originals and both pinned references remain unchanged. Full backport
+acceptance and independent final review are still incomplete.

@@ -12,14 +12,17 @@ import com.bencodez.simpleapi.sql.data.*;
 /** Both production queue dispatchers must retain monotonically acknowledged progress. */
 class LegacyCheckpointPublicationOrderTest {
     private Reward.ReplayCheckpoint checkpoint(int count, String registry, String marker) {
+        return checkpoint(Collections.singletonMap("daily", count), Collections.singletonMap("daily", registry), marker);
+    }
+
+    private Reward.ReplayCheckpoint checkpoint(Map<String,Integer> progress, Map<String,String> registries, String marker) {
         try {
             java.lang.reflect.Constructor<Reward.ReplayCheckpoint> constructor = Reward.ReplayCheckpoint.class
                     .getDeclaredConstructor(Map.class, Map.class, HashMap.class);
             constructor.setAccessible(true);
             HashMap<String,String> placeholders = new HashMap<>();
             placeholders.put("marker", marker);
-            return constructor.newInstance(Collections.singletonMap("daily", count),
-                    Collections.singletonMap("daily", registry), placeholders);
+            return constructor.newInstance(progress, registries, placeholders);
         } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
     }
 
@@ -60,6 +63,26 @@ class LegacyCheckpointPublicationOrderTest {
             context.publish.accept(checkpoint(1, "registry", "older"));
             assertEquals(acknowledged, context.pending());
             assertTrue(context.pending().contains("marker%pair%newer"));
+        });
+    }
+
+    @Test void emptyAcknowledgementCannotEraseEitherNonemptyPersistedCheckpoint() {
+        for (boolean timed : new boolean[] {false, true}) queue(timed, context -> {
+            context.publish.accept(checkpoint(2, "registry", "newer"));
+            String acknowledged = context.pending();
+            context.publish.accept(checkpoint(Collections.emptyMap(), Collections.emptyMap(), "empty"));
+            assertEquals(acknowledged, context.pending());
+        });
+    }
+
+    @Test void initialEmptyMetadataAndThenZeroCursorRemainValidOnBothQueues() {
+        for (boolean timed : new boolean[] {false, true}) queue(timed, context -> {
+            context.publish.accept(checkpoint(Collections.emptyMap(), Collections.emptyMap(), "initial"));
+            assertTrue(context.pending().contains("marker%pair%initial"));
+            context.publish.accept(checkpoint(0, "registry", "zero"));
+            assertTrue(context.pending().contains("marker%pair%zero"));
+            context.publish.accept(checkpoint(1, "registry", "first"));
+            assertTrue(context.pending().contains("marker%pair%first"));
         });
     }
 
