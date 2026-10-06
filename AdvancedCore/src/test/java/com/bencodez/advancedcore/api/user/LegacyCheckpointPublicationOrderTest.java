@@ -193,12 +193,15 @@ class LegacyCheckpointPublicationOrderTest {
     }
 
     private Reward.RewardReplayFailure failureCheckpoint(String key, String value) {
+        return failureCheckpoint(Collections.singletonMap(key, value));
+    }
+
+    private Reward.RewardReplayFailure failureCheckpoint(Map<String,String> metadata) {
         RewardOptions options = new RewardOptions();
         options.setAsyncReplayProgress(Collections.singletonMap("daily", 0));
         options.setAsyncReplayRegistryFingerprints(Collections.singletonMap("daily", "registry"));
         Reward.ReplayState state = Reward.replayStateFor(options);
-        HashMap<String,String> placeholders = new HashMap<>();
-        placeholders.put(key, value);
+        HashMap<String,String> placeholders = new HashMap<>(metadata);
         placeholders.put("marker", "failed-older");
         try {
             java.lang.reflect.Constructor<Reward.RewardReplayFailure> constructor = Reward.RewardReplayFailure.class
@@ -237,6 +240,70 @@ class LegacyCheckpointPublicationOrderTest {
             } catch (ReflectiveOperationException failure) { throw new AssertionError(failure); }
             assertEquals(acknowledged, context.pending());
         });
+    }
+
+    private Map<String,String> actionMetadata(String completed, String snapshot) {
+        String key = Reward.legacyActionReplayKey("root");
+        HashMap<String,String> metadata = new HashMap<>();
+        metadata.put(key, completed);
+        metadata.put(key + "_snapshot", snapshot);
+        return metadata;
+    }
+
+    @Test void acknowledgedLegacyCompletionsCannotBeLostAtEqualInjectorProgress() {
+        for (boolean timed : new boolean[] {false, true}) queue(timed, context -> {
+            context.publish.accept(metadataCheckpoint(actionMetadata("v2:YQ.Yg", "v1:YQ~eA.Yg~eQ"), "two"));
+            String acknowledged = context.pending();
+            context.publish.accept(metadataCheckpoint(actionMetadata("v2:YQ", "v1:YQ~eA.Yg~eQ"), "older"));
+            assertEquals(acknowledged, context.pending());
+        });
+    }
+
+    @Test void completedActionCannotChangeItsFingerprintOnEitherQueue() {
+        for (boolean timed : new boolean[] {false, true}) queue(timed, context -> {
+            context.publish.accept(metadataCheckpoint(actionMetadata("v2:YQ", "v1:YQ~eA"), "first"));
+            String acknowledged = context.pending();
+            assertThrows(IllegalStateException.class, () -> context.publish.accept(
+                    metadataCheckpoint(actionMetadata("v2:YQ", "v1:YQ~eQ"), "changed")));
+            assertEquals(acknowledged, context.pending());
+        });
+    }
+
+    @Test void newlyCompletedActionsMayAdvanceBothQueues() {
+        for (boolean timed : new boolean[] {false, true}) queue(timed, context -> {
+            context.publish.accept(metadataCheckpoint(actionMetadata("v2:YQ", "v1:YQ~eA.Yg~eQ"), "one"));
+            context.publish.accept(metadataCheckpoint(actionMetadata("v2:YQ.Yg", "v1:YQ~eA.Yg~eQ"), "two"));
+            assertTrue(context.pending().contains("marker%pair%two"));
+        });
+    }
+
+    @Test void unstartedReservationMayBeReleasedWhileCompletedActionsStayProtected() {
+        for (boolean timed : new boolean[] {false, true}) queue(timed, context -> {
+            context.publish.accept(metadataCheckpoint(actionMetadata("v2:YQ", "v1:YQ~eA.Yg~eQ"), "reserved"));
+            context.publish.accept(metadataCheckpoint(actionMetadata("v2:YQ", "v1:YQ~eA"), "released"));
+            assertTrue(context.pending().contains("marker%pair%released"));
+        });
+    }
+
+    @Test void completionWithoutItsActionSnapshotFailsBeforePublication() {
+        for (boolean timed : new boolean[] {false, true}) queue(timed, context -> {
+            String admitted = context.pending();
+            assertThrows(IllegalStateException.class, () -> context.publish.accept(
+                    metadataCheckpoint(actionMetadata("v2:YQ", "v1:Yg~eQ"), "invalid")));
+            assertEquals(admitted, context.pending());
+        });
+    }
+
+    @Test void failedEffectCannotDropAcknowledgedLegacyCompletionsOnEitherQueue() {
+        for (boolean timed : new boolean[] {false, true}) {
+            String key = Reward.legacyActionReplayKey("root");
+            queue(timed, failureCheckpoint(actionMetadata("v2:YQ", "v1:YQ~eA.Yg~eQ")), context ->
+                    context.publish.accept(metadataCheckpoint(actionMetadata("v2:YQ.Yg", "v1:YQ~eA.Yg~eQ"), "acknowledged-two")), context -> {
+                assertTrue(context.pending().contains(key + "%pair%v2:YQ.Yg"));
+                assertTrue(context.pending().contains("marker%pair%acknowledged-two"));
+                assertFalse(context.pending().contains("failed-older"));
+            });
+        }
     }
 
     private static final class Context {

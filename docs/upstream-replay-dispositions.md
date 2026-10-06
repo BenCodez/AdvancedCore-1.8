@@ -428,3 +428,49 @@ The focused selector included an unmatched `LegacyTimedRewardReplayTest` name;
 which ran in the complete producer build. No unexecuted test is counted.
 All 167 original repositories and both pinned references were checked unchanged.
 The full backport and final independent review remain unfinished.
+
+
+## Completed legacy-action checkpoint ordering
+
+The native legacy-action ledger keeps a v2 set of completed action identities and
+a v1 identity/fingerprint reservation snapshot. Red-before-fix tests demonstrated
+three further defects at equal injector progress: a stale checkpoint dropped
+completed identities, a completed identity accepted a different fingerprint, and
+a completion was published without a matching action snapshot. The initial
+17-test checkpoint run had three failures.
+
+The queue serializers now reuse `AsyncActionCollection`'s existing completion and
+snapshot decoders. Before ordering, completed identities must have matching
+snapshot entries. For a newer checkpoint to cover an older one, it must retain
+all previously completed identities and their exact fingerprints. Conflicting
+fingerprints or incomplete snapshots fail before publication; a strictly older
+completion set retains the acknowledged record. This applies to both successful
+checkpoint callbacks and failed-effect settlement through both production offline
+and timed consumers.
+
+Unfinished reservations remain mutable: the comparator checks fingerprints only
+for completed effects, so a proven-not-started reservation can be released while
+completed effects stay protected. The actual native action tests still exercise
+admission/release and retry. No new codec, schema, configuration or public API is
+introduced. This does not yet order indeterminate unfinished reservations across
+arbitrary concurrent publications or prove cross-process/crash ownership.
+
+Validation used actual Temurin Java 8, the workspace-local Maven repository, and
+the exact locally installed producer dependency:
+
+- Focused checkpoint/offline/timed/native-action tests: 79 PASS before adding
+  the failed-effect completion-set regression.
+- Complete AdvancedCore `clean install`: 833 unit + 78 artifact = 911 PASS;
+  the additional failure-settlement regression ran in this build.
+- Exact-dependency VotingPlugin `clean verify`: 45 unit + 1 artifact = 46 PASS.
+- All passing builds had zero failures/errors/skips. Producer target equals
+  its local Maven dependency byte-for-byte.
+- Base classes: AdvancedCore 1893, VotingPlugin 2510; maximum major 52.
+- Actual Java 8/Spigot 1.8.8 existing queue-publication recovery fixture: 12 PASS.
+  This fixture is runtime regression evidence, not a stale-ledger crash proof.
+
+Workspace evidence: `evidence/replay-legacy-completion-*`. All 167 originals and
+both pinned references were verified unchanged. Initial timed duplicate admission,
+legacy ordinal handling, native SQL lifecycle integration, full upstream ledger
+classification, remaining acceptance checks and final independent review remain
+unfinished. No push or PR was performed.

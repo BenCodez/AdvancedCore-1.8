@@ -233,6 +233,43 @@ public class AdvancedCoreUser {
 			return replayState.persistCheckpointAsync(plugin, placeholders);
 		}
 
+		private static boolean isCompletionMetadataKey(String key) {
+			return key != null && key.startsWith(Reward.legacyActionReplayKey(""))
+					&& !key.endsWith(ACTION_SNAPSHOT_SUFFIX);
+		}
+
+		/** A completed effect needs its exact saved action identity before publication. */
+		private static void validateCompletionMetadata(Map<String, String> metadata) {
+			try {
+				for (Entry<String, String> entry : metadata.entrySet()) {
+					if (!isCompletionMetadataKey(entry.getKey())) continue;
+					HashMap<String, String> actions = snapshot(metadata.get(entry.getKey() + ACTION_SNAPSHOT_SUFFIX));
+					if (!actions.keySet().containsAll(completed(entry.getValue()))) {
+						throw new IllegalStateException("Legacy action completion has no matching persisted snapshot");
+					}
+				}
+			} catch (IllegalArgumentException failure) {
+				throw new IllegalStateException("Malformed legacy action replay metadata", failure);
+			}
+		}
+
+		/** Only completed actions are monotonic; unstarted reservations may be released. */
+		private static boolean completionMetadataCovers(Map<String, String> newer, Map<String, String> older) {
+			for (Entry<String, String> entry : older.entrySet()) {
+				String key = entry.getKey();
+				if (!isCompletionMetadataKey(key)) continue;
+				HashSet<String> previous = completed(entry.getValue());
+				if (previous.isEmpty()) continue;
+				if (!completed(newer.get(key)).containsAll(previous)) return false;
+				HashMap<String, String> oldSnapshot = snapshot(older.get(key + ACTION_SNAPSHOT_SUFFIX));
+				HashMap<String, String> newSnapshot = snapshot(newer.get(key + ACTION_SNAPSHOT_SUFFIX));
+				for (String identity : previous) {
+					if (!java.util.Objects.equals(oldSnapshot.get(identity), newSnapshot.get(identity))) return false;
+				}
+			}
+			return true;
+		}
+
 		private static HashSet<String> completed(String encoded) {
 			HashSet<String> values = new HashSet<>();
 			if (encoded == null || encoded.isEmpty()) return values;
@@ -972,10 +1009,14 @@ public class AdvancedCoreUser {
 
     private static boolean proposedCheckpointCovers(QueuedReplay stored, Map<String,String> storedMetadata,
             Map<String,Integer> proposed, Map<String,String> proposedRegistry, Map<String,String> proposedMetadata) {
+        AsyncActionCollection.validateCompletionMetadata(storedMetadata);
+        AsyncActionCollection.validateCompletionMetadata(proposedMetadata);
         boolean storedCovers = checkpointCovers(stored.asyncReplayProgress, stored.asyncReplayRegistryFingerprints,
-                proposed, proposedRegistry) && Reward.stableReplayMetadataCovers(storedMetadata, proposedMetadata);
+                proposed, proposedRegistry) && Reward.stableReplayMetadataCovers(storedMetadata, proposedMetadata)
+                && AsyncActionCollection.completionMetadataCovers(storedMetadata, proposedMetadata);
         boolean proposedCovers = checkpointCovers(proposed, proposedRegistry, stored.asyncReplayProgress,
-                stored.asyncReplayRegistryFingerprints) && Reward.stableReplayMetadataCovers(proposedMetadata, storedMetadata);
+                stored.asyncReplayRegistryFingerprints) && Reward.stableReplayMetadataCovers(proposedMetadata, storedMetadata)
+                && AsyncActionCollection.completionMetadataCovers(proposedMetadata, storedMetadata);
         if (storedCovers && !proposedCovers) return false;
         if (!proposedCovers) throw new IllegalStateException("Persisted and proposed replay checkpoints cannot be safely ordered");
         return true;
