@@ -13,12 +13,18 @@ import com.bencodez.advancedcore.AdvancedCorePlugin;
 
 class LegacyMySQLReadArtifactIT {
     @Test void sqlLookingPlayerNameCannotMatchAnotherPlayer() throws Exception {
-        assertLookup("' OR 1=1 --",null);
+        assertLookup("' OR 1=1 --",null,false);
     }
     @Test void apostropheInStoredPlayerNameRemainsSearchable() throws Exception {
-        assertLookup("O'Brien","00000000-0000-0000-0000-000000000001");
+        assertLookup("O'Brien","00000000-0000-0000-0000-000000000001",false);
     }
-    private void assertLookup(String name,String expected) throws Exception {
+    @Test void checkedIdentityReadUsesTheActualPackagedJdbcPath() throws Exception {
+        assertLookup("00000000-0000-0000-0000-000000000001","00000000-0000-0000-0000-000000000001",true);
+    }
+    @Test void checkedSqlLookingIdentityIsAnActualMissingRow() throws Exception {
+        assertLookup("' OR 1=1 --",null,true);
+    }
+    private void assertLookup(String name,String expected,boolean checked) throws Exception {
         // Exercise the packaged Java8 pool relocation rather than the upstream
         // dependency's unshaded Java11 pool on the unit-test classpath.
         URL artifact=Paths.get(System.getProperty("advancedcore.jar")).toUri().toURL();
@@ -59,9 +65,18 @@ class LegacyMySQLReadArtifactIT {
                 when(driverType.getMethod("getConnectionManager").invoke(driver)).thenReturn(manager);
                 when((Connection)manager.getClass().getMethod("getConnection").invoke(manager)).thenReturn(connection);
                 set(storeType,store,"name","users");
-                set(storeType,store,"plugin",mock(AdvancedCorePlugin.class));
+                AdvancedCorePlugin plugin=mock(AdvancedCorePlugin.class);
+                com.bencodez.advancedcore.api.user.UserManager users=mock(com.bencodez.advancedcore.api.user.UserManager.class);
+                when(plugin.getUserManager()).thenReturn(users);
+                when(users.getDataManager()).thenReturn(mock(com.bencodez.advancedcore.api.user.usercache.UserDataManager.class));
+                set(storeType,store,"plugin",plugin);
                 set(storeType,store,"mysql",driver);
-                assertEquals(expected,storeType.getMethod("getUUID",String.class).invoke(store,name));
+                if(checked) {
+                    java.util.List<com.bencodez.simpleapi.sql.Column> row=(java.util.List<com.bencodez.simpleapi.sql.Column>)
+                        storeType.getMethod("getExactStrict",String.class).invoke(store,name);
+                    if(expected==null)assertTrue(row.isEmpty());
+                    else {assertEquals(2,row.size());assertEquals(expected,row.get(0).getValue().getString());assertEquals("O'Brien",row.get(1).getValue().getString());}
+                } else assertEquals(expected,storeType.getMethod("getUUID",String.class).invoke(store,name));
                 assertTrue(connection.isClosed(),"The read must close its connection");
             }
         }

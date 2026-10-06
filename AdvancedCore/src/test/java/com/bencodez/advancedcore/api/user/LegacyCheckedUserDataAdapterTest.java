@@ -49,6 +49,30 @@ class LegacyCheckedUserDataAdapterTest {
         Fixture unknown=new Fixture(null);unknown.data.setValuesStrict(Collections.emptyMap());
         assertThrows(IllegalStateException.class,()->unknown.data.setValuesStrict(Collections.singletonMap("Points",new DataValueInt(7))));
     }
+    @Test void checkedMysqlReadPreservesReturnedTypesAndCannotFallbackToLegacyRead() throws Exception {
+        Fixture f=new Fixture(UserStorage.MYSQL);MySQL mysql=mock(MySQL.class);when(f.plugin.getMysql()).thenReturn(mysql);
+        when(mysql.getExactStrict(UUID)).thenReturn(new ArrayList<>(Collections.singletonList(new Column("Points",new DataValueInt(7)))));
+        Map<String,DataValue> result=f.data.getValuesStrict();assertEquals(7,result.get("Points").getInt());
+        verify(mysql,never()).getExact(anyString());
+        when(mysql.getExactStrict(UUID)).thenReturn(null);assertThrows(IllegalStateException.class,f.data::getValuesStrict);
+    }
+    @Test void checkedSqliteReadPreservesFailureAndMissingBackendIsNotAnEmptyUser() throws Exception {
+        Fixture f=new Fixture(UserStorage.SQLITE);assertThrows(SQLException.class,f.data::getValuesStrict);
+        UserTable table=mock(UserTable.class);when(f.plugin.getSQLiteUserTable()).thenReturn(table);
+        SQLException offline=new SQLException("database unavailable");doThrow(offline).when(table).getExactStrict(any());
+        assertSame(offline,assertThrows(SQLException.class,f.data::getValuesStrict));verify(table,never()).getExact(any());
+        Fixture mysql=new Fixture(UserStorage.MYSQL);assertThrows(SQLException.class,mysql.data::getValuesStrict);
+        Fixture unknown=new Fixture(null);assertThrows(IllegalStateException.class,unknown.data::getValuesStrict);
+    }
+    @Test void checkedFlatReadUsesExistingOwnerAndPropagatesItsFailure() throws Exception {
+        Fixture f=new Fixture(UserStorage.FLAT);FileThread owner=mock(FileThread.class);
+        try(MockedStatic<FileThread> files=mockStatic(FileThread.class)) {
+            files.when(FileThread::getInstance).thenReturn(owner);when(owner.getValuesStrict(UUID)).thenReturn(new HashMap<>());
+            assertTrue(f.data.getValuesStrict().isEmpty());verify(owner,never()).getThread();
+            IOException unavailable=new IOException("file unreadable");when(owner.getValuesStrict(UUID)).thenThrow(unavailable);
+            assertSame(unavailable,assertThrows(IOException.class,f.data::getValuesStrict));
+        }
+    }
     private static class Fixture {
         final AdvancedCorePlugin plugin=mock(AdvancedCorePlugin.class);
         final AdvancedCoreUser user=mock(AdvancedCoreUser.class);

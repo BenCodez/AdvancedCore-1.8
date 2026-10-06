@@ -73,6 +73,19 @@ class LegacyCheckedFileWriteTest {
         assertTrue(Files.isSymbolicLink(file()));assertEquals(7,read(actual).getInt("Points"));
         assertEquals("value",read(actual).getString("Preserved"));
     }
+    @Test void checkedReadIsReadOnlyAndPreservesLegacyTypes() throws Exception {
+        FileThread owner=owner();assertTrue(owner.getValuesStrict(UUID).isEmpty());assertFalse(Files.exists(directory.resolve("Data")));
+        Files.createDirectories(file().getParent());byte[] data="Points: 7\nEnabled: 'true'\nMessage: text\n".getBytes(StandardCharsets.UTF_8);
+        Files.write(file(),data);Map<String,DataValue> read=owner.getValuesStrict(UUID);
+        assertEquals(7,read.get("Points").getInt());assertEquals("true",read.get("Enabled").getString());
+        assertEquals("text",read.get("Message").getString());assertArrayEquals(data,Files.readAllBytes(file()));verify(owner,never()).getThread();
+    }
+    @Test void checkedReadRejectsMalformedAndNonFileInputWithoutWriting() throws Exception {
+        FileThread owner=owner();Files.createDirectories(file().getParent());byte[] bad="Points: [\n".getBytes(StandardCharsets.UTF_8);
+        Files.write(file(),bad);assertThrows(IOException.class,()->owner.getValuesStrict(UUID));assertArrayEquals(bad,Files.readAllBytes(file()));
+        Files.delete(file());Files.createDirectories(file());assertThrows(IOException.class,()->owner.getValuesStrict(UUID));
+        assertThrows(IllegalArgumentException.class,()->owner.getValuesStrict("../escape"));
+    }
     private FileThread owner() throws Exception {
         FileThread owner=mock(FileThread.class,CALLS_REAL_METHODS);AdvancedCorePlugin plugin=mock(AdvancedCorePlugin.class);
         when(plugin.getDataFolder()).thenReturn(directory.toFile());Field field=FileThread.class.getDeclaredField("plugin");

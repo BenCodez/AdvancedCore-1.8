@@ -368,6 +368,30 @@ public class MySQL {
 		return columns;
 	}
 
+	/** Checked, single-identity read; empty means an actual missing row, never a failed query. */
+	public ArrayList<Column> getExactStrict(String uuid) throws SQLException {
+		if (mysql == null || mysql.getConnectionManager() == null) throw new SQLException("MySQL user storage is unavailable");
+		try (Connection connection = mysql.getConnectionManager().getConnection()) {
+			if (connection == null) throw new SQLException("MySQL connection is unavailable");
+			if (!connection.getAutoCommit()) throw new SQLException("Checked user snapshots require auto-commit");
+			try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM " + getName() + " WHERE `uuid`=?;")) {
+				statement.setString(1, uuid);
+				try (ResultSet rows = statement.executeQuery()) {
+					ArrayList<Column> result = new ArrayList<>();
+					if (rows.next()) {
+						for (int i = 1; i <= rows.getMetaData().getColumnCount(); i++) {
+							String key = rows.getMetaData().getColumnLabel(i);
+							if (plugin.getUserManager().getDataManager().isInt(key)) result.add(new Column(key, new DataValueInt(rows.getInt(i))));
+							else if (plugin.getUserManager().getDataManager().isBoolean(key)) result.add(new Column(key, new DataValueBoolean(Boolean.valueOf(rows.getString(i)))));
+							else result.add(new Column(key, new DataValueString(rows.getString(i))));
+						}
+					}
+					return result;
+				}
+			}
+		}
+	}
+
 	public ArrayList<Column> getExact(String uuid) {
 		return getExactQuery(new Column("uuid", new DataValueString(uuid)));
 	}

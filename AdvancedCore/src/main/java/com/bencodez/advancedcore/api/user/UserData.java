@@ -359,6 +359,23 @@ public class UserData {
 		return getString(key);
 	}
 
+	/** One checked storage snapshot; absent identities are empty, failures propagate. */
+	public HashMap<String, DataValue> getValuesStrict() throws SQLException, IOException {
+		UserStorage storage = user.getPlugin().getStorageType();
+		if (storage == null) throw new IllegalStateException("User storage is not initialized");
+		if (storage == UserStorage.FLAT) return FileThread.getInstance().getValuesStrict(user.getUUID());
+		List<Column> columns;
+		if (storage == UserStorage.MYSQL) {
+			if (user.getPlugin().getMysql() == null) throw new SQLException("MySQL user storage is unavailable");
+			columns = user.getPlugin().getMysql().getExactStrict(user.getUUID());
+		} else if (storage == UserStorage.SQLITE) {
+			if (user.getPlugin().getSQLiteUserTable() == null) throw new SQLException("SQLite user storage is unavailable");
+			columns = user.getPlugin().getSQLiteUserTable().getExactStrict(new Column("uuid", new DataValueString(user.getUUID())));
+		} else throw new IllegalStateException("Unsupported user storage");
+		if (columns == null) throw new IllegalStateException("User storage omitted its checked snapshot");
+		return convert(columns);
+	}
+
 	public HashMap<String, DataValue> getValues() {
 		return getValues(user.getPlugin().getStorageType());
 	}

@@ -298,6 +298,32 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		return list;
 	}
 
+	/** Checked read of the configured primary identity, retaining the shared connection owner. */
+	public ArrayList<Column> getExactStrict(Column primary) throws SQLException {
+		if (!primary.getName().equalsIgnoreCase(primaryKey.getName())) throw new IllegalArgumentException("The configured primary identity must be used");
+		synchronized (object) {
+			if (sqLite == null) throw new SQLException("SQLite user storage is unavailable");
+			Connection connection = sqLite.getSQLConnection();
+			if (connection == null) throw new SQLException("SQLite connection is unavailable");
+			if (!connection.getAutoCommit()) throw new SQLException("Checked user snapshots require auto-commit");
+			try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM " + getName() + " WHERE `" + primaryKey.getName() + "`=?")) {
+				bindStrictValue(statement, 1, primary);
+				try (ResultSet rows = statement.executeQuery()) {
+					ArrayList<Column> result = new ArrayList<>();
+					if (rows.next()) {
+						for (int i = 1; i <= rows.getMetaData().getColumnCount(); i++) {
+							String key = rows.getMetaData().getColumnLabel(i);
+							if (plugin.getUserManager().getDataManager().isInt(key)) result.add(new Column(key, new DataValueInt(rows.getInt(i))));
+							else if (plugin.getUserManager().getDataManager().isBoolean(key)) result.add(new Column(key, new DataValueBoolean(Boolean.valueOf(rows.getString(i)))));
+							else result.add(new Column(key, new DataValueString(rows.getString(i))));
+						}
+					}
+					return result;
+				}
+			}
+		}
+	}
+
 	public ArrayList<Column> getExact(Column column) {
 		ArrayList<Column> result = new ArrayList<>();
 

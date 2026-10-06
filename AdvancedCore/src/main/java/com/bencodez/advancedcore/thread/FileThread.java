@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFileAttributeView;
 import java.nio.file.attribute.PosixFileAttributes;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
@@ -18,6 +19,8 @@ import com.bencodez.advancedcore.AdvancedCorePlugin;
 import com.bencodez.advancedcore.api.misc.files.FilesManager;
 import com.bencodez.advancedcore.api.user.UserData;
 import com.bencodez.simpleapi.sql.data.DataValue;
+import com.bencodez.simpleapi.sql.data.DataValueInt;
+import com.bencodez.simpleapi.sql.data.DataValueString;
 
 /**
  * The Class Thread.
@@ -228,6 +231,26 @@ public class FileThread {
 					}
 				}
 			}
+		}
+	}
+
+	/** Read-only checked snapshot under the same file owner as checked writes. */
+	public HashMap<String, DataValue> getValuesStrict(String uuid) throws IOException {
+		UUID.fromString(uuid);
+		synchronized (FileThread.getInstance()) {
+			if (plugin == null) throw new IOException("User file owner is not initialized");
+			Path target = new File(new File(plugin.getDataFolder(), "Data"), uuid + ".yml").getCanonicalFile().toPath();
+			HashMap<String, DataValue> values = new HashMap<>();
+			if (Files.notExists(target)) return values;
+			if (!Files.isRegularFile(target)) throw new IOException("User data is not a readable regular file");
+			YamlConfiguration data = new YamlConfiguration();
+			try { data.load(target.toFile()); }
+			catch (InvalidConfigurationException invalid) { throw new IOException("Existing user data is malformed", invalid); }
+			for (String key : data.getKeys(false)) {
+				if (data.isInt(key)) values.put(key, new DataValueInt(data.getInt(key)));
+				else values.put(key, new DataValueString(data.getString(key, "")));
+			}
+			return values;
 		}
 	}
 

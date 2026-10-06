@@ -85,6 +85,34 @@ class LegacySQLiteCheckedWriteTest {
         assertEquals("SQLite connection is unavailable",failure.getMessage());
         verify(table,never()).checkColumn(any());
     }
+    @Test void checkedReadPreservesTypesAndMissingIdentityIsActuallyEmpty() throws Exception {
+        try(Connection connection=database()) {
+            try(Statement setup=connection.createStatement()) {
+                setup.executeUpdate("ALTER TABLE users ADD Counter INTEGER");
+                setup.executeUpdate("INSERT INTO users VALUES ('one','O''Brien','keep','true',7)");
+            }
+            UserTable table=fixture(connection);List<Column> row=table.getExactStrict(primary("one"));
+            assertEquals(5,row.size());assertEquals("O'Brien",value(row,"Message").getString());
+            assertEquals(7,value(row,"Counter").getInt());assertTrue(value(row,"Enabled").getBoolean());
+            assertTrue(table.getExactStrict(primary("missing")).isEmpty());assertFalse(connection.isClosed());
+        }
+    }
+    @Test void unavailableOrClosedReadCannotBecomeAnEmptySnapshot() throws Exception {
+        assertThrows(SQLException.class,()->fixture(null).getExactStrict(primary("one")));
+        Connection connection=database();UserTable table=fixture(connection);connection.close();
+        assertThrows(SQLException.class,()->table.getExactStrict(primary("one")));
+    }
+    @Test void checkedReadRejectsOuterTransactionAndNonIdentityFilter() throws Exception {
+        try(Connection connection=database()) {
+            UserTable table=fixture(connection);connection.setAutoCommit(false);
+            assertThrows(SQLException.class,()->table.getExactStrict(primary("one")));
+            connection.rollback();connection.setAutoCommit(true);
+            assertThrows(IllegalArgumentException.class,()->table.getExactStrict(new Column("Message",new DataValueString("one"))));
+        }
+    }
+    private DataValue value(List<Column> values,String key) {
+        return values.stream().filter(c->c.getName().equals(key)).findFirst().get().getValue();
+    }
     private Connection database() throws Exception {
         Class.forName("org.sqlite.JDBC");Connection connection=DriverManager.getConnection("jdbc:sqlite::memory:");
         try (Statement statement=connection.createStatement()) {
@@ -94,7 +122,12 @@ class LegacySQLiteCheckedWriteTest {
     }
     private UserTable fixture(Connection connection) {
         SQLite sqlite=mock(SQLite.class);when(sqlite.getSQLConnection()).thenReturn(connection);
-        UserTable table=spy(new UserTable(mock(AdvancedCorePlugin.class),"users",Collections.singletonList(primary("one"))));
+        AdvancedCorePlugin plugin=mock(AdvancedCorePlugin.class);
+        com.bencodez.advancedcore.api.user.UserManager users=mock(com.bencodez.advancedcore.api.user.UserManager.class);
+        com.bencodez.advancedcore.api.user.usercache.UserDataManager metadata=mock(com.bencodez.advancedcore.api.user.usercache.UserDataManager.class);
+        when(plugin.getUserManager()).thenReturn(users);when(users.getDataManager()).thenReturn(metadata);
+        when(metadata.isInt("Counter")).thenReturn(true);when(metadata.isBoolean("Enabled")).thenReturn(true);
+        UserTable table=spy(new UserTable(plugin,"users",Collections.singletonList(primary("one"))));
         table.setSqLite(sqlite);
         // This fixture's schema is explicit; the test covers checked writes, not automatic ALTER.
         doNothing().when(table).checkColumn(any());return table;

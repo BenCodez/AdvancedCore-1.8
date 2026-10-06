@@ -14,7 +14,7 @@ import com.bencodez.simpleapi.sql.data.*;
 class LegacyCacheSnapshotTest {
     @Test void refreshPreservesQueuedValueAndLoadsDynamicStoredKeys() throws Exception {
         Fixture f=new Fixture();f.cache.addChange(new UserDataChangeString("Points","new"),true);
-        when(f.data.getValues()).thenReturn(values("old"));f.cache.cache();
+        when(f.data.getValuesStrict()).thenReturn(values("old"));f.cache.cache();
         assertEquals("new",f.value());assertEquals("keep",f.cache.getCache().get("Dynamic").getString());
         assertTrue(f.cache.hasChangesToProcess());
     }
@@ -59,14 +59,14 @@ class LegacyCacheSnapshotTest {
         Fixture f=new Fixture();ExecutorService writer=Executors.newSingleThreadExecutor();
         try {
             doAnswer(call->{writer.submit(()->f.cache.addChange(new UserDataChangeString("Points","new"),true))
-                .get(5,TimeUnit.SECONDS);return values("old");}).when(f.data).getValues();
+                .get(5,TimeUnit.SECONDS);return values("old");}).when(f.data).getValuesStrict();
             f.cache.cache();assertEquals("new",f.value());
         } finally {writer.shutdownNow();assertTrue(writer.awaitTermination(5,TimeUnit.SECONDS));}
     }
     @Test void nullReplacementStillPreservesPendingDataAndLaterRefreshCanApplyStoredValues() throws Exception {
         Fixture f=new Fixture();f.cache.addChange(new UserDataChangeString("Points","new"),true);
         f.cache.updateCache(null);assertEquals("new",f.value());f.cache.processChanges();
-        when(f.data.getValues()).thenReturn(values("stored"));f.cache.cache();assertEquals("stored",f.value());
+        when(f.data.getValuesStrict()).thenReturn(values("stored"));f.cache.cache();assertEquals("stored",f.value());
     }
     @Test void writeQueuedBeforeReadStillFencesItsLaterCompletion() throws Exception {
         Fixture f=new Fixture();f.cache.addChange(new UserDataChangeString("Points","new"),true);
@@ -89,15 +89,27 @@ class LegacyCacheSnapshotTest {
             new com.bencodez.simpleapi.sql.Column("Points",new DataValueString("52")))));
         assertEquals(52,reader.getInt("Points",true,true));assertEquals("52",reader.getString("Points",true,true));
     }
+    @Test void failedCheckedReadLeavesExistingCacheAndPendingPayloadUnchanged() throws Exception {
+        Fixture f=new Fixture();f.cache.updateCache(values("stored"));
+        f.cache.addChange(new UserDataChangeString("Points","pending"),true);
+        java.sql.SQLException offline=new java.sql.SQLException("unavailable");when(f.data.getValuesStrict()).thenThrow(offline);
+        IllegalStateException result=assertThrows(IllegalStateException.class,f.cache::cache);assertSame(offline,result.getCause());
+        assertEquals("pending",f.value());assertEquals("keep",f.cache.getCache().get("Dynamic").getString());
+        assertTrue(f.cache.hasChangesToProcess());verify(f.data,never()).getKeys();verify(f.data,never()).getValues();
+    }
+    @Test void actualMissingIdentityLoadsDefaultsFromOneCheckedRead() throws Exception {
+        Fixture f=new Fixture();when(f.data.getValuesStrict()).thenReturn(new HashMap<>());f.cache.cache();
+        assertEquals("",f.value());verify(f.data,times(1)).getValuesStrict();verify(f.data,never()).getKeys();verify(f.data,never()).getValues();
+    }
     private static HashMap<String,DataValue> values(String points) {
         HashMap<String,DataValue> data=new HashMap<>();data.put("Points",new DataValueString(points));
         data.put("Dynamic",new DataValueString("keep"));return data;
     }
     private static class BlockingRead {
         final CountDownLatch entered=new CountDownLatch(1),release=new CountDownLatch(1);
-        BlockingRead(Fixture f) {
+        BlockingRead(Fixture f) throws Exception {
             doAnswer(call->{entered.countDown();assertTrue(release.await(5,TimeUnit.SECONDS));return values("stale");})
-                .when(f.data).getValues();
+                .when(f.data).getValuesStrict();
         }
     }
     private static class Fixture {

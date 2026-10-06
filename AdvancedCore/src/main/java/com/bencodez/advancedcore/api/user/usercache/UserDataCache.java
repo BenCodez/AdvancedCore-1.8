@@ -76,8 +76,10 @@ public class UserDataCache {
 			before = new HashMap<>(cache);
 		}
 		AdvancedCoreUser user = manager.getPlugin().getUserManager().getUser(currentUuid, false);
-		ArrayList<String> keys = new ArrayList<>(user.getUserData().getKeys());
-		HashMap<String, DataValue> refreshed = new HashMap<>(user.getUserData().getValues());
+		final HashMap<String, DataValue> refreshed;
+		try { refreshed = new HashMap<>(user.getUserData().getValuesStrict()); }
+		catch (SQLException | IOException failure) { throw new IllegalStateException("User cache snapshot was not read", failure); }
+		ArrayList<String> keys = new ArrayList<>(refreshed.keySet());
 		// Keep dynamic stored fields as well as registered defaults, as pinned main does.
 		for (UserDataKey dataKey : manager.getKeys()) {
 			keys.remove(dataKey.getKey());

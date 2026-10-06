@@ -351,3 +351,41 @@ new user with defaults. Manager generation fencing, non-queued setter/storage
 admission and shutdown draining also remain unresolved. External mutation through
 the legacy raw map is not advertised as thread-safe. The full ledger, final
 runtime acceptance and independent review remain due; no PR readiness is claimed.
+
+## Checked storage snapshot reads
+
+Cache population now uses one additive UserData.getValuesStrict read, replacing
+the two legacy keys/values queries. MySQL and SQLite expose getExactStrict for
+one primary identity with bound values; statement/result-set failures propagate,
+missing connections and outer transactions are rejected, and empty results mean
+an actual missing row. MySQL closes its borrowed connection; SQLite retains the
+owner-managed connection. Registered integer/boolean and dynamic string fields
+retain the existing DTO representation. Legacy getExact/getValues APIs are
+unchanged. FileThread's checked read strictly loads existing YAML under its
+existing owner lock, is read-only, does not start the legacy polling thread, and
+returns empty only for an absent file. Malformed, unreadable/non-file inputs fail.
+Cache publication wraps checked errors visibly without replacing existing values
+or pending payloads with defaults. These checks affect cache population, not all
+remaining direct legacy read callers.
+
+Ten new unit regressions cover JDBC types/missing identities, closed/missing
+connections, transaction/filter guards, file read-only/type behavior and malformed
+input, cache failure preservation/defaults, and all three adapter routes. Four
+new actual-shaded-artifact regressions cover successful/missing MySQL query paths
+through real SQLite JDBC and checked query failures/resource closure. They do not
+claim live MySQL driver acceptance for this new reader. Java8 clean install
+passes111 unit+12 artifact tests; exact paired consumer clean verify passes14
+unit+1 artifact test, all zero failures/errors/skips. Final base bytecode stays
+major<=52. Logs: ac-checked-read-clean-install.log and
+vp-checked-read-clean-verify.log; hashes/counts: checked-read-build-results.json.
+
+The exact candidate additionally passes real Java8/Spigot1.8.8 acceptance in both
+SQLite and FLAT modes: online vote/reward, SetPoints/AddPoints to10,total1,
+graceful stop and restart persistence. No cache snapshot/write, event-dispatch,
+or linkage errors are observed in either startup/restart log. The controlled
+fixture's temporary FLAT configuration is restored byte-for-byte to its prior
+SQLite configuration. Evidence CacheReadSQL/CacheReadFlat JSON pins the same
+consumer artifact; all fixture processes are stopped. This is not live MySQL,
+proxy, or failed-shutdown acceptance. Registry generation fencing, non-queued
+setter admission, shutdown draining, the broader ledger and final independent
+review remain incomplete. No PR readiness is claimed.

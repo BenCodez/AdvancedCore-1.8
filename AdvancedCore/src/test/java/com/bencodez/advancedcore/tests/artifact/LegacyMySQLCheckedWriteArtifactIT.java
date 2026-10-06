@@ -65,6 +65,26 @@ class LegacyMySQLCheckedWriteArtifactIT {
             verifyNoInteractions(f.connection,f.statement);
         }
     }
+    @Test void checkedReadFailurePropagatesAndClosesBorrowedResources() throws Exception {
+        try(Fixture f=new Fixture()) {
+            SQLException unavailable=new SQLException("query rejected");when(f.statement.executeQuery()).thenThrow(unavailable);
+            InvocationTargetException result=assertThrows(InvocationTargetException.class,
+                ()->f.storeType.getMethod("getExactStrict",String.class).invoke(f.store,f.uuid));
+            assertSame(unavailable,result.getCause());verify(f.statement).setString(1,f.uuid);
+            verify(f.statement).close();verify(f.connection).close();assertTrue(f.uuids.isEmpty());
+        }
+    }
+    @Test void checkedReadRejectsMissingConnectionAndOuterTransaction() throws Exception {
+        try(Fixture f=new Fixture()) {
+            f.borrowed.set(null);InvocationTargetException missing=assertThrows(InvocationTargetException.class,
+                ()->f.storeType.getMethod("getExactStrict",String.class).invoke(f.store,f.uuid));
+            assertTrue(missing.getCause() instanceof SQLException);verifyNoInteractions(f.statement,f.connection);
+            f.borrowed.set(f.connection);when(f.connection.getAutoCommit()).thenReturn(false);
+            InvocationTargetException transaction=assertThrows(InvocationTargetException.class,
+                ()->f.storeType.getMethod("getExactStrict",String.class).invoke(f.store,f.uuid));
+            assertTrue(transaction.getCause() instanceof SQLException);verify(f.connection).close();verifyNoInteractions(f.statement);
+        }
+    }
     private static class Fixture implements AutoCloseable {
         final String uuid="00000000-0000-0000-0000-000000000002";
         final Connection connection=mock(Connection.class);
