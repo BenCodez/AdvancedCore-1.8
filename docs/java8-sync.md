@@ -1830,3 +1830,77 @@ ordering, stale queued opens/closes, complete fill-button copying/loading, and t
 remaining full upstream ledger/features/runtime matrix still require work. Fresh
 independent final review has not run. The full goal remains active; no source push
 or PR opening is authorized.
+
+## Inventory click ownership and callback compatibility
+
+Ported pinned upstream listener changes `7788ea80f721614615bf89fc827325e86989892c`
+and `387d3a74adb28c6928f577b1080346703dfe9c99`, together with the additive
+callback-mode API from `08efab8b3523091fb866aea21ad623f30559bec1`.
+Native click admission, cursor/event protection, inventory close, full-inventory
+delivery checks and page navigation run on the Bukkit owner. Button callbacks
+remain asynchronous by default. `setClickAsync(boolean)`, `runClicksSync()` and
+`runClicksAsync()` provide the same explicit opt-in contract as pinned main.
+Existing callback signatures and the integer `SpamClickTime` configuration remain
+compatible; unrelated modern duration parsing is not copied. The upstream patch's
+accidental removal of a required fill-loop brace is not reproduced.
+
+Top-inventory selection uses native inventory equality, retaining Spigot 1.8.8's
+distinct equal wrappers. A backend/player inventory being another chest does not
+make it a managed GUI. Default asynchronous callbacks can still call the shared
+sound method; native location/sound access now hands off to the Bukkit owner.
+Disabled sound remains a no-op without scheduling. Configuration, schemas,
+serialized forms, command/permission definitions, wire formats and release
+metadata are unchanged.
+
+The unchanged baseline lacks the click-mode API: its focused test fails with one
+`NoSuchMethodException` error. The final candidate passes 377 unit and 18 artifact
+AdvancedCore tests, and exact-dependent VotingPlugin passes 45 unit and one
+artifact test. Failures, errors and skips are zero. Final artifacts have 1816/2433
+base classes and maximum major version 52; the two-class decrease is replacement
+of anonymous listener tasks by Java 8 lambdas. Commands actually run use the
+workspace Temurin 8u504 JDK and dedicated Maven repository:
+
+```shell
+mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install
+mvn -B -f VotingPlugin/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean verify
+```
+
+Artifact SHA-256:
+
+- AdvancedCore: `9ba1a4464fc8849a49466064c835f18b5abb41c6bb5d873ac84c5a42204d1fbf`
+- VotingPlugin: `5aed4ec81b0a6748fb79649da9e6ab045ba8ac837ae80dc04b59e2fea13fdc45`
+
+Real Java 8 / Spigot 1.8.8 connected-client fixture `8c173748e9` sends native
+next-page, page-two emerald and subsequent diamond clicks. Server assertions
+verify the sync opt-in executes on the owner and default callbacks execute
+asynchronously. The client observes three native windows and sends all three
+clicks. Graceful disable and SQLite integrity pass. This is protocol-client
+observation, not graphical visual inspection.
+
+Two failed fixture attempts are retained: the first sent the second click during
+the configured spam interval; the next fixture mistakenly clicked the next arrow
+again while waiting. The final fixture waits for server-confirmed page-two
+admission readiness (elapsed 145 ms, configured threshold 100 ms), then sends its
+content click. It restricts navigation to the first window. Production spam
+protection is unchanged; no arbitrary delay or weaker callback assertion was used.
+Fresh fixture cache initialization runs off-owner and settles before cleanup.
+The same candidate also passes the two-connected-viewer timer acceptance again.
+
+Remaining work includes complete public GUI rendering/open/close generations,
+retaining callback event snapshots, all GUI families, fill-button copying/loading,
+and full FullInventoryHandler queue/persistence/timer lifecycle. Existing async
+callback code remains responsible for its own Bukkit handoffs. Neither this
+cohort nor green builds prove the full upstream ledger or complete runtime matrix.
+The full backport remains active; independent final review and PR readiness are
+still pending. No source push or PR opening is authorized.
+
+Exact candidate retained acceptance also passes native item/pagination/damage,
+MySQL/global pool lifecycle, conversions/repaired retry, console completion,
+pending-write disable and restart persistence in fixture `374e6c657d`. The two-
+connected-viewer repeat is `2c820ec022`. Evidence is retained in
+`listener-final-live-results.json` and the build/live logs. Test helpers and
+generated artifacts remain outside implementation repositories.

@@ -144,6 +144,9 @@ public class BInventory {
 	@Getter
 	private boolean closeInv = true;
 
+	@Getter
+	private boolean clickAsync = true;
+
 	private HashMap<String, Object> data = new HashMap<>();
 
 	private Inventory inv;
@@ -706,6 +709,14 @@ public class BInventory {
 	}
 
 	public void playSound(Player player) {
+		if (!playerSound) {
+			return;
+		}
+		if (!Bukkit.isPrimaryThread()) {
+			AdvancedCorePlugin plugin = AdvancedCorePlugin.getInstance();
+			plugin.getBukkitScheduler().runTask(plugin, () -> playSound(player), player);
+			return;
+		}
 		if (playerSound) {
 			Sound sound = AdvancedCorePlugin.getInstance().getOptions().getClickSoundSound();
 			if (sound != null) {
@@ -725,6 +736,20 @@ public class BInventory {
 	 */
 	public void setButtons(Map<Integer, BInventoryButton> buttons) {
 		this.buttons = buttons;
+	}
+
+	/** Existing button callbacks remain asynchronous unless explicitly opted in. */
+	public BInventory setClickAsync(boolean value) {
+		clickAsync = value;
+		return this;
+	}
+
+	public BInventory runClicksSync() {
+		return setClickAsync(false);
+	}
+
+	public BInventory runClicksAsync() {
+		return setClickAsync(true);
 	}
 
 	public BInventory setCloseInv(boolean value) {

@@ -26,6 +26,7 @@ import com.bencodez.advancedcore.api.inventory.BInventoryButton;
 import com.bencodez.advancedcore.api.inventory.GUISession;
 import com.bencodez.advancedcore.api.messages.PlaceholderUtils;
 import com.bencodez.simpleapi.scheduler.BukkitScheduler;
+import com.bencodez.simpleapi.player.PlayerUtils;
 
 class LegacyInventoryPaginationIntegrationTest {
     @Test
@@ -106,6 +107,7 @@ class LegacyInventoryPaginationIntegrationTest {
             GUISession session = new GUISession(gui, 2);
             sessions.when(() -> GUISession.extractSession(f.player)).thenReturn(session);
             when(gui.isPages()).thenReturn(true);
+            when(gui.isClickAsync()).thenReturn(true);
             when(gui.getMaxInvSize()).thenReturn(inventorySize);
             when(gui.getMaxPage()).thenReturn(2);
             BInventoryButton target = mock(BInventoryButton.class);
@@ -125,6 +127,7 @@ class LegacyInventoryPaginationIntegrationTest {
             when(top.getType()).thenReturn(InventoryType.CHEST);
             when(event.getWhoClicked()).thenReturn(f.player);
             when(event.getClickedInventory()).thenReturn(top);
+            f.players.when(() -> PlayerUtils.getTopInventory(f.player)).thenReturn(top);
             when(event.getSlot()).thenReturn(0);
             BInventoryListener listener = new BInventoryListener(f.plugin);
             listener.onInventoryClick(event);
@@ -151,6 +154,7 @@ class LegacyInventoryPaginationIntegrationTest {
         final MockedStatic<AdvancedCorePlugin> plugins = mockStatic(AdvancedCorePlugin.class);
         final MockedStatic<PlaceholderUtils> placeholders = mockStatic(PlaceholderUtils.class);
         final MockedStatic<Bukkit> bukkit = mockStatic(Bukkit.class);
+        final MockedStatic<PlayerUtils> players = mockStatic(PlayerUtils.class);
         final BInventory gui;
         Fixture() {
             plugins.when(AdvancedCorePlugin::getInstance).thenReturn(plugin);
@@ -180,6 +184,6 @@ class LegacyInventoryPaginationIntegrationTest {
         }
         Inventory current() { return created.get(created.size() - 1); }
         GUISession session() { return (GUISession) holders.get(holders.size() - 1); }
-        public void close() { bukkit.close(); placeholders.close(); plugins.close(); }
+        public void close() { players.close(); bukkit.close(); placeholders.close(); plugins.close(); }
     }
 }
