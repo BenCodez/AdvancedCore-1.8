@@ -574,10 +574,7 @@ public class BInventory {
 			openInv(player, inv);
 
 		} else {
-			maxPage = getHighestSlot() / (maxInvSize - 9);
-			if (getHighestSlot() % (maxInvSize - 9) != 0) {
-				maxPage++;
-			}
+			maxPage = InventoryPagination.getPageCount(getHighestSlot(), maxInvSize);
 			addPlaceholder("totalpages", "" + maxPage);
 			openInventory(player, 1);
 		}
@@ -591,17 +588,24 @@ public class BInventory {
 	 * @param page   the page
 	 */
 	public void openInventory(Player player, int page) {
+		if (page < 1) {
+			throw new IllegalArgumentException("Page must be >= 1");
+		}
+		maxPage = InventoryPagination.getPageCount(getHighestSlot(), maxInvSize);
+		page = Math.min(page, maxPage);
+		addPlaceholder("totalpages", "" + maxPage);
 		BInventory inventory = this;
 		addPlaceholder("currentpage", "" + page);
 		inv = Bukkit.createInventory(new GUISession(this, page), maxInvSize, PlaceholderUtils.replaceJavascript(player,
 				PlaceholderUtils.replacePlaceHolder(inventory.getInventoryName(), getPlaceholders())));
 		this.page = page;
-		int startSlot = (page - 1) * (maxInvSize - 9);
+		int contentSize = InventoryPagination.getContentSize(maxInvSize);
+		int startSlot = InventoryPagination.getButtonSlot(page, 0, maxInvSize);
 		for (Entry<Integer, BInventoryButton> pair : inventory.getButtons().entrySet()) {
 			int slot = pair.getKey();
 			if (slot >= startSlot) {
 				slot -= startSlot;
-				if (slot < (maxInvSize - 9)) {
+				if (InventoryPagination.isContentSlot(slot, maxInvSize)) {
 					ItemStack item = pair.getValue().getItem(player, getPlaceholders());
 					inv.setItem(slot, item);
 
@@ -615,7 +619,7 @@ public class BInventory {
 		}
 
 		for (BInventoryButton b : pageButtons) {
-			inv.setItem((maxInvSize - 9) + b.getSlot(), b.getItem(player, getPlaceholders()));
+			inv.setItem(contentSize + b.getSlot(), b.getItem(player, getPlaceholders()));
 		}
 		if (prevItem == null) {
 			if (AdvancedCorePlugin.getInstance().getOptions().getPrevItem() != null) {
@@ -636,7 +640,7 @@ public class BInventory {
 			}
 		}
 
-		inv.setItem(maxInvSize - 9, prevItem);
+		inv.setItem(contentSize, prevItem);
 
 		inv.setItem(maxInvSize - 1, nextItem);
 
@@ -716,6 +720,9 @@ public class BInventory {
 	 */
 	public void setPages(boolean pages) {
 		this.pages = pages;
+		if (!pages) {
+			maxPage = 1;
+		}
 	}
 
 	/**

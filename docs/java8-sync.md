@@ -1671,3 +1671,75 @@ item-damage-api-final-live-results.json plus focused/build/failed/live logs.
 Connectedclient slot acknowledgment remains unverified. Full upstream ledger,
 remainingfeatures/lifecycle/runtime matrix and freshindependentfinalreview are
 unfinished. No sourcepush or PR opening authorized; full goal remains active.
+
+
+### Shared inventory pagination boundaries (2026-10-06)
+
+The complete upstream helper and regression-test patches at
+`22b51a43f4389a241bf0e6b39df59bd77db4944d` and
+`fb9534fb4ee8abdb3fe40806a1307fe5e2135fac` are ported unchanged.
+The pagination portion of `fbccf80091d3d680505dbdf1b1ca218ba3cd5084`
+is integrated into legacy `BInventory` and its click listener. The remainder
+of that upstream commit, including per-viewer timer ownership and close/open
+lifecycle changes, is still pending; this is not a complete GUI lifecycle port.
+
+Page counts include the highest zero-based button slot, so a button at slot 90
+in a 54-slot paginated GUI remains accessible on page three. Rendering and click
+mapping share the same content-size calculation. The nine-slot legacy minimum
+has one content slot instead of dividing by zero. Requested pages below one
+throw before creating an inventory; oversized requests clamp to the last page.
+The published session, current-page/total-page placeholders, and source offsets
+use that clamped page. Disabling pagination resets the exposed maximum page to
+one. Existing size normalization, public APIs, legacy navigation materials,
+configuration defaults, storage, and proxy formats remain unchanged.
+
+Before production changes, five integration tests produced four assertion
+failures and zero errors: missing final boundary page, invalid-page acceptance,
+missing clamping, and nine-slot division by zero. The final focused run passes
+11 tests: three unchanged upstream helper tests, six production integration/
+listener tests (including both 54- and nine-slot mappings), and two retained
+timer regressions. Actual Java 8 clean install passes AdvancedCore 348 unit plus
+18 artifact tests; VotingPlugin clean verify against that exact locally installed
+artifact passes 45 unit plus one artifact test. All failures, errors, and skips
+are zero. Base class counts are 1824/2441; maximum class-file major is 52.
+Both commands use Temurin 1.8.0_504, Maven 3.9.9, their explicit module POMs,
+workspace-local Maven repository/temp paths, and the wagon resolver.
+Artifact SHA-256:
+
+- AdvancedCore: `617196926b2d11f5f268c2c25c72a05b9eea63ce44dbd69228789a14e2fab05b`
+- VotingPlugin: `23f9e74d173758c40fc284c04d98cc20a1bf531480b9267eaf4b03f24470b23c`
+
+Real Java 8 / Spigot 1.8.8 fixture `d1f7784a50` verifies native inventory contents,
+GUI/session identity, exact page publication multiplicities, navigation slots,
+clamping, invalid-page rejection, and graceful disable. Its unregistered native
+CraftPlayer overrides only inventory publication to capture actual native
+inventories. This does not prove connected-client rendering, inventory-view
+activation, or final-open ordering. Workspace-only NMS/capture helpers are never
+included in either production artifact or committed source.
+
+Failed fixture attempts are retained. The first assumed that a separate scheduled
+check would run after all five inventory opens; only one open had arrived. The
+next attempt observed all five but assumed FIFO completion. Native observations
+proved the correct inventory contents arrived in a different order. The corrected
+fixture waits for the fifth physical capture and validates every GUI/page identity
+and exact count independently of scheduler order. Production code and semantic
+assertions did not change during those fixture corrections. A combined storage
+fixture was interrupted by the early failed GUI assertion; its cleanup overlap
+is not attributed to product storage. The workspace runner now waits for the
+owned storage fixture body to settle before failure cleanup.
+
+Evidence: `pagination-baseline-test.log`, `pagination-focused-test.log`,
+`pagination-clean-install.log`, `pagination-consumer-clean-verify.log`,
+`pagination-build-results.json`, `pagination-runtime-d1f7784a50.json`, and
+retained private fixture logs/results. Connected-client GUI acceptance,
+viewer-timer lifecycle, the remaining full upstream ledger/implementation/runtime
+matrix, and fresh independent final review remain unfinished. No source push or
+PR opening has been authorized; the full objective remains active.
+
+
+The exact final consumer also passed retained native item/serialization/damage,
+MySQL/global borrowed/owned lifecycle, conversion/retry/console commands, pending
+write shutdown, and restart persistence in fixture `2928e89d6e`. Its owned fixture
+body settled before cleanup. SQLite integrity and both runtime log/error/credential
+audits passed. Evidence: `pagination-final-live-results.json`,
+`global-provider-mysql-runtime-results-2928e89d6e.json`, and `pagination-live.log`.

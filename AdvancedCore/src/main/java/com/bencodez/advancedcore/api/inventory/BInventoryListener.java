@@ -106,8 +106,8 @@ public class BInventoryListener implements Listener {
 						final int page = session.getPage();
 						final int maxPage = gui.getMaxPage();
 
-						if (slot < maxInvSize - 9) {
-							int buttonSlot = (page - 1) * (maxInvSize - 9) + event.getSlot();
+						if (InventoryPagination.isContentSlot(slot, maxInvSize)) {
+							int buttonSlot = InventoryPagination.getButtonSlot(page, slot, maxInvSize);
 							BInventoryButton button = gui.getButtons().get(buttonSlot);
 							if (button != null) {
 								gui.closeInv(player, button);
@@ -121,7 +121,7 @@ public class BInventoryListener implements Listener {
 								return;
 							}
 
-						} else if (slot == maxInvSize - 9) {
+						} else if (slot == InventoryPagination.getContentSize(maxInvSize)) {
 							if (page > 1) {
 
 								final int nextPage = page - 1;
@@ -147,7 +147,7 @@ public class BInventoryListener implements Listener {
 						}
 
 						for (BInventoryButton b : gui.getPageButtons()) {
-							if (slot == b.getSlot() + (gui.getMaxInvSize() - 9)) {
+							if (slot == b.getSlot() + InventoryPagination.getContentSize(gui.getMaxInvSize())) {
 								gui.closeInv(player, b);
 
 								try {
