@@ -1485,3 +1485,47 @@ item-tooltip-build-results.json and item-tooltip-live-results.json.
 This completes only the two recorded upstream tooltip dispositions. Full upstream
 ledger, remaining features/lifecycle issues, runtime matrix and fresh independent
 final review remain pending. No source push or PR opening.
+
+
+### Independent item templates and builder clones (2026-10-06)
+
+Upstream `15c078998727a4888b9468608e6026c9bbd05c3c` is ported: the ItemStack
+constructor copies its non-null input, so ItemBuilder.clone() also owns an
+independent mutable item. The existing nullable constructor remains accepted.
+This prevents GUI/template and placeholder changes from mutating the caller's
+item. Consumers inspected include BInventoryButton construction/setItem,
+AdvancedCoreUser's placeholder-aware item delivery, VotingPlugin VoteSite display
+items, VoteToday icons and VoteShop editors (which already explicitly clone).
+These consume the builder/result; no intended template mutation was identified.
+No public signature, config, serialization, schema, dependency or wire change.
+
+Unchanged baseline: two failures/zero errors. Final ownership+tooltip focused
+suite: six passed. Java8 clean install (AC) and coordinated clean verify (VP):
+AC317unit+18artifact, VP45unit+1artifact, zero failures/errors/skips. Baseclasses
+1823/2440, maximum major52. SHA256:
+AC `35af32a1fa56076dce7bd280d9cab4cfbb2d08ee65912058c5f202cc410bf3eb`;
+VP `5362c5cd683825251ee78632d779f7eb468e9fdb230a4b9b61d79ff769da9bc1`.
+Exact commands retain Temurin1.8.0_504/Maven3.9.9, explicit modulePOM,
+workspace-local Maven repository/tmp and wagon transport.
+
+Actual Spigot1.8.8 fixture7a34d41c0e verifies on the server owner that constructor
+and builder clones are distinct, caller amount/name remain unchanged, metadata
+flags/lore/durability survive copying, and subsequent caller lore mutation does
+not affect its copy. Retained tooltip and native storage conversion/retry/command
+checks also pass, with clean shutdown/restart20 and SQLite integrity. Two logs
+contain no tested errors or fixture credentials. Evidence:
+item-ownership-build-results.json and item-ownership-live-results.json, plus
+baseline/focused/build/live logs in the isolated workspace evidence directory.
+
+Exact upstream `36648206e2154314ccc4ca5f1f5592a0b21b7818` only removes the
+modern tooltip-reflection stacktrace; the fork's direct1.8 ItemFlag adaptation
+already avoids it. `c65c4d71ab0e47f2fabc713a6dc7d218af8ce3a2` silences modern
+addGlow reflection; the fork retains its non-reflective legacy enchantment
+implementation, without importing the modern call. Both dispositions preserve
+the existing1.8 implementation. Documentation-only
+`a70ded0072f5e1d24ce486676a68968fc66c4e16` is represented by this ownership
+rule: api/item owns item construction and compatibility-sensitive serialization;
+api/inventory owns GUI/editor behavior. Preserve those boundaries in later work.
+
+Full upstream ledger/features/lifecycle/runtime matrix and independent final
+review remain unfinished. Source commits are local; no push or PR opening.

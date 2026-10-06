@@ -356,12 +356,12 @@ public class ItemBuilder {
 	}
 
 	/**
-	 * Create a new ItemBuilder over an existing itemstack.
+	 * Create a new ItemBuilder over an independent copy of an existing itemstack.
 	 *
 	 * @param is The itemstack to create the ItemBuilder over.
 	 */
 	public ItemBuilder(ItemStack is) {
-		this.is = is;
+		this.is = is == null ? null : is.clone();
 	}
 
 	/**
