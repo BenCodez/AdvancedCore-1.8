@@ -541,6 +541,42 @@ public class UserData {
 			}
 	}
 
+    /**
+     * Physically commit a queue edit against the current authoritative predecessor.
+     * The transform must be side-effect-free. A checked absent key is empty;
+     * unreadable storage is a failure. Post-commit notification failures carry
+     * the committed value and must never cause the edit to be replayed.
+     */
+    public ArrayList<String> mutateStringListStrict(String key,
+            java.util.function.UnaryOperator<ArrayList<String>> transform) {
+        java.util.Objects.requireNonNull(key,"key");java.util.Objects.requireNonNull(transform,"transform");
+        if(key.isEmpty() || key.contains(" "))throw new IllegalArgumentException("Invalid queue key");
+        DataValue committed=user.getPlugin().getUserManager().getDataManager().mutateDirect(user,key,()->{
+            try {
+                DataValue stored=getValuesStrict().get(key);
+                return stored==null?new DataValueString(""):stored;
+            }catch(SQLException | IOException failure){throw new IllegalStateException("Queue predecessor could not be read",failure);}
+        },before->{
+            if(before==null)throw new IllegalStateException("Queue predecessor unavailable");
+            ArrayList<String> updated=java.util.Objects.requireNonNull(transform.apply(decodeStringList(before)),"transformed queue");
+            for(String entry:updated)java.util.Objects.requireNonNull(entry,"queue entry");
+            String serialized=String.join("%line%",updated);
+            if(serialized.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>65535)
+                throw new IllegalStateException("Queue edit exceeds the legacy storage bound");
+            return new DataValueString(serialized);
+        },value->{
+            try {setValuesStrict(java.util.Collections.singletonMap(key,value));}
+            catch(SQLException | IOException failure){throw new IllegalStateException("Queue edit was not acknowledged",failure);}
+        });
+        return decodeStringList(committed);
+    }
+
+    private static ArrayList<String> decodeStringList(DataValue value) {
+        if(!value.isString())throw new IllegalStateException("Queue predecessor is not a string");
+        String stored=value.getString();
+        return stored==null || stored.isEmpty()?new ArrayList<>():new ArrayList<>(java.util.Arrays.asList(stored.split("%line%")));
+    }
+
 	public void setStringList(final String key, final ArrayList<String> value) {
 		setStringList(key, value, true);
 	}

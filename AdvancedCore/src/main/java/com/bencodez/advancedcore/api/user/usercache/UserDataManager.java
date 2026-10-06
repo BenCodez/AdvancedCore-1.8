@@ -167,6 +167,41 @@ public class UserDataManager {
 			}
 	}
 
+	/** Checked read/modify/write using the current cache generation or the shared uncached owner. */
+	public com.bencodez.simpleapi.sql.data.DataValue mutateDirect(
+			com.bencodez.advancedcore.api.user.AdvancedCoreUser user, String key,
+			java.util.function.Supplier<com.bencodez.simpleapi.sql.data.DataValue> storageRead,
+			java.util.function.Function<com.bencodez.simpleapi.sql.data.DataValue, com.bencodez.simpleapi.sql.data.DataValue> transform,
+			java.util.function.Consumer<com.bencodez.simpleapi.sql.data.DataValue> storageWrite) {
+		java.util.Objects.requireNonNull(storageRead, "storageRead");
+		java.util.Objects.requireNonNull(transform, "transform");
+		java.util.Objects.requireNonNull(storageWrite, "storageWrite");
+		try (UserStorageOwnership.Scope admission = getPlugin().getUserStorageOwnership().admit()) {
+			UUID identity = UUID.fromString(user.getUUID());
+			UserStorageOwnership.Slot owner = getPlugin().getUserStorageOwnership().owner(identity);
+			UserDataCache current;
+			com.bencodez.simpleapi.sql.data.DataValue committed = null;
+			owner.getLock().lock();
+			try {
+				if (owner.isWriting()) throw new IllegalStateException("Recursive user mutation");
+				current = getUserDataCache().get(identity);
+				if (current != null && current.isRetired()) current = null;
+				if (current == null) {
+					committed = java.util.Objects.requireNonNull(transform.apply(storageRead.get()), "transformed value");
+					storageWrite.accept(committed);
+				}
+			} finally { owner.getLock().unlock(); }
+			if (current != null) {
+				// Retirement in this gap rejects visibly before mutation, never silently
+				// switching to a successor after an earlier read.
+				return current.mutateDirect(key, value -> transform.apply(value == null ? storageRead.get() : value), storageWrite);
+			}
+			try { getPlugin().getUserManager().onChange(user, key); }
+			catch (RuntimeException | Error failure) { throw new CommittedUserDataMutationException(committed, failure); }
+			return committed;
+		}
+	}
+
 	/** Bulk writes preserve the legacy absence of their own change notification. */
 	public void writeBatch(com.bencodez.advancedcore.api.user.AdvancedCoreUser user,
 			java.util.Map<String, com.bencodez.simpleapi.sql.data.DataValue> values,

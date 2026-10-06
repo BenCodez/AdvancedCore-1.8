@@ -2384,3 +2384,53 @@ runtime checkpoint is a fixture file, not production queue persistence. Nested
 replay choices and the remaining upstream ledger/platform matrix are incomplete.
 No queue storage format/config/proxy payload changed in this cohort. No push or PR
 opening; the independent final review remains pending the full scope.
+
+## Checked queue mutation bridge
+
+Added UserDataManager.mutateDirect to resolve the actual current per-UUID cache
+at execution and reuse its existing checked mutation owner. Uncached users perform
+checked read/transform/write under that same UserStorageOwnership slot. Cache
+retirement in the selection gap rejects instead of applying a read to a successor.
+Notifications run after ownership is released, and an uncached post-commit failure
+uses the existing CommittedUserDataMutationException with the acknowledged value.
+
+UserData.mutateStringListStrict provides the production queue integration boundary:
+unknown cached keys require a checked storage snapshot, only a checked absent key
+becomes empty, invalid types/null edits fail, writes are physically acknowledged,
+and the existing %line% serialization is retained. An edit larger than65535 UTF8
+bytes fails without trimming retained entries. This synchronous API belongs off
+the Bukkit owner, including replay checkpoint callbacks. Existing setters and
+ordinary reward behavior are unchanged; queue writers are not migrated yet.
+
+Eleven new regressions cover current-generation selection, checked cold reads,
+read/write failures, legitimate absent records, cached and uncached post-commit
+notification failures, malformed predecessors/null edits, concurrent uncached
+updates and the exact capacity boundary. The first focused compile failed because
+legacy MySQL.getExactStrict returns ArrayList rather than List; fixture values
+were corrected. The corrected initial7 plus existing18 tests pass (25 focused),
+and all11 final regressions pass in the full build.
+
+Actual Temurin8u504 commands retain the dedicated Maven repository and tmpdir:
+
+- mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install
+- mvn -B -f VotingPlugin/pom.xml with the same properties clean verify
+- same producer properties, -Dtest=LegacyQueueMutationBridgeTest,LegacyCheckedQueueMutationTest,LegacyDirectUserDataTest test
+
+Final full build:471 unit+18 artifact(489) AdvancedCore tests;45 unit+1 artifact(46)
+VotingPlugin tests, zero failures/errors/skips. Base classes1826/2443,maxmajor52.
+SHA256: AdvancedCore `7678d33a32be8a4cc245f2171188627b10743407bf35bd25a4e792518b908f08`;
+VotingPlugin `e4c99be1b06719d1454c5f35394800d5d7de04d002c0b384ec1d3da6f7a77630`.
+
+The native fixture uses the actual UserData mutation bridge for a dedicated test
+column during root admission/checkpoint and independently reads SQLite after clean
+shutdown. It also exercises generated user restrictions, native effects, overflow
+restart and client-visible recovery. This proves the bridge's real SQL path;
+it does not prove the production offline/timed queue dispatcher, claims, occurrence
+migration or crash recovery. Those remain the next integration work, along with
+all queue writers sharing this owner so stale replacements cannot erase progress.
+The full upstream ledger/platform matrix and independent review remain incomplete.
+No push or PR opening is authorized. Original CRLF sources remain CRLF; whitespace
+validation uses git -c core.whitespace=cr-at-eol diff --check without changing Git
+configuration.
