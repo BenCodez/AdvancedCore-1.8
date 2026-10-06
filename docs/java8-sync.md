@@ -783,3 +783,46 @@ persistence; no observed linkage/checked-write errors. Evidence:
 `checked-cache-runtime-results-QueueAckSQL.json`, `queue-mutation-final-live.log`.
 Fixture plugin removed and all owned server/client processes exited. This does
 not claim persisted queue replay, MySQL/FLAT/proxy or failed-shutdown acceptance.
+
+### Plugin-local storage ownership across cache generations
+
+`UserStorageOwnership` supplies 64 fixed lock/revision slots per plugin, keyed
+by UUID. Checked UserData reads/writes and cache batch ownership share a slot
+across cache generations and uncached wrappers. Checked recursive writes and
+reads from an in-flight write are rejected. The mutation-attempt revision
+changes before attempting a write, including failed/uncertain outcomes: cleanup
+can throw after a physical commit, so success-only fencing would be too weak.
+Private candidates read outside registry locks; a stale candidate re-reads under
+ownership before publication, and an already published live successor still wins.
+Direct typed setters resolve the cache when accepted work executes, preserving
+a cache published after admission. Retirement detaches the old generation before
+its callbacks; change notifications remain outside ownership. Lock order is
+storage owner -> cache monitor / native storage owner; no registry compute holds
+I/O or extension notifications. No new executor or unbounded identity map.
+
+Seven ownership regressions cover uncached wrapper serialization, private and
+existing-cache snapshot fencing, callbacks awaiting another thread's population,
+failed/reentrant writes, bounded ownership and an uncertain post-commit exception.
+An additional direct setter test covers cache publication after async admission.
+Existing cache-generation, callback, optimistic-overlay and direct-write tests
+remain intact. Actual Java 8 clean producer install: 197 unit + 12 artifact tests;
+exact consumer clean verify: 19 unit + 1 artifact test, all zero failures/errors/
+skips. Base classes 1819 / 2439 have maximum major 52. Evidence:
+`canonical-owner-build-results.json` and paired clean Maven logs.
+
+Exact consumer `be395e91d63bae4296a1efa6eff2949a3535ce8d343e2cd02cd224df1faf3fd7`
+passed real Java 8 / Spigot 1.8.8 `OwnerFenceSQL` acceptance: checked cached
+mutation, retirement, uncached typed write, repopulation/readback and restoration
+of the owned fixture field, detached reward snapshot, pending async user receipt,
+vote/reward, points10,total1, graceful stop, SQLite integrity and restart
+persistence. No observed linkage/checked-write errors. Evidence:
+`checked-cache-runtime-results-OwnerFenceSQL.json`, `canonical-owner-live.log`.
+Temporary diagnostic plugin removed; all owned server/client processes exited.
+
+This remains a partial native storage backport. Legacy bulk setters/deletes/wipes/
+migrations, cross-process atomicity, lifecycle admission/drain and failed-close
+recovery are not claimed covered. Strict bounded reward queue append/provenance/
+occurrences/checkpoints/replay and root async decisions/defer/native action
+receipts remain to be integrated. No schema/configuration/wire/release-version
+change; additive ownership getter/helper only. This cohort is not live MySQL,
+FLAT, proxy or failed-shutdown acceptance, full main parity, or final PR readiness.

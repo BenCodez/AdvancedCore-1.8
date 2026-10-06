@@ -120,7 +120,7 @@ class LegacyCacheSnapshotTest {
         final UserData data=mock(UserData.class);
         final UserDataCache cache;
         Fixture() {
-            when(manager.getPlugin()).thenReturn(plugin);when(manager.getTimer()).thenReturn(mock(ScheduledExecutorService.class));
+            when(plugin.getUserStorageOwnership()).thenReturn(new UserStorageOwnership());when(manager.getPlugin()).thenReturn(plugin);when(manager.getTimer()).thenReturn(mock(ScheduledExecutorService.class));
             when(manager.getKeys()).thenReturn(new ArrayList<>(Collections.singletonList(new UserDataKeyString("Points"))));
             when(plugin.getUserManager()).thenReturn(users);when(user.getUserData()).thenReturn(data);
             when(users.getUser(any(UUID.class),eq(false))).thenReturn(user);

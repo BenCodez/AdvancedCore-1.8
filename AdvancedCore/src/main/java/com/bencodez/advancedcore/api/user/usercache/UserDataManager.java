@@ -90,12 +90,21 @@ public class UserDataManager {
 	private UserDataCache getOrPopulate(UUID uuid) {
 		UserDataCache current = userDataCache.get(uuid);
 		if (current != null && !current.isRetired()) return current;
-		// Storage reads run outside registry locks. A concurrently published live
-		// generation wins over this private candidate, even if its read began later.
+		UserStorageOwnership.Slot owner = plugin.getUserStorageOwnership().owner(uuid);
+		long readRevision = owner.getRevision();
+		// Private reads remain outside registry locks. A published live successor
+		// wins; intervening physical writes require a fresh candidate.
 		UserDataCache candidate = new UserDataCache(this, uuid).cache();
-		if (!candidate.hasCache()) return null;
-		return userDataCache.compute(uuid, (key, registered) ->
-				registered == null || registered.isRetired() ? candidate : registered);
+		owner.getLock().lock();
+		try {
+			current = userDataCache.get(uuid);
+			if (current != null && !current.isRetired()) return current;
+			if (owner.getRevision() != readRevision) candidate = new UserDataCache(this, uuid).cache();
+			if (!candidate.hasCache()) return null;
+			final UserDataCache prepared = candidate;
+			return userDataCache.compute(uuid, (key, registered) ->
+					registered == null || registered.isRetired() ? prepared : registered);
+		} finally { owner.getLock().unlock(); }
 	}
 
 	public void cacheUserIfNeeded(UUID uuid) {
@@ -112,9 +121,32 @@ public class UserDataManager {
 	}
 
 	private void retire(UUID uuid, UserDataCache cache) {
-		Runnable notification = cache.retireForManager();
-		userDataCache.remove(uuid, cache);
+		UserStorageOwnership.Slot owner = plugin.getUserStorageOwnership().owner(uuid);
+		Runnable notification;
+		owner.getLock().lock();
+		try {
+			notification = cache.retireForManager();
+			userDataCache.remove(uuid, cache);
+		} finally { owner.getLock().unlock(); }
 		if (notification != null) notification.run();
+	}
+
+	/** Resolve cached/uncached ownership at execution, not asynchronous admission. */
+	public void writeDirect(com.bencodez.advancedcore.api.user.AdvancedCoreUser user, String key,
+			com.bencodez.simpleapi.sql.data.DataValue value, Runnable storageWrite) {
+		UUID identity = UUID.fromString(user.getUUID());
+		UserStorageOwnership.Slot owner = getPlugin().getUserStorageOwnership().owner(identity);
+		UserDataCache current;
+		owner.getLock().lock();
+		try {
+			current = getUserDataCache().get(identity);
+			if (current != null && current.isRetired()) current = null;
+			if (current == null) storageWrite.run();
+		} finally { owner.getLock().unlock(); }
+		if (current == null) getPlugin().getUserManager().onChange(user, key);
+		// Releasing before this call keeps notifications outside ownership.
+		// If retirement wins this gap, the retired handle rejects visibly.
+		else current.writeDirect(key, value, storageWrite);
 	}
 
 	public void clearCacheBasic() {

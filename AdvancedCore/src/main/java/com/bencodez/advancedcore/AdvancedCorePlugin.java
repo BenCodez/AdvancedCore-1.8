@@ -190,6 +190,10 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	@Setter
 	private UserManager userManager;
 
+	@Getter
+	private final com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership userStorageOwnership =
+			new com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership();
+
 	private ArrayList<UserStartup> userStartup = new ArrayList<>();
 
 	@Getter

@@ -88,7 +88,7 @@ class LegacyCacheSchedulingTest {
         final UserDataCache cache;
         Fixture() {
             when(plugin.getLogger()).thenReturn(mock(java.util.logging.Logger.class));
-            when(manager.getPlugin()).thenReturn(plugin);
+            when(plugin.getUserStorageOwnership()).thenReturn(new UserStorageOwnership());when(manager.getPlugin()).thenReturn(plugin);
             when(manager.getTimer()).thenReturn(timer);
             when(plugin.getUserManager()).thenReturn(users);
             when(user.getUserData()).thenReturn(data);

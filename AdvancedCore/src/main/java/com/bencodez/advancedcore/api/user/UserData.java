@@ -361,6 +361,20 @@ public class UserData {
 
 	/** One checked storage snapshot; absent identities are empty, failures propagate. */
 	public HashMap<String, DataValue> getValuesStrict() throws SQLException, IOException {
+		com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot owner = storageOwner();
+		owner.getLock().lock();
+		try {
+			if (owner.isWriting()) throw new IllegalStateException("Cannot read user snapshot from its in-flight storage write");
+			return readValuesStrictOwned();
+		}
+		finally { owner.getLock().unlock(); }
+	}
+
+	private com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot storageOwner() {
+		return user.getPlugin().getUserStorageOwnership().owner(java.util.UUID.fromString(user.getUUID()));
+	}
+
+	private HashMap<String, DataValue> readValuesStrictOwned() throws SQLException, IOException {
 		UserStorage storage = user.getPlugin().getStorageType();
 		if (storage == null) throw new IllegalStateException("User storage is not initialized");
 		if (storage == UserStorage.FLAT) return FileThread.getInstance().getValuesStrict(user.getUUID());
@@ -506,11 +520,7 @@ public class UserData {
 				try { setValuesStrict(storage, java.util.Collections.singletonMap(key, value)); }
 				catch (SQLException | IOException failure) { throw new IllegalStateException("Direct user-data write was not acknowledged", failure); }
 			};
-			if (cache != null) cache.writeDirect(key, value, storageWrite);
-			else {
-				storageWrite.run();
-				user.getPlugin().getUserManager().onChange(user, key);
-			}
+			user.getPlugin().getUserManager().getDataManager().writeDirect(user, key, value, storageWrite);
 		};
 		if (async) user.getPlugin().getTimer().execute(write);
 		else write.run();
@@ -582,6 +592,18 @@ public class UserData {
 
 	/** Checked explicit-storage overload for compatibility setters and converters. */
 	public void setValuesStrict(UserStorage storage, Map<String, DataValue> values) throws SQLException, IOException {
+		if (values.isEmpty()) return;
+		com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot owner = storageOwner();
+		owner.getLock().lock();
+		try {
+			owner.beginWrite();
+			try {
+				writeValuesStrictOwned(storage, values);
+			} finally { owner.endWrite(); }
+		} finally { owner.getLock().unlock(); }
+	}
+
+	private void writeValuesStrictOwned(UserStorage storage, Map<String, DataValue> values) throws SQLException, IOException {
 		if (values.isEmpty()) return;
 		if (storage == null) throw new IllegalStateException("User storage is not initialized");
 		if (storage == UserStorage.FLAT) {

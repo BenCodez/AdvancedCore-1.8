@@ -77,6 +77,6 @@ class LegacyCheckedUserDataAdapterTest {
         final AdvancedCorePlugin plugin=mock(AdvancedCorePlugin.class);
         final AdvancedCoreUser user=mock(AdvancedCoreUser.class);
         final UserData data=new UserData(user);
-        Fixture(UserStorage storage) {when(user.getPlugin()).thenReturn(plugin);when(user.getUUID()).thenReturn(UUID);when(plugin.getStorageType()).thenReturn(storage);}
+        Fixture(UserStorage storage) {when(plugin.getUserStorageOwnership()).thenReturn(new com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership());when(user.getPlugin()).thenReturn(plugin);when(user.getUUID()).thenReturn(UUID);when(plugin.getStorageType()).thenReturn(storage);}
     }
 }

@@ -92,6 +92,7 @@ class LegacyCacheRegistryTest {
         final UserDataManager manager=mock(UserDataManager.class,CALLS_REAL_METHODS);
         Fixture() {
             try {
+                when(plugin.getUserStorageOwnership()).thenReturn(new UserStorageOwnership());
                 set("plugin",plugin);set("userDataCache",new ConcurrentHashMap<UUID,UserDataCache>());
                 set("keys",new ArrayList<>(Collections.singletonList(new UserDataKeyString("Points"))));
                 set("timer",mock(ScheduledExecutorService.class));

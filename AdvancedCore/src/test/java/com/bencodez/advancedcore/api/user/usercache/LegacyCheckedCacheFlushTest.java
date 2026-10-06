@@ -118,7 +118,7 @@ class LegacyCheckedCacheFlushTest {
         final UserDataCache cache;
         Fixture() {
             when(plugin.getLogger()).thenReturn(mock(java.util.logging.Logger.class));
-            when(manager.getPlugin()).thenReturn(plugin);when(manager.getTimer()).thenReturn(mock(ScheduledExecutorService.class));
+            when(plugin.getUserStorageOwnership()).thenReturn(new UserStorageOwnership());when(manager.getPlugin()).thenReturn(plugin);when(manager.getTimer()).thenReturn(mock(ScheduledExecutorService.class));
             when(plugin.getUserManager()).thenReturn(users);when(user.getUserData()).thenReturn(data);
             cache=spy(new UserDataCache(manager,UUID.randomUUID()));doReturn(user).when(cache).getUser();
         }

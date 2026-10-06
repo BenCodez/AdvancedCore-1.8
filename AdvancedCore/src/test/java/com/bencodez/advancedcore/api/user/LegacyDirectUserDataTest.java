@@ -84,6 +84,22 @@ class LegacyDirectUserDataTest {
         verify(sqlite).updateStrict(any(),anyList());verify(f.mysql,never()).updateStrict(anyString(),anyList());
         assertEquals("7",f.cache.getCachedValue("Points").getString());
     }
+    @Test void asyncDirectWriteResolvesACachePublishedAfterAdmission() throws Exception {
+        Fixture f = new Fixture(); f.manager.getUserDataCache().clear(); when(f.user.isCached()).thenReturn(false);
+        List<Runnable> accepted = new ArrayList<>();
+        ScheduledExecutorService timer = f.plugin.getTimer();
+        doAnswer(call -> { accepted.add(call.getArgument(0)); return null; }).when(timer).execute(any());
+        f.data.setInt("Points", 7, false, true);
+        UserDataCache replacement = spy(new UserDataCache(f.manager, f.cache.getUuid()));
+        doReturn(f.user).when(replacement).getUser();
+        HashMap<String, DataValue> values = new HashMap<>(); values.put("Points", new DataValueInt(4)); replacement.updateCache(values);
+        f.manager.getUserDataCache().put(replacement.getUuid(), replacement);
+        assertEquals(4, replacement.getCachedValue("Points").getInt()); accepted.get(0).run();
+        assertEquals(7, replacement.getCachedValue("Points").getInt());
+        assertEquals(1, f.cache.getCachedValue("Points").getInt());
+        verify(f.mysql).updateStrict(anyString(), anyList());
+    }
+
     static class Fixture {
         final AdvancedCorePlugin plugin=mock(AdvancedCorePlugin.class);
         final UserManager users=mock(UserManager.class);
@@ -91,8 +107,13 @@ class LegacyDirectUserDataTest {
         final UserDataManager manager=mock(UserDataManager.class);
         final MySQL mysql=mock(MySQL.class);
         final UserData data=new UserData(user);
-        final UserDataCache cache=spy(new UserDataCache(manager,UUID.randomUUID()));
-        Fixture(){String identity=cache.getUuid().toString();when(user.getPlugin()).thenReturn(plugin);when(user.getUUID()).thenReturn(identity);
+        final UserDataCache cache;
+        Fixture(){when(plugin.getUserStorageOwnership()).thenReturn(new UserStorageOwnership());
+            when(manager.getPlugin()).thenReturn(plugin);cache=spy(new UserDataCache(manager,UUID.randomUUID()));
+            java.util.concurrent.ConcurrentHashMap<UUID,UserDataCache> registry=new java.util.concurrent.ConcurrentHashMap<>();registry.put(cache.getUuid(),cache);
+            when(manager.getUserDataCache()).thenReturn(registry);when(users.getDataManager()).thenReturn(manager);
+            doCallRealMethod().when(manager).writeDirect(any(),anyString(),any(),any());
+            String identity=cache.getUuid().toString();when(user.getPlugin()).thenReturn(plugin);when(user.getUUID()).thenReturn(identity);
             when(user.getUserData()).thenReturn(data);when(plugin.getStorageType()).thenReturn(UserStorage.MYSQL);
             when(plugin.getMysql()).thenReturn(mysql);when(plugin.getUserManager()).thenReturn(users);
             when(plugin.getTimer()).thenReturn(mock(ScheduledExecutorService.class));

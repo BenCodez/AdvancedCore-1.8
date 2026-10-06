@@ -31,7 +31,8 @@ public class UserDataCache {
 
 	private final UserDataManager manager;
 	// Acquired outside the cache monitor. Never held across extension callbacks.
-	private final ReentrantLock batchOwner = new ReentrantLock(true);
+	private final UserStorageOwnership.Slot storageOwner;
+	private final ReentrantLock batchOwner;
 	private boolean removing;
 	private boolean inFlight;
 	private boolean flushFailureReported;
@@ -46,6 +47,8 @@ public class UserDataCache {
 	public UserDataCache(UserDataManager manager, UUID uuid) {
 		this.uuid = uuid;
 		this.manager = manager;
+		storageOwner = manager.getPlugin().getUserStorageOwnership().owner(uuid);
+		batchOwner = storageOwner.getLock();
 		cachedChanges = new ConcurrentLinkedQueue<>();
 		cache = new HashMap<>();
 	}
@@ -75,30 +78,40 @@ public class UserDataCache {
 			expectedVersion = snapshotVersion;
 			before = new HashMap<>(cache);
 		}
+		final long readRevision = storageOwner.getRevision();
 		AdvancedCoreUser user = manager.getPlugin().getUserManager().getUser(currentUuid, false);
-		final HashMap<String, DataValue> refreshed;
+		HashMap<String, DataValue> refreshed;
 		try { refreshed = new HashMap<>(user.getUserData().getValuesStrict()); }
 		catch (SQLException | IOException failure) { throw new IllegalStateException("User cache snapshot was not read", failure); }
-		ArrayList<String> keys = new ArrayList<>(refreshed.keySet());
-		// Keep dynamic stored fields as well as registered defaults, as pinned main does.
-		for (UserDataKey dataKey : manager.getKeys()) {
-			keys.remove(dataKey.getKey());
-			if (!refreshed.containsKey(dataKey.getKey())) refreshed.put(dataKey.getKey(), dataKey.getDefault());
-		}
+		ArrayList<String> keys = additionalKeysAndDefaults(refreshed);
 		final HashMap<String, DataValue> published;
-		synchronized (this) {
-			if (uuid == null || cache == null || removing || !uuid.equals(currentUuid)
-					|| replacementVersion > expectedVersion) return this;
-			preservePendingValues(refreshed);
-			for (Entry<String, Long> entry : changedAt.entrySet()) {
-				if (entry.getValue() > expectedVersion && cache.containsKey(entry.getKey())) {
-					refreshed.put(entry.getKey(), cache.get(entry.getKey()));
-				}
+		batchOwner.lock();
+		try {
+			synchronized (this) {
+				if (uuid == null || cache == null || removing || !uuid.equals(currentUuid)
+						|| replacementVersion > expectedVersion) return this;
 			}
-			cache = refreshed;
-			recordSnapshotReplacement();
-			published = new HashMap<>(cache);
-		}
+			// A raw checked write may not update this cache's local version. Fence
+			// publication with the plugin-local storage revision as well.
+			if (storageOwner.getRevision() != readRevision) {
+				try { refreshed = new HashMap<>(user.getUserData().getValuesStrict()); }
+				catch (SQLException | IOException failure) { throw new IllegalStateException("User cache snapshot was not re-read", failure); }
+				keys = additionalKeysAndDefaults(refreshed);
+			}
+			synchronized (this) {
+				if (uuid == null || cache == null || removing || !uuid.equals(currentUuid)
+						|| replacementVersion > expectedVersion) return this;
+				preservePendingValues(refreshed);
+				for (Entry<String, Long> entry : changedAt.entrySet()) {
+					if (entry.getValue() > expectedVersion && cache.containsKey(entry.getKey())) {
+						refreshed.put(entry.getKey(), cache.get(entry.getKey()));
+					}
+				}
+				cache = refreshed;
+				recordSnapshotReplacement();
+				published = new HashMap<>(cache);
+			}
+		} finally { batchOwner.unlock(); }
 		ArrayList<String> changedKeys = new ArrayList<>();
 		for (Entry<String, DataValue> entry : published.entrySet()) {
 			DataValue prior = before.get(entry.getKey());
@@ -108,6 +121,15 @@ public class UserDataCache {
 		if (!changedKeys.isEmpty()) manager.getPlugin().getUserManager().onChange(user, ArrayUtils.convert(changedKeys));
 		if (!keys.isEmpty()) manager.getPlugin().devDebug("Caching additional keys: " + ArrayUtils.makeStringList(keys));
 		return this;
+	}
+
+	private ArrayList<String> additionalKeysAndDefaults(HashMap<String, DataValue> refreshed) {
+		ArrayList<String> keys = new ArrayList<>(refreshed.keySet());
+		for (UserDataKey dataKey : manager.getKeys()) {
+			keys.remove(dataKey.getKey());
+			if (!refreshed.containsKey(dataKey.getKey())) refreshed.put(dataKey.getKey(), dataKey.getDefault());
+		}
+		return keys;
 	}
 
 	public void clearCache() {
