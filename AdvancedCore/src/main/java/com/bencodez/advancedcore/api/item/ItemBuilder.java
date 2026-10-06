@@ -328,6 +328,9 @@ public class ItemBuilder {
 					} else {
 						closeGUISet = false;
 					}
+					if (data.getBoolean("HideToolTip", false)) {
+						setHideTooltipCompat(is, true);
+					}
 				}
 
 			} else {
@@ -335,6 +338,21 @@ public class ItemBuilder {
 				chancePass = false;
 			}
 		}
+	}
+
+	/**
+	 * Hide supported tooltip details using Spigot 1.8 item flags. Custom names
+	 * and lore remain visible; 1.8 has no native full-tooltip hiding API.
+	 * @param item item to modify, or null
+	 * @param hide true to add all available flags, false to remove them
+	 */
+	public void setHideTooltipCompat(ItemStack item, boolean hide) {
+		if (item == null) return;
+		ItemMeta meta = item.getItemMeta();
+		if (meta == null) return;
+		if (hide) meta.addItemFlags(ItemFlag.values());
+		else meta.removeItemFlags(ItemFlag.values());
+		item.setItemMeta(meta);
 	}
 
 	/**

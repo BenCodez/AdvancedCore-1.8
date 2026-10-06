@@ -1445,3 +1445,43 @@ drift, concurrent external/raw storage mutation, failed shutdown and the remaini
 full upstream ledger/runtime matrix. The bounded local tooltip draft was empty
 and inconclusive, so no claim or change was adopted from it. Tooltip adaptation
 and the full independent final review remain pending. No PR or source push.
+
+
+### Item tooltip option adapted for Spigot 1.8 (2026-10-06)
+
+Upstream `f9da02380781a6ddb6db0b62bbb2717090d1bc50` and
+`d03ad2b537869797f0be3ae1330a0db4c55b0069` are ported with Bukkit 1.8
+adaptation. Item configuration `HideToolTip: true` adds every available legacy
+ItemFlag, including for serialized ItemStack configurations. Missing/false does
+nothing and preserves previously configured flags. The public
+`setHideTooltipCompat(ItemStack, boolean)` signature is retained; true adds flags,
+false removes them, and updated metadata is published to the item. Null items or
+metadata are safe. No native modern API call, reflective fallback, stacktrace,
+or upstream unconditional chance-linked setter is copied into the Java 8 fork.
+Spigot 1.8 cannot hide the entire tooltip: custom names and lore remain visible.
+No dependency, release version, stored format or proxy payload change is needed.
+
+The unchanged baseline failed one assertion with zero errors. Four final focused
+tests pass. Actual Java 8 clean install/verify: AdvancedCore315 unit+18 artifact,
+VotingPlugin45 unit+1 artifact, all zero failures/errors/skips. Base classes
+1823/2440, maximum major52. SHA256:
+AC `287b56804c141bbedfff5d5457a3b14d62df0e28cd77257c83c5312f4d633b4d`;
+VP `9fe6fb740b8e3cff39022d0ed5bc33d423985e7b2ad6b77d505e5a231e09b610`.
+Build commands retain explicit modulePOM, workspace-local .m2/tmp, wagon transport,
+Temurin1.8.0_504 and Maven3.9.9.
+
+Real Spigot1.8.8 fixture6b263d1fb6 exercises actual ItemMeta on the server owner:
+normal and serialized configured items, all supported flags, missing/false
+preservation, explicit unhide and unchanged custom names/lore. Existing native
+MySQL/SQLite/FLAT lifecycle, duplicate-source failure/repaired retry, both console
+conversion commands, clean disable/restart and final points20/integrity pass.
+The first helper attempt used Arrays.asList where the pre-existing loader expects
+ArrayList; the fixture alone was corrected, and its failed terminal evidence is
+retained. Assertions/product behavior were not weakened. Final two logs contain
+no tested error markers/fixture credentials. Test driver remains classpath-only.
+Evidence: item-tooltip-baseline-test.log, item-tooltip-focused-test.log,
+item-tooltip-build-results.json and item-tooltip-live-results.json.
+
+This completes only the two recorded upstream tooltip dispositions. Full upstream
+ledger, remaining features/lifecycle issues, runtime matrix and fresh independent
+final review remain pending. No source push or PR opening.
