@@ -28,6 +28,31 @@ class LegacyCacheSnapshotTest {
             .when(f.data).setValuesStrict(any());
         f.cache.addChange(new UserDataChangeString("Points","new"),true);f.cache.processChanges();assertEquals("new",f.value());
     }
+    @Test void queuedMutationSurvivesCheckpointSnapshotReplacementAndPersistsAfterIt() throws Exception {
+        Fixture f=new Fixture();f.cache.updateCache(values("before"));
+        CountDownLatch checkpointStarted=new CountDownLatch(1),releaseCheckpoint=new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicReference<String> stored=new java.util.concurrent.atomic.AtomicReference<>("before");
+        doAnswer(call->{HashMap<String,DataValue> batch=call.getArgument(0);stored.set(batch.get("Points").getString());return null;})
+                .when(f.data).setValuesStrict(any());
+        ExecutorService worker=Executors.newSingleThreadExecutor();
+        try {
+            Future<?> checkpoint=worker.submit(()->f.cache.mutateDirect("Points",ignored->new DataValueString("checkpoint"),value->{
+                checkpointStarted.countDown();
+                try {assertTrue(releaseCheckpoint.await(5,TimeUnit.SECONDS));}
+                catch(InterruptedException failure){Thread.currentThread().interrupt();throw new AssertionError(failure);}
+                stored.set(value.getString());
+                f.cache.updateCache(values("checkpoint"));
+            }));
+            assertTrue(checkpointStarted.await(5,TimeUnit.SECONDS));
+            f.cache.addChange(new UserDataChangeString("Points","newer"),true);
+            assertEquals("newer",f.value());assertEquals("before",stored.get());
+            releaseCheckpoint.countDown();checkpoint.get(5,TimeUnit.SECONDS);
+            assertEquals("checkpoint",stored.get());assertEquals("newer",f.value());assertTrue(f.cache.hasChangesToProcess());
+            f.cache.processChanges();assertEquals("newer",stored.get());assertEquals("newer",f.value());assertFalse(f.cache.hasChangesToProcess());
+            verify(f.data,times(1)).setValuesStrict(any());
+        } finally {releaseCheckpoint.countDown();worker.shutdownNow();assertTrue(worker.awaitTermination(5,TimeUnit.SECONDS));}
+    }
+
     @Test void readStartedBeforeAWriteCannotOverwriteItsCommittedValue() throws Exception {
         Fixture f=new Fixture();BlockingRead read=new BlockingRead(f);ExecutorService worker=Executors.newSingleThreadExecutor();
         try {
