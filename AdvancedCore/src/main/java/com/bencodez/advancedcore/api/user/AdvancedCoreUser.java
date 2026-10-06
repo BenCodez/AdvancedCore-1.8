@@ -950,14 +950,9 @@ public class AdvancedCoreUser {
 		String storedReference = placeholders < 0 ? rewardEntry : rewardEntry.substring(0, placeholders);
 		String suffix = placeholders < 0 ? "" : rewardEntry.substring(placeholders);
         QueuedReplay persisted=parseQueuedReplay(stripAsyncRetryMarker(storedReference));
-        if(replayFailure!=null && !persisted.asyncReplayProgress.isEmpty() && !replayFailure.getReplayProgress().isEmpty()) {
-            boolean storedCovers=checkpointCovers(persisted.asyncReplayProgress,persisted.asyncReplayRegistryFingerprints,
-                    replayFailure.getReplayProgress(),replayFailure.getReplayRegistryFingerprints());
-            boolean failureCovers=checkpointCovers(replayFailure.getReplayProgress(),replayFailure.getReplayRegistryFingerprints(),
-                    persisted.asyncReplayProgress,persisted.asyncReplayRegistryFingerprints);
-            if(storedCovers && !failureCovers)return rewardEntry;
-            if(!failureCovers)throw new IllegalStateException("Persisted and failed replay checkpoints cannot be safely ordered");
-        }
+        if(replayFailure!=null && !proposedCheckpointCovers(persisted,
+                ArrayUtils.fromString(placeholders < 0 ? "" : rewardEntry.substring(placeholders + "%placeholders%".length())),
+                replayFailure.getReplayProgress(), replayFailure.getReplayRegistryFingerprints(), replayFailure.getReplayPlaceholders())) return rewardEntry;
 		if (replayFailure != null) suffix = "%placeholders%" + ArrayUtils.makeString(replayFailure.getReplayPlaceholders());
 		QueuedReplay queuedReplay = parseQueuedReplay(stripAsyncRetryMarker(storedReference));
 		if (!serializedProgress.isEmpty()) return queuedReference(queuedReplay) + ASYNC_PROGRESS_DELIMITER
@@ -975,20 +970,24 @@ public class AdvancedCoreUser {
         return true;
     }
 
+    private static boolean proposedCheckpointCovers(QueuedReplay stored, Map<String,String> storedMetadata,
+            Map<String,Integer> proposed, Map<String,String> proposedRegistry, Map<String,String> proposedMetadata) {
+        boolean storedCovers = checkpointCovers(stored.asyncReplayProgress, stored.asyncReplayRegistryFingerprints,
+                proposed, proposedRegistry) && Reward.stableReplayMetadataCovers(storedMetadata, proposedMetadata);
+        boolean proposedCovers = checkpointCovers(proposed, proposedRegistry, stored.asyncReplayProgress,
+                stored.asyncReplayRegistryFingerprints) && Reward.stableReplayMetadataCovers(proposedMetadata, storedMetadata);
+        if (storedCovers && !proposedCovers) return false;
+        if (!proposedCovers) throw new IllegalStateException("Persisted and proposed replay checkpoints cannot be safely ordered");
+        return true;
+    }
+
 	private static String withAsyncReplayProgress(String rewardEntry, Reward.ReplayCheckpoint checkpoint) {
 		int marker = rewardEntry.indexOf("%placeholders%");
 		String reference = marker < 0 ? rewardEntry : rewardEntry.substring(0, marker);
 		QueuedReplay queuedReplay = parseQueuedReplay(stripAsyncRetryMarker(reference));
-        if (!queuedReplay.asyncReplayProgress.isEmpty()) {
-            boolean storedCovers = checkpointCovers(queuedReplay.asyncReplayProgress,
-                    queuedReplay.asyncReplayRegistryFingerprints, checkpoint.getReplayProgress(),
-                    checkpoint.getReplayRegistryFingerprints());
-            boolean proposedCovers = checkpointCovers(checkpoint.getReplayProgress(),
-                    checkpoint.getReplayRegistryFingerprints(), queuedReplay.asyncReplayProgress,
-                    queuedReplay.asyncReplayRegistryFingerprints);
-            if (storedCovers && !proposedCovers) return rewardEntry;
-            if (!proposedCovers) throw new IllegalStateException("Persisted and proposed replay checkpoints cannot be safely ordered");
-        }
+        if (!proposedCheckpointCovers(queuedReplay,
+                ArrayUtils.fromString(marker < 0 ? "" : rewardEntry.substring(marker + "%placeholders%".length())),
+                checkpoint.getReplayProgress(), checkpoint.getReplayRegistryFingerprints(), checkpoint.getPlaceholders())) return rewardEntry;
 		String serialized = encodeAsyncReplayProgress(checkpoint.getReplayProgress(), checkpoint.getReplayRegistryFingerprints());
 		return queuedReference(queuedReplay) + (serialized.isEmpty() ? "" : ASYNC_PROGRESS_DELIMITER + serialized)
 				+ "%placeholders%" + ArrayUtils.makeString(checkpoint.getPlaceholders());

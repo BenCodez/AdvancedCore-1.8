@@ -381,3 +381,50 @@ and the initial full-build lifecycle-test failure are retained alongside the
 corrected logs in workspace `evidence/checkpoint-empty-acknowledgement-*`.
 All 167 originals and both pinned references remain unchanged. Full backport
 acceptance and independent final review are still incomplete.
+
+
+## Stable nested-metadata checkpoint ordering
+
+Red-before-fix regressions showed that equal enclosing injector counts allowed
+an older command/nested-list cursor to overwrite newer acknowledged progress,
+allowed omitted metadata to erase a frozen selection/completed child, and accepted
+a changed frozen sequence snapshot. Both production offline and timed queue
+consumers are exercised through their actual checkpoint callbacks and checked
+native queue mutation. The initial ten-test run had three failures.
+
+The success and failure serializers now share a partial-order check combining
+injector counts/registry fingerprints with stable replay metadata. Frozen
+selection values and command/nested-list snapshots must remain identical;
+command/nested-list cursors cannot decrease; completed single-child markers
+cannot disappear. A strictly dominating stored checkpoint is retained. Crossed
+progress (a newer injector count but older command cursor) or conflicting frozen
+payloads fails before mutation. Equal stable state can still update ordinary
+placeholders. No persisted format, configuration key or existing API is changed;
+`Reward.stableReplayMetadataCovers` is an additive helper owning the reserved
+metadata classification.
+
+Legacy action metadata is intentionally outside this comparator. Its reservation
+snapshot can legitimately shrink after a proven-not-started action; the regression
+retains that release. Legacy completed-action ordering, legacy ordinal conversion,
+shared storage generation integration, global queue capacity and process-crash
+recovery remain incomplete technical obligations, not claimed by this change.
+
+Validation with actual Temurin Java 8 and the workspace-local Maven repository:
+
+- Focused offline/checkpoint tests: 36 PASS, including failure settlement through
+  both production consumers and crossed injector/command progress rejection.
+- AdvancedCore `clean install`: 827 unit + 78 artifact = 905 PASS.
+- VotingPlugin `clean verify` against that exact installed producer: 45 unit +
+  1 artifact = 46 PASS. Producer target and local dependency are byte-identical.
+- Zero failures/errors/skips in the passing Maven runs.
+- Artifact base classes: AdvancedCore 1893, VotingPlugin 2510; maximum major 52.
+- Actual Java 8/Spigot 1.8.8 existing queue-publication recovery fixture: 12 PASS.
+  This is a runtime regression check, not a live stale-cursor or crash proof.
+
+Exact build commands, red/focused/full-build output, SHA-256 values and runtime
+limitations are retained under workspace `evidence/replay-stable-metadata-*`.
+The focused selector included an unmatched `LegacyTimedRewardReplayTest` name;
+36 tests actually ran. The correct timed test is `LegacyTimedQueueReplayTest`,
+which ran in the complete producer build. No unexecuted test is counted.
+All 167 original repositories and both pinned references were checked unchanged.
+The full backport and final independent review remain unfinished.

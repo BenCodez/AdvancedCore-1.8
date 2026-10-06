@@ -86,6 +86,35 @@ public class Reward {
 		}
 	}
 
+	/**
+	 * Compares the monotonic part of persisted replay metadata. Frozen selections
+	 * and sequence snapshots never change; sequence cursors only advance and a
+	 * completed single child stays completed. Legacy action reservations are not
+	 * included: a proven unstarted action may legitimately release its snapshot.
+	 */
+	public static boolean stableReplayMetadataCovers(Map<String, String> newer, Map<String, String> older) {
+		for (Entry<String, String> entry : older.entrySet()) {
+			String key = entry.getKey();
+			if (key == null) continue;
+			boolean sequence = key.startsWith(REPLAY_COMMAND_PREFIX) || key.startsWith(REPLAY_NESTED_LIST_PREFIX);
+			if (!sequence && !key.startsWith(REPLAY_SELECTION_PREFIX) && !key.startsWith(REPLAY_SINGLE_CHILD_PREFIX)) continue;
+			String previous = entry.getValue();
+			if (previous == null) throw new IllegalStateException("Persisted replay metadata has no value");
+			String proposed = newer.get(key);
+			if (proposed == null) return false;
+			if (sequence && !key.endsWith("_snapshot")) {
+				try {
+					int oldCursor = Integer.parseInt(previous), newCursor = Integer.parseInt(proposed);
+					if (oldCursor < 0 || newCursor < 0) throw new IllegalStateException("Negative replay sequence cursor");
+					if (newCursor < oldCursor) return false;
+				} catch (NumberFormatException failure) {
+					throw new IllegalStateException("Malformed replay sequence cursor", failure);
+				}
+			} else if (!previous.equals(proposed)) return false;
+		}
+		return true;
+	}
+
 	private static boolean isReplayMetadataKey(String key) {
 		return key != null && (key.startsWith(REPLAY_SELECTION_PREFIX) || key.startsWith(REPLAY_COMMAND_PREFIX)
 				|| key.startsWith(REPLAY_NESTED_LIST_PREFIX) || key.startsWith(REPLAY_SINGLE_CHILD_PREFIX)
