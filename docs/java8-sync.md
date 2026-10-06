@@ -4239,3 +4239,6 @@ Native shared-runtime integration remains incomplete.
 
 Shared-user runtime foundation and remaining native integration:
 [java8-shared-user-runtime.md](java8-shared-user-runtime.md).
+
+Native shared-cache admission, staging and notification dependency milestone:
+[java8-native-shared-cache.md](java8-native-shared-cache.md).

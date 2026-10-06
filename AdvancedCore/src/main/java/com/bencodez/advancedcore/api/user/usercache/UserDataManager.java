@@ -53,6 +53,78 @@ public class UserDataManager {
     }
     private Object onlineSessionLock(UUID uuid){return onlineSessionLocks[(uuid.hashCode() & Integer.MAX_VALUE)%onlineSessionLocks.length];}
 
+	private volatile SharedSqlNotificationRoute sharedSqlNotificationRoute;
+	private final java.util.concurrent.atomic.AtomicLong sharedNotificationGeneration = new java.util.concurrent.atomic.AtomicLong();
+	private volatile boolean sharedNotificationsClosed;
+
+	private static final class SharedSqlNotificationRoute {
+		final com.bencodez.advancedcore.core.user.storage.sql.SqlUserBackend backend;
+		final java.util.function.Consumer<Runnable> lifecycleGate;
+		SharedSqlNotificationRoute(com.bencodez.advancedcore.core.user.storage.sql.SqlUserBackend backend,
+				java.util.function.Consumer<Runnable> lifecycleGate) {
+			this.backend = java.util.Objects.requireNonNull(backend, "backend");
+			this.lifecycleGate = java.util.Objects.requireNonNull(lifecycleGate, "lifecycleGate");
+		}
+	}
+
+	/** Bind the producing owner's lifetime; per-user storage routing is integrated separately. */
+	public final synchronized void bindSharedUserDataNotificationLifecycle(
+			com.bencodez.advancedcore.core.user.storage.sql.SqlUserBackend backend,
+			java.util.function.Consumer<Runnable> lifecycleGate) {
+		if (sharedNotificationsClosed) throw new IllegalStateException("Shared user notifications are closed");
+		SharedSqlNotificationRoute replacement = new SharedSqlNotificationRoute(backend, lifecycleGate);
+		SharedSqlNotificationRoute previous = sharedSqlNotificationRoute;
+		if (previous != null && previous.backend != backend) sharedNotificationGeneration.incrementAndGet();
+		sharedSqlNotificationRoute = replacement;
+	}
+
+	/** Capture the producing generation and owner before storage admission is released. */
+	public final Runnable captureSharedUserDataNotification(Runnable notification) {
+		java.util.Objects.requireNonNull(notification, "notification");
+		long generation = sharedNotificationGeneration.get();
+		SharedSqlNotificationRoute route = sharedSqlNotificationRoute;
+		return () -> {
+			if (sharedNotificationsClosed || generation != sharedNotificationGeneration.get()) return;
+			Runnable admitted = () -> {
+				if (!sharedNotificationsClosed && generation == sharedNotificationGeneration.get()) notification.run();
+			};
+			if (route == null) admitted.run();
+			else try { route.lifecycleGate.accept(admitted); }
+			catch (RuntimeException | Error failure) {
+				if (!sharedNotificationsClosed && generation == sharedNotificationGeneration.get()) throw failure;
+			}
+		};
+	}
+
+	/** Queue captured notifications on the existing storage worker, outside per-user admission. */
+	public final void dispatchSharedUserDataNotification(Runnable notification) {
+		java.util.Objects.requireNonNull(notification, "notification");
+		if (sharedNotificationsClosed) return;
+		Runnable captured = captureSharedUserDataNotification(notification);
+		try {
+			timer.execute(() -> {
+				try { captured.run(); }
+				catch (RuntimeException | Error failure) { reportDeferredStorageFailure(failure); }
+			});
+		} catch (java.util.concurrent.RejectedExecutionException failure) {
+			reportDeferredStorageFailure(failure);
+			throw failure;
+		}
+	}
+
+	public final void advanceSharedUserDataNotificationGeneration() {
+		sharedNotificationGeneration.incrementAndGet();
+	}
+
+	public final void closeSharedUserDataNotifications() {
+		sharedNotificationsClosed = true;
+		sharedNotificationGeneration.incrementAndGet();
+	}
+
+	public final void recordSharedStorageFailure(Throwable failure) {
+		reportDeferredStorageFailure(java.util.Objects.requireNonNull(failure, "failure"));
+	}
+
 	public UserDataManager(AdvancedCorePlugin plugin) {
 		this.plugin = plugin;
 		userDataCache = new ConcurrentHashMap<>();

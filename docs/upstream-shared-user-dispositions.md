@@ -6,19 +6,22 @@ The complete production patches of these four commits were inspected. They
 operate on main's shared SQL runtime, exclusive flush gates, staged change and
 notification queues, and captured notification generations. The fork now includes
 the platform-neutral `SharedUserDataRuntime` and `UserCacheOwner` contracts, with
-Java 8 adaptations and the pinned runtime tests. It still lacks
-`BukkitUserCacheOwner`, `sharedExclusiveFlushGate`, `changesAfterExclusiveFlush`,
-and `dispatchSharedUserDataNotification` in active production sources. The runtime
-foundation is not yet wired into the native cache manager. Native per-user storage
-ownership and headless runtime tests do not prove that integration. See
-[java8-shared-user-runtime.md](java8-shared-user-runtime.md).
+Java 8 adaptations and the pinned runtime tests. The native cache now has
+shared/exclusive gates and post-checkpoint staging; the manager has captured
+notification generations and producing-owner lifecycle admission. It still lacks
+`BukkitUserCacheOwner`, shared native UserData/provider routing, automatic
+startup/reload binding and the complete manager cache-map population/removal
+integration. The new SQLite tests use the actual cache and coordinator with a
+controlled manager adapter; they do not prove those missing production paths.
+See [java8-shared-user-runtime.md](java8-shared-user-runtime.md) and
+[java8-native-shared-cache.md](java8-native-shared-cache.md).
 
 | Upstream commit | Native fork evidence | Remaining work |
 | --- | --- | --- |
-| `9a740db145f993c1c318821b911f7aa783b41099` | Per-user ownership and lifecycle admission fence native mutations; native final cache retirement suppresses callbacks. | Port/audit shared lifecycle replacement and producing-generation capture; prove old callbacks cannot escape into the successor runtime. |
-| `0532058f2f220e5e90290f9f0d5e1db3e97abfb5` | Checked native writes and queue mutations preserve admission and committed-vs-notification-failure distinctions. | Shared exclusive checkpoint admission, staged mutation boundary and captured deferred notification dispatch remain absent. |
-| `a5ebd1917c33e98c6183516bdd21e0132f320bcc` | `UserDataCache.updateCache` preserves pending values; a new native checkpoint race regression proves newer queued data survives replacement and is later stored. | Shared staged-change republishing path remains absent; do not infer it from native snapshot preservation. |
-| `65e6095d381f03780e638d89024848af9345f893` | Native callbacks run outside the storage monitor/lock, with committed failure distinctions retained. | Shared notifications-before-immediate-flush order remains unimplemented/unverified; native callback completion tests do not prove this different queue contract. |
+| `9a740db145f993c1c318821b911f7aa783b41099` | Per-user ownership and lifecycle admission fence native mutations; native final cache retirement suppresses callbacks. | Captured notification generation and producing-owner lifetime are now tested with the real manager. Complete Bukkit adapter and native startup/reload replacement routing remain required. |
+| `0532058f2f220e5e90290f9f0d5e1db3e97abfb5` | Checked native writes and queue mutations preserve admission and committed-vs-notification-failure distinctions. | Shared exclusive cache checkpoint admission, staging and captured notification dispatch now exist. Native UserData callers and manager/provider binding remain unintegrated. |
+| `a5ebd1917c33e98c6183516bdd21e0132f320bcc` | `UserDataCache.updateCache` preserves pending values; a new native checkpoint race regression proves newer queued data survives replacement and is later stored. | Actual native cache + shared coordinator + SQLite tests now prove post-checkpoint staged-change republishing. Complete production manager/adapter paths remain pending. |
+| `65e6095d381f03780e638d89024848af9345f893` | Native callbacks run outside the storage monitor/lock, with committed failure distinctions retained. | A controlled cache-worker test proves notification-before-requested-flush order at the native cache boundary. Complete production adapter/manager integration and runtime acceptance remain pending. |
 
 All four are `PARTIAL_PORT_PENDING_SOURCE_REVIEW`, not complete ports, omitted
 modern-only changes, or accepted product deferrals. Their shared-runtime
