@@ -190,3 +190,18 @@ concurrent flushes, retirement fencing, or durable failure acknowledgement from
 legacy void storage adapters. SQL/file write failure propagation and queue
 retention remain a separate coordinated storage/cache backport under audit;
 scheduling completion alone is not proof of a committed vote or point write.
+
+## Continued command and date correctness backport
+
+Upstream `5eca2b0539864e581237cb7dcfd02517bb805c6b` is adapted to the legacy
+placeholder APIs: date arithmetic uses the supplied Date; all three command-list
+overloads honor their existing stagger option; both single-command overloads and
+list dispatch strip one leading slash after existing placeholder processing.
+No configuration keys or public signatures change, and command execution stays
+on the existing Bukkit scheduler. Four focused tests cover all five overloads,
+positive/negative/zero date arithmetic, empty input, and non-staggered dispatch.
+Three assertions fail on the unchanged fork, then all four tests pass. Actual
+Java8 `clean install` passes 63 unit and three packaged-artifact tests, with zero
+failures, errors, or skips. These tests isolate placeholder processing; they do
+not claim a new JavaScript/PlaceholderAPI implementation or live runtime proof
+of every command overload.

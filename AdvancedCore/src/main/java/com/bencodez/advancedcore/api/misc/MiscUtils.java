@@ -61,7 +61,7 @@ public class MiscUtils {
 
 	public Date addSeconds(Date date, int seconds) {
 		Calendar c = Calendar.getInstance();
-		c.setTime(new Date());
+		c.setTime(date);
 		c.add(Calendar.SECOND, seconds);
 		return c.getTime();
 	}
@@ -148,6 +148,7 @@ public class MiscUtils {
 			for (final String cmd : commands) {
 				plugin.debug("Executing console command: " + cmd);
 				runConsoleCommand(cmd, tick, stagger);
+				tick++;
 			}
 
 		}
@@ -163,6 +164,7 @@ public class MiscUtils {
 			for (final String cmd : commands) {
 				plugin.debug("Executing console command: " + cmd);
 				runConsoleCommand(cmd, tick, stagger);
+				tick++;
 			}
 
 		}
@@ -170,8 +172,8 @@ public class MiscUtils {
 
 	public void executeConsoleCommands(Player player, String command, HashMap<String, String> placeholders) {
 		if (command != null && !command.isEmpty()) {
-			final String cmd = PlaceholderUtils.replaceJavascript(player,
-					PlaceholderUtils.replacePlaceHolder(command, placeholders));
+			final String cmd = stripLeadingSlash(PlaceholderUtils.replaceJavascript(player,
+					PlaceholderUtils.replacePlaceHolder(command, placeholders)));
 
 			plugin.debug("Executing console command: " + command);
 			plugin.getBukkitScheduler().executeOrScheduleSync(plugin, new Runnable() {
@@ -201,6 +203,7 @@ public class MiscUtils {
 			for (final String cmd : commands) {
 				plugin.debug("Executing console command: " + cmd);
 				runConsoleCommand(cmd, tick, stagger);
+				tick++;
 			}
 		}
 	}
@@ -211,10 +214,7 @@ public class MiscUtils {
 			if (p != null) {
 				command = PlaceholderUtils.replaceJavascript(p, command);
 			}
-			if (command.startsWith("/")) {
-				command.replaceFirst("/", "");
-			}
-			final String cmd = PlaceholderUtils.replacePlaceHolder(command, placeholders);
+			final String cmd = stripLeadingSlash(PlaceholderUtils.replacePlaceHolder(command, placeholders));
 
 			plugin.debug("Executing console command: " + command);
 			plugin.getBukkitScheduler().executeOrScheduleSync(plugin, new Runnable() {
@@ -418,12 +418,13 @@ public class MiscUtils {
 	}
 
 	private void runConsoleCommand(String command, int delay, boolean hasDelay) {
+		final String commandToRun = stripLeadingSlash(command);
 		if (hasDelay && delay > 0) {
 			plugin.getBukkitScheduler().runTaskLater(plugin, new Runnable() {
 
 				@Override
 				public void run() {
-					Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), command);
+					Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), commandToRun);
 				}
 			}, delay);
 
@@ -432,10 +433,17 @@ public class MiscUtils {
 
 				@Override
 				public void run() {
-					Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), command);
+					Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), commandToRun);
 				}
 			});
 		}
+	}
+
+	private String stripLeadingSlash(String command) {
+		if (command != null && command.startsWith("/")) {
+			return command.substring(1);
+		}
+		return command;
 	}
 
 	public void setBlockMeta(Block block, String str, Object value) {
