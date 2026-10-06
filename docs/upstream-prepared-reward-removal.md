@@ -26,3 +26,23 @@ Bukkit executor uses this orchestrator. Native offline/timed replay durability,
 root completion, metadata ordering, queue capacity, lifecycle integration and
 runtime acceptance remain separate obligations. This audit does not close those
 obligations or classify the entire upstream range.
+
+The keyed-admission introduction and follow-ups are also omitted under the same
+explicit upstream removal:
+
+- `0c6974828f5c6e93bdb955babe7baab2444f9079`: action admission.
+- `16173903e21ce54606ed0a581e199a63a7501bc7`: post-claim runtime guards.
+- `7407b1c84b64de9d84251115c4993eb523d911dd`: keyed nested rejection.
+- `8f230e1913e3f0617ba235fd156653276effe3a8`: keyed execution scope.
+- `8c5eb7ba5ded3ad95320847e82b0524e9de18ba5`: owner-dispatch correction.
+
+The removal itself is represented by preserving the fork's native live-YAML API
+and the retained post-removal shared contracts. No reverted native capture hook
+or keyed API is introduced. Ancestry/path/absence checks are retained in workspace
+`evidence/shared-reward-keyed-removal-audit.json`.
+
+Retained stack-safety change `dd469393709788f388540c9772950e74ae64a0c7`
+is ported by `e8e907a8bdf7a68c0d8e077897e8f627388441cf`. Its 5000-step test
+is byte-identical to the pinned reference and passes in the current complete
+Java 8 producer build (898 checks). This closes those specific dispositions,
+not the rest of the upstream ledger or native runtime acceptance.
