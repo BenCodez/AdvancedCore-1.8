@@ -308,10 +308,31 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 
 	}
 
+	/** Worker callers retain synchronous completion; server callers dispatch off-owner. */
 	public void convertDataStorage(UserStorage from, UserStorage to) {
 		if (from == null || to == null) throw new RuntimeException("Invalid Storage Method");
+		if (Bukkit.getServer() != null && Bukkit.isPrimaryThread()) {
+			convertDataStorageAsync(from, to).whenComplete((ignored, failure) -> {
+				if (failure != null) getLogger().severe("User storage conversion failed (" + failure.getClass().getSimpleName() + ")");
+			});
+			return;
+		}
 		getUserStorageOwnership().maintain(5, TimeUnit.SECONDS, this::flushStorageForReplacement,
 				() -> convertDataStorageOwned(from, to));
+	}
+
+	/** Completion observes the synchronous conversion body, not scheduler admission. */
+	public java.util.concurrent.CompletionStage<Void> convertDataStorageAsync(UserStorage from, UserStorage to) {
+		if (from == null || to == null) {
+			java.util.concurrent.CompletableFuture<Void> failed = new java.util.concurrent.CompletableFuture<>();
+			failed.completeExceptionally(new RuntimeException("Invalid Storage Method"));
+			return failed;
+		}
+		return getRewardDispatch().dispatchOffPrimary(() -> {
+			if (Bukkit.isPrimaryThread()) throw new IllegalStateException("Storage conversion requires a worker thread");
+			convertDataStorage(from, to);
+			return java.util.concurrent.CompletableFuture.<Void>completedFuture(null);
+		}, TimeUnit.SECONDS.toMillis(30));
 	}
 
 	private void convertDataStorageOwned(UserStorage from, UserStorage to) {

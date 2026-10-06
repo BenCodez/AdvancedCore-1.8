@@ -649,10 +649,8 @@ public class CommandLoader {
 
 				@Override
 				public void execute(CommandSender sender, String[] args) {
-					sendMessage(sender,
-							"&cStarting convert from " + plugin.getStorageType().toString() + " to " + args[1]);
-					plugin.convertDataStorage(plugin.getStorageType(), UserStorage.value(args[1]));
-					sendMessage(sender, "&cFinished converting");
+					startStorageConversion(plugin.getStorageType(), UserStorage.value(args[1]),
+							message -> sendMessage(sender, message));
 				}
 			});
 
@@ -662,10 +660,8 @@ public class CommandLoader {
 
 				@Override
 				public void execute(CommandSender sender, String[] args) {
-					sendMessage(sender,
-							"&cStarting convert from " + args[1] + " to " + plugin.getStorageType().toString());
-					plugin.convertDataStorage(UserStorage.value(args[1]), plugin.getStorageType());
-					sendMessage(sender, "&cFinished converting");
+					startStorageConversion(UserStorage.value(args[1]), plugin.getStorageType(),
+							message -> sendMessage(sender, message));
 				}
 			});
 		}
@@ -675,6 +671,23 @@ public class CommandLoader {
 		}
 
 		return cmds;
+	}
+
+	/** Both command directions report only after physical conversion completion. */
+	void startStorageConversion(UserStorage from, UserStorage to, java.util.function.Consumer<String> reply) {
+		plugin.getRewardDispatch().dispatch(() -> {
+			reply.accept("&cStarting convert from " + from + " to " + to);
+			return java.util.concurrent.CompletableFuture.<Void>completedFuture(null);
+		}, java.util.concurrent.TimeUnit.SECONDS.toMillis(30))
+				.thenCompose(ignored -> plugin.convertDataStorageAsync(from, to)).whenComplete((ignored, failure) -> {
+					if (failure != null) plugin.getLogger().severe("User storage conversion failed (" + failure.getClass().getSimpleName() + ")");
+					plugin.getRewardDispatch().dispatch(() -> {
+						reply.accept(failure == null ? "&cFinished converting" : "&cUser storage conversion failed; see the server log");
+						return java.util.concurrent.CompletableFuture.<Void>completedFuture(null);
+					}, java.util.concurrent.TimeUnit.SECONDS.toMillis(30)).whenComplete((sent, notificationFailure) -> {
+						if (notificationFailure != null) plugin.getLogger().warning("User storage conversion result message could not be delivered");
+					});
+				});
 	}
 
 	public ArrayList<CommandHandler> getBasicCommands(String permPrefix) {

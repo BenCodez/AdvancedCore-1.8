@@ -1356,3 +1356,47 @@ inactive provider configuration drift, duplicate YAML keys (the legacy YAML load
 may collapse them), concurrent external SQL/file changes and raw APIs that bypass
 admission. SQL auto-commit enumeration is not a transactional network-wide snapshot.
 No complete-migration, final-review or full upstream parity claim. Full goal active.
+
+### Conversion completion and server-thread entry points
+
+Additive `convertDataStorageAsync` uses the existing canonical scheduler dispatcher
+and waits for the actual synchronous conversion body. The void API still completes
+synchronously for worker callers; server callers dispatch off-owner and receive safe
+failure diagnostics. Public virtual conversion dispatch is retained. No new executor
+or storage owner was added, and maintenance is not run inside an admitted submit
+scope that would retire itself. Queued work can be rejected/fenced; accepted physical
+work is not cancelled or declared unfinished merely because its dispatcher closes.
+The receipt deadline bounds scheduler admission, not execution after admission.
+
+Both ConvertToData and ConvertFromData commands use the completion stage, deliver
+starting/final messages through the server owner, and report failure without raw
+provider exception details. Failed result-message delivery is logged separately and
+never replays a committed conversion. Commands, permissions, argument syntax and
+normal messages remain; no config/schema/release/dependency/wire change.
+
+Native unchanged server-thread baseline fails 1 assertion/0 errors. Final focused24
+pass (5 completion, 3 command, retained6 conversion and10 dispatch tests). The first
+expanded attempt had a test-only ambiguous Logger.severe overload, corrected without
+changing production/assertions. Actual Temurin1.8.0_504/Maven3.9.9 coordinated builds
+with explicit modulePOM/workspace .m2/tmp/wagon flags: AC308unit+18artifact,
+VP45unit+1artifact all0fail/errors/skips, baseclasses1823/2440 maxmajor52.
+SHA256 AC030cab38a344e60cceb5f82e44b7a65412681079a19ef957d8dc5f639c45874b;
+VP aec32bac9c9d4774376f5bbbe6dc0771a21e54e8c935ab36134eed8aac8391c2.
+Evidence conversion-completion-build-results.json, baseline/fixed-extended/buildlogs.
+
+Exactconsumer Java8/Spigot1.8.8/MariaDB11.8.6 fixture052d74e1ab: conversion stages
+requested on real server thread complete MYSQL->SQLITE pending19 and explicitFLAT21
+with source preservation. Independent FLAT marker/points readback runs before commands.
+Actual console `av ConvertToData SQLITE` and `av ConvertFromData SQLITE` each report
+completion, followed by MYSQL and SQLite points20 readback. Clean disable/restart20
+and previous global/main provider checks pass. Final offlineSQLite integrity/points20
+pass; two server logs contain no tested failure markers, lost-message warnings or
+fixture credentials. ConnectorJ5.1.14 remains test classpath only. Evidence
+conversion-completion-live-results.json and conversion-completion-mysql-flat-live.log.
+
+Not proven: transactional/partial-copy recovery, inactive-provider config drift,
+duplicate YAML keys, concurrent external/raw storage changes, failed shutdown,
+same-instance re-enable or broad async Bukkit/debug/user API audit. Caller overrides
+that internally schedule hidden work cannot acquire physical completion merely from
+a void return. Full upstream ledger/features/runtime matrix/fresh independent final
+review remain unfinished. Full goal active; no PR opening/source push authorized.
