@@ -230,7 +230,9 @@ public class Reward {
                 owner=checkpointOwner;
             }
             if(consumer==null)return CompletableFuture.completedFuture(null);
-            ReplayCheckpoint checkpoint=new ReplayCheckpoint(copyProgress(),copyRegistryFingerprints(),placeholders);
+            HashMap<String,String> checkpointPlaceholders=new HashMap<>(placeholders);
+            mergeReplayMetadataInto(checkpointPlaceholders);
+            ReplayCheckpoint checkpoint=new ReplayCheckpoint(copyProgress(),copyRegistryFingerprints(),checkpointPlaceholders);
             return owner.dispatchOffPrimary(()->{
                 consumer.accept(checkpoint);
                 return CompletableFuture.<Void>completedFuture(null);
@@ -630,6 +632,124 @@ public class Reward {
 		replayState.captureLivePlayerState(options);
 		return replayState;
 	}
+
+	public static String replaySelection(HashMap<String, String> placeholders, Supplier<String> selector) {
+		return replaySelection(placeholders, null, selector);
+	}
+
+	/** Records an independent nondeterministic decision within the active injection. */
+	public static String replaySelection(HashMap<String, String> placeholders, String lane, Supplier<String> selector) {
+		String activeKey = ACTIVE_REPLAY_KEY.get();
+		String scopedKey = activeKey == null ? "root" : activeKey;
+		if (lane != null && !lane.isEmpty()) scopedKey += "\u0000" + lane;
+		String storageKey = REPLAY_SELECTION_PREFIX + Base64.getUrlEncoder().withoutPadding()
+				.encodeToString(scopedKey.getBytes(StandardCharsets.UTF_8));
+		ReplayState replayState = ACTIVE_REPLAY_STATE.get();
+		String stored = replayMetadata(placeholders, replayState, storageKey);
+		if (stored != null) {
+			if (replayState != null) replayState.recordReplayMetadata(storageKey, stored);
+			return stored.isEmpty() ? null : new String(Base64.getUrlDecoder().decode(stored), StandardCharsets.UTF_8);
+		}
+		String selected = selector.get();
+		String encoded = selected == null ? "" : Base64.getUrlEncoder().withoutPadding()
+				.encodeToString(selected.getBytes(StandardCharsets.UTF_8));
+		recordReplayMetadata(placeholders, replayState, storageKey, encoded);
+		return selected;
+	}
+
+	/** Returns whether the active injection already persisted a selected branch. */
+	public static boolean hasReplaySelection(HashMap<String, String> placeholders) {
+		String activeKey = ACTIVE_REPLAY_KEY.get();
+		if (activeKey == null) return false;
+		String storageKey = REPLAY_SELECTION_PREFIX + Base64.getUrlEncoder().withoutPadding()
+				.encodeToString(activeKey.getBytes(StandardCharsets.UTF_8));
+		return replayMetadata(placeholders, ACTIVE_REPLAY_STATE.get(), storageKey) != null;
+	}
+
+	/** Durably records replay metadata before dispatching its selected side effect. */
+	public static CompletionStage<Void> persistReplayMetadataAsync(AdvancedCorePlugin plugin,
+			HashMap<String, String> placeholders) {
+		ReplayState replayState = ACTIVE_REPLAY_STATE.get();
+		return replayState == null ? CompletableFuture.completedFuture(null)
+				: replayState.persistCheckpointAsync(plugin, placeholders);
+	}
+
+	public static CompletionStage<Void> replaySingleNestedReward(AdvancedCorePlugin plugin,
+			HashMap<String, String> placeholders, String lane, ReplayState replayState, String activeKey,
+			Supplier<CompletionStage<Void>> dispatch) {
+		if (replayState == null || activeKey == null) {
+			try {
+				CompletionStage<Void> result = dispatch.get();
+				return result == null ? failedStage(
+						new IllegalStateException("Nested reward dispatch returned no completion stage")) : result;
+			} catch (Throwable failure) {
+				return failedStage(failure);
+			}
+		}
+		String storageKey = replaySequenceKey(REPLAY_SINGLE_CHILD_PREFIX, activeKey,
+				lane == null ? "selected" : lane);
+		String stored = replayMetadata(placeholders, replayState, storageKey);
+		if (stored != null) {
+			if (!"1".equals(stored)) return failedStage(
+					new IllegalStateException("Malformed nested reward completion marker"));
+			replayState.recordReplayMetadata(storageKey, stored);
+			return CompletableFuture.completedFuture(null);
+		}
+		CompletionStage<Void> result;
+		try {
+			result = dispatch.get();
+			if (result == null) return failedStage(
+					new IllegalStateException("Nested reward dispatch returned no completion stage"));
+		} catch (Throwable failure) {
+			return failedStage(failure);
+		}
+		return result.thenCompose(ignored -> {
+			recordReplayMetadata(placeholders, replayState, storageKey, "1");
+			return replayState.persistCheckpointAsync(plugin, placeholders);
+		});
+	}
+
+	/** Returns whether the active single nested child is already durably complete. */
+	public static boolean hasCompletedSingleNestedReward(HashMap<String, String> placeholders, String lane) {
+		ReplayState replayState = currentReplayState();
+		String activeKey = currentReplayKey();
+		if (replayState == null || activeKey == null) return false;
+		String storageKey = replaySequenceKey(REPLAY_SINGLE_CHILD_PREFIX, activeKey,
+				lane == null ? "selected" : lane);
+		String stored = replayMetadata(placeholders, replayState, storageKey);
+		if (!"1".equals(stored)) return false;
+		replayState.recordReplayMetadata(storageKey, stored);
+		return true;
+	}
+
+	private static String replaySequenceKey(String prefix, String activeKey, String lane) {
+		return prefix + digest(activeKey.length() + ":" + activeKey + lane.length() + ":" + lane);
+	}
+
+	public static RewardOptions withReplayState(RewardOptions options, ReplayState replayState,
+			String parentKey, String childOccurrence, String occurrenceId) {
+		if (replayState != null) {
+			options.setAsyncReplayState(replayState);
+			replayState.applyLivePlayerState(options);
+		}
+		if (occurrenceId != null) {
+			String effectiveOccurrence = occurrenceId;
+			// Fresh nested children can each be deferred as independent offline queue
+			// entries. Give those siblings stable distinct identities so adding the next
+			// child cannot replace the previous one. A durable parent keeps its shared
+			// occurrence because its checkpoint owns and resumes the complete sequence.
+			if (childOccurrence != null && (replayState == null || !replayState.hasCheckpointConsumer())) {
+				String childKey = parentKey == null ? childOccurrence : parentKey + "/" + childOccurrence;
+				effectiveOccurrence = replaySideEffectOccurrenceId(occurrenceId, childKey);
+			}
+			options.setAsyncReplayOccurrenceId(effectiveOccurrence);
+		}
+		if (parentKey != null && childOccurrence != null) {
+			options.setAsyncReplayKey(parentKey + "/" + childOccurrence);
+		}
+		return options;
+	}
+
 
 	public static boolean isDurableReplay(RewardOptions options) {
 		if (options == null) return false;

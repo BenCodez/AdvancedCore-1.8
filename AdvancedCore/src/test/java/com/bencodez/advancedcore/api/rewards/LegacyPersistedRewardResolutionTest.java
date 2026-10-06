@@ -114,6 +114,23 @@ class LegacyPersistedRewardResolutionTest {
         });
     }
 
+    @Test void namedDurableChildWaitsForEffectAndDoesNotBorrowMissingFile() {
+        fixture(f->{
+            Reward reward=mock(Reward.class);when(reward.getName()).thenReturn("child");when(reward.getConfig()).thenReturn(mock(RewardFileData.class));when(f.handler.getRewards()).thenReturn(Collections.singletonList(reward));
+            CompletableFuture<Void> effect=new CompletableFuture<>();when(reward.giveRewardAsync(eq(f.user),any())).thenReturn(effect);
+            RewardOptions options=new RewardOptions();options.setAsyncReplayCheckpointConsumer(saved->{});
+            CompletionStage<Void> result=f.handler.giveRewardAsync(f.user,"child",options);assertFalse(result.toCompletableFuture().isDone());effect.complete(null);result.toCompletableFuture().join();
+            assertThrows(CompletionException.class,()->f.handler.giveRewardAsync(f.user,"missing",options).toCompletableFuture().join());verify(f.handler,never()).getReward(anyString());
+        });
+    }
+    @Test void freshNamedChildKeepsLegacyFileResolutionAndEmptyNameIsNoOp() {
+        fixture(f->{
+            Reward reward=mock(Reward.class);doReturn(reward).when(f.handler).getReward("child");when(reward.giveRewardAsync(eq(f.user),any())).thenReturn(CompletableFuture.completedFuture(null));
+            f.handler.giveRewardAsync(f.user,"child",new RewardOptions()).toCompletableFuture().join();verify(f.handler).getReward("child");
+            f.handler.giveRewardAsync(f.user,"",new RewardOptions()).toCompletableFuture().join();verify(f.handler,never()).getReward("");
+        });
+    }
+
     private String encoded(String mode,String name){return "\\AdvancedCoreQueue/1/"+mode+"/"+Base64.getUrlEncoder().withoutPadding().encodeToString(name.getBytes(StandardCharsets.UTF_8));}
     private PersistedQueueReference reference(String value) {
         try {java.lang.reflect.Constructor<PersistedQueueReference> constructor=PersistedQueueReference.class.getDeclaredConstructor(String.class);constructor.setAccessible(true);return constructor.newInstance(value);}

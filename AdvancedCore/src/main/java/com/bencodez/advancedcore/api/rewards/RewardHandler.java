@@ -571,6 +571,33 @@ public class RewardHandler {
 
 	}
 
+    /** Await a named child or its legacy slash-command form on the admitted runtime. */
+    public java.util.concurrent.CompletionStage<Void> giveRewardAsync(AdvancedCoreUser user, String name,
+            RewardOptions options) {
+        RewardOptions captured=options==null?new RewardOptions():options.copyForDispatch();
+        Reward.ReplayState state=Reward.replayStateFor(captured);state.captureRuntime(plugin);captured.setAsyncReplayState(state);
+        ServerThreadRewardDispatch owner=state.getActionDispatchOwner();
+        if(name==null)return failedQueueReward(new IllegalArgumentException("Reward name is null"));
+        if(name.isEmpty())return java.util.concurrent.CompletableFuture.completedFuture(null);
+        if(name.startsWith("/")) {
+            return owner.dispatchOffPrimary(()->java.util.concurrent.CompletableFuture.completedFuture(user.getPlayerName()),
+                    java.util.concurrent.TimeUnit.SECONDS.toMillis(30)).thenCompose(playerName->owner.dispatch(()->{
+                String command=name;Player player=Bukkit.getPlayer(playerName);
+                if(player!=null)command=PlaceholderUtils.replaceJavascript(player,command);
+                command=PlaceholderUtils.replacePlaceHolder(command,captured.getPlaceholders());
+                if(command.startsWith("/"))command=command.substring(1);
+                Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(),command);
+                return java.util.concurrent.CompletableFuture.<Void>completedFuture(null);
+            },java.util.concurrent.TimeUnit.SECONDS.toMillis(30)));
+        }
+        return owner.dispatchOffPrimary(()->{
+            // Durable retries may not turn a missing child into a newly created empty file.
+            Reward reward=Reward.isDurableReplay(captured)?resolveRegisteredQueuedReward(name):getReward(name);
+            if(reward==null)return failedQueueReward(new IllegalStateException("Nested reward could not be resolved"));
+            return giveRewardAsync(user,reward,captured);
+        },java.util.concurrent.TimeUnit.SECONDS.toMillis(30));
+    }
+
     /** Await a registered reward without creating a missing reward file. */
     public java.util.concurrent.CompletionStage<Void> giveRewardAsync(AdvancedCoreUser user, Reward reward,
             RewardOptions options) {
@@ -2076,6 +2103,23 @@ public class RewardHandler {
 		}));
 
 		injectedRewards.add(new RewardInjectStringList("RandomReward") {
+
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean supportsAsyncSynchronization(){return false;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplaySelection(placeholders);}
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,
+                    AdvancedCoreUser user, ConfigurationSection data, HashMap<String,String> placeholders) {
+                java.util.List<String> list=data.getStringList(getPath());
+                if(list.isEmpty() && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                String selected=Reward.replaySelection(placeholders,()->list.get(ThreadLocalRandom.current().nextInt(list.size())));
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey();
+                RewardOptions childOptions=Reward.withReplayState(new RewardOptions().setPlaceholders(placeholders),
+                        state,key,"selected:"+selected,Reward.currentReplayOccurrenceId());
+                return Reward.persistReplayMetadataAsync(plugin,placeholders).thenCompose(ignored->
+                        Reward.replaySingleNestedReward(plugin,placeholders,"selected",state,key,
+                                ()->giveRewardAsync(user,selected,childOptions))).thenApply(ignored->(Object)selected);
+            }
 
 			@Override
 			public String onRewardRequest(Reward r, AdvancedCoreUser user, ArrayList<String> list,

@@ -409,6 +409,95 @@ class LegacyOrderedRewardPipelineTest {
         });
     }
 
+    @Test void selectedChildWaitsForSelectionCheckpointAndPhysicalCompletion() {
+        fixture(f -> {
+            AdvancedCoreUser user=onlineUser();List<Reward.ReplayCheckpoint> writes=new ArrayList<>();
+            CompletableFuture<Void> child=new CompletableFuture<>();List<String> calls=new ArrayList<>();
+            f.injections.add(async("random",p->{
+                String selected=Reward.replaySelection(p,()->"child");Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey();
+                return Reward.persistReplayMetadataAsync(f.dispatch.plugin,p).thenCompose(unused->
+                        Reward.replaySingleNestedReward(f.dispatch.plugin,p,"selected",state,key,()->{
+                            assertTrue(writes.stream().anyMatch(w->w.getPlaceholders().keySet().stream().anyMatch(k->k.startsWith("__advancedcore_replay_selection_"))));
+                            calls.add(selected);return child;
+                        })).thenApply(unused->(Object)selected);
+            }));
+            RewardOptions options=nestedOptions(writes);CompletionStage<Void> result=f.reward.giveRewardUserAsync(user,new HashMap<>(),options);drain(f);
+            assertEquals(Arrays.asList("child"),calls);assertFalse(result.toCompletableFuture().isDone());
+            child.complete(null);drain(f);result.toCompletableFuture().join();
+            assertTrue(writes.get(writes.size()-1).getPlaceholders().entrySet().stream().anyMatch(e->e.getKey().startsWith("__advancedcore_replay_single_child_") && e.getValue().equals("1")));
+        });
+    }
+    @Test void retryKeepsSelectedBranchAndSkipsDurablyCompletedChildBeforeParentCheckpoint() {
+        fixture(f -> {
+            AdvancedCoreUser user=onlineUser();List<Reward.ReplayCheckpoint> writes=new ArrayList<>();java.util.concurrent.atomic.AtomicInteger rolls=new java.util.concurrent.atomic.AtomicInteger(),children=new java.util.concurrent.atomic.AtomicInteger();
+            f.injections.add(async("random",p->{
+                String selected=Reward.replaySelection(p,()->"child-"+rolls.incrementAndGet());Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey();
+                return Reward.persistReplayMetadataAsync(f.dispatch.plugin,p).thenCompose(unused->Reward.replaySingleNestedReward(f.dispatch.plugin,p,"selected",state,key,()->{
+                    children.incrementAndGet();return CompletableFuture.completedFuture(null);
+                })).thenApply(unused->(Object)selected);
+            }));
+            CompletionStage<Void> first=f.reward.giveRewardUserAsync(user,new HashMap<>(),nestedOptions(writes));drain(f);first.toCompletableFuture().join();
+            // Recover the child completion write, before the parent's completed injection count.
+            Reward.ReplayCheckpoint checkpoint=writes.stream().filter(w->w.getPlaceholders().keySet().stream().anyMatch(k->k.startsWith("__advancedcore_replay_single_child_"))).findFirst().get();
+            RewardOptions retry=nestedOptions(writes);retry.setAsyncReplayProgress(checkpoint.getReplayProgress());retry.setAsyncReplayRegistryFingerprints(checkpoint.getReplayRegistryFingerprints());
+            CompletionStage<Void> resumed=f.reward.giveRewardUserAsync(user,checkpoint.getPlaceholders(),retry);drain(f);resumed.toCompletableFuture().join();
+            assertEquals(1,rolls.get());assertEquals(1,children.get());
+        });
+    }
+    @Test void failedChildRetainsSelectionWithoutPublishingCompletionMarker() {
+        fixture(f -> {
+            AdvancedCoreUser user=onlineUser();List<Reward.ReplayCheckpoint> writes=new ArrayList<>();CompletableFuture<Void> child=new CompletableFuture<>();
+            f.injections.add(async("random",p->{String selected=Reward.replaySelection(p,()->"child");Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey();
+                return Reward.persistReplayMetadataAsync(f.dispatch.plugin,p).thenCompose(unused->Reward.replaySingleNestedReward(f.dispatch.plugin,p,"selected",state,key,()->child)).thenApply(unused->(Object)selected);
+            }));
+            CompletionStage<Void> result=f.reward.giveRewardUserAsync(user,new HashMap<>(),nestedOptions(writes));drain(f);child.completeExceptionally(new IllegalStateException("child failed"));drain(f);
+            assertThrows(CompletionException.class,()->result.toCompletableFuture().join());assertFalse(writes.isEmpty());
+            assertTrue(writes.stream().allMatch(w->w.getPlaceholders().keySet().stream().noneMatch(k->k.startsWith("__advancedcore_replay_single_child_"))));
+        });
+    }
+    @Test void explicitChildrenCarryDistinctPathsAndCapturedOwnerAcrossContinuation() {
+        fixture(f -> {
+            RewardOptions root=nestedOptions(new ArrayList<>());Reward.ReplayState state=Reward.replayStateFor(root);state.captureRuntime(f.dispatch.plugin);
+            RewardOptions one=Reward.withReplayState(new RewardOptions(),state,"root/0","selected:one","occurrence");
+            RewardOptions two=Reward.withReplayState(new RewardOptions(),state,"root/1","selected:one","occurrence");
+            assertNotEquals(one.getAsyncReplayKey(),two.getAsyncReplayKey());assertEquals("occurrence",one.getAsyncReplayOccurrenceId());assertEquals("occurrence",two.getAsyncReplayOccurrenceId());
+            ServerThreadRewardDispatch replacement=new ServerThreadRewardDispatch(f.dispatch.plugin);when(f.dispatch.plugin.getRewardDispatch()).thenReturn(replacement);
+            try{assertSame(f.dispatch.owner,Reward.replayStateFor(one).getActionDispatchOwner());}finally{replacement.close();}
+        });
+    }
+    @Test void malformedSelectedChildCompletionFailsBeforeDispatch() {
+        fixture(f -> {
+            RewardOptions options=nestedOptions(new ArrayList<>());Reward.ReplayState state=Reward.replayStateFor(options);state.captureRuntime(f.dispatch.plugin);
+            java.util.concurrent.atomic.AtomicInteger calls=new java.util.concurrent.atomic.AtomicInteger();HashMap<String,String> metadata=new HashMap<>();
+            Reward.replaySingleNestedReward(f.dispatch.plugin,metadata,"selected",state,"root",()->{calls.incrementAndGet();return CompletableFuture.completedFuture(null);}).toCompletableFuture().join();
+            String key=metadata.keySet().iterator().next();metadata.put(key,"bogus");
+            assertThrows(CompletionException.class,()->Reward.replaySingleNestedReward(f.dispatch.plugin,metadata,"selected",state,"root",()->{calls.incrementAndGet();return CompletableFuture.completedFuture(null);}).toCompletableFuture().join());assertEquals(1,calls.get());
+        });
+    }
+    @Test void namedSlashCommandWaitsForActualOwnerInvocationAndPreservesSubstitution() {
+        fixture(f -> {
+            RewardHandler handler=mock(RewardHandler.class,CALLS_REAL_METHODS);handler.plugin=f.dispatch.plugin;AdvancedCoreUser user=onlineUser();
+            org.bukkit.Server server=mock(org.bukkit.Server.class);org.bukkit.command.ConsoleCommandSender console=mock(org.bukkit.command.ConsoleCommandSender.class);
+            when(Bukkit.getServer()).thenReturn(server);when(Bukkit.getConsoleSender()).thenReturn(console);
+            when(server.dispatchCommand(console,"say token")).thenAnswer(call->{assertTrue(Bukkit.isPrimaryThread());return true;});
+            CompletionStage<Void> result=handler.giveRewardAsync(user,"/say %value%",new RewardOptions().addPlaceholder("value","token"));
+            assertFalse(result.toCompletableFuture().isDone());verifyNoInteractions(server);drain(f);result.toCompletableFuture().join();verify(server).dispatchCommand(console,"say token");
+        });
+    }
+    @Test void namedSlashCommandUsesCapturedRuntimeAndCannotEscapeRetiredOwner() {
+        fixture(f -> {
+            RewardHandler handler=mock(RewardHandler.class,CALLS_REAL_METHODS);handler.plugin=f.dispatch.plugin;AdvancedCoreUser user=onlineUser();
+            RewardOptions options=nestedOptions(new ArrayList<>());Reward.ReplayState state=Reward.replayStateFor(options);state.captureRuntime(f.dispatch.plugin);options.setAsyncReplayState(state);
+            org.bukkit.Server server=mock(org.bukkit.Server.class);when(Bukkit.getServer()).thenReturn(server);
+            f.dispatch.owner.close();ServerThreadRewardDispatch replacement=new ServerThreadRewardDispatch(f.dispatch.plugin);when(f.dispatch.plugin.getRewardDispatch()).thenReturn(replacement);
+            try{CompletionStage<Void> result=handler.giveRewardAsync(user,"/say token",options);assertThrows(CompletionException.class,()->result.toCompletableFuture().join());verifyNoInteractions(server);assertTrue(f.dispatch.queued.isEmpty());}finally{replacement.close();}
+        });
+    }
+
+    private RewardOptions nestedOptions(List<Reward.ReplayCheckpoint> writes) {
+        RewardOptions options=new RewardOptions().setCheckRepeat(false);options.setAsyncReplayKey("root");options.setAsyncReplayOccurrenceId("occurrence");options.setAsyncReplayCheckpointConsumer(writes::add);return options;
+    }
+
     private void fullSetup(Fixture f) {
         com.bencodez.advancedcore.AdvancedCoreConfigOptions config=mock(com.bencodez.advancedcore.AdvancedCoreConfigOptions.class);when(f.dispatch.plugin.getOptions()).thenReturn(config);
         when(config.isProcessRewards()).thenReturn(true);when(config.getFormatRewardTimeFormat()).thenReturn("yyyy-MM-dd");

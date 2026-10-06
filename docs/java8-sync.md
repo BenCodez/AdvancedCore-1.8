@@ -2735,3 +2735,77 @@ boundaries, explicit clear/wipe concurrency, cold-read startup repair, same-inst
 reenable/failed shutdown and the wider upstream/platform matrix remain outstanding.
 No complete-main or globally exactly-once claim is made. Independent final review
 remains pending; no push or PR opening is authorized.
+
+## Named RandomReward child completion and restart recovery
+
+A live Java 8/Spigot 1.8.8 regression proved that the old `RandomReward` callback
+could remove its offline parent while the selected child was still pending. The
+callback used the legacy void scheduler API, so the parent never awaited that
+child. This is a confirmed backport gap, not a change to the legacy void API's
+admission contract.
+
+The asynchronous `RandomReward` path now persists its selected branch before
+execution, carries the admitted runtime and explicit child path/occurrence, awaits
+the child, and persists a one-child completion marker before settling its parent.
+Checkpoint snapshots merge reserved metadata from the shared replay state so a
+parent snapshot cannot discard a child's replay records. Configured named children
+and the existing slash-command form have an awaited dispatch overload; durable
+missing children fail without creating an empty reward file. Fresh named lookup,
+empty optional names, the synchronous callback, and existing overloads remain.
+Commands retain leading-slash removal and JavaScript/placeholder substitution;
+completion means their actual Bukkit-owner invocation returned. It does not mean
+an arbitrary command's external effects are transactional.
+
+The helpers adapt pinned-main selection and child-marker behavior from
+`a6eede5b26a81e9516f40cb9d1dcb6f4c2ac6714`,
+`12bc1f5245c9d63cbc200d38259538ed51cf1015`,
+`3465fd4c611e872d9afb1d7834342b46f36ac2b3`,
+`a83cae5baaa4a14131c229a580f72ba28c1427cd`, and
+`31ef89f8e838a88a8f74f322fe476b16f876cd67`, with Java 8 exceptional-future
+construction and the existing Spigot 1.8 owner. These whole upstream commits are
+not declared fully ported by this named-child cohort. No production dependency,
+release version, configuration default, schema, or proxy payload changes.
+
+Validation used Temurin 8u504, Maven 3.9.9 and the isolated `.m2/repository`:
+
+```sh
+mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon   -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository   -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install
+mvn -B -f VotingPlugin/pom.xml -Dmaven.resolver.transport=wagon   -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository   -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean verify
+```
+
+Run from their respective writable fork roots with the actual Java 8 `JAVA_HOME`
+and its `bin` first on PATH. AdvancedCore: 528 unit + 18 packaged-artifact tests
+(546 total). VotingPlugin: 45 unit + 1 packaged-artifact test (46 total). All pass;
+zero failures, errors, or skips. Nine new deterministic tests cover selection
+publication before dispatch, awaiting completion, failed children, durable child
+skip, distinct paths, retained runtime, malformed completion metadata, missing
+named lookup, empty/fresh lookup, and owner-dispatched slash commands.
+
+Exact producer SHA-256:
+`daf8da6c1afb5ec48e08e81bfa18154c1d68576db2ec3e1d0056e61aa2213159`.
+Exact consumer SHA-256:
+`ccab3c707e85c7d7c974632159ea60b7fd7fb70f865efb4f5095ecc54fb09069`.
+All 1,834 producer and 2,451 consumer base classes have major version <=52.
+
+The original live parent-completion acceptance changed from RED to PASS on that
+exact consumer (case `b2c33dc193`): SQLite retains the parent while a controlled
+child is pending, then removes it only after release. Two real SIGKILL/restart
+cases passed 12 checks each: offline `2eafc3b0d8` and timed `556b69130a`. Both
+persist a selected child's completed checkpoint while its parent awaits it,
+explicitly save native player data, and kill the owned Java process (exit -9).
+The fixture changes its candidate list to only the opposite branch before
+restart. Automatic login/timed replay still selects the persisted original child,
+skips its completed effects, preserves occurrence identity and exactly the
+observed 3 diamonds/7 experience, removes the parent, and shuts down cleanly.
+SQLite integrity and Java 8 linkage checks pass. The initial timed fixture
+preflight hit a TIME_WAIT bind conflict after the prior stopped process; no Java
+listener remained. The fixture preflight now uses SO_REUSEADDR, matching the
+server's bind behavior; no production transport or delay was changed.
+
+This does not prove unacknowledged external effects, power loss, cross-store
+atomicity, or every nested reward form. `Random` fallback/inline paths,
+`AdvancedRandomReward`, general `Rewards` lists, Javascript/Lucky branches,
+RewardBuilder integration and their restart/failure cases still need audit and
+backport work. Existing v3 queue decoding remains; the inactive legacy source
+tree is retained. No push, PR, release, deployment, or independent final approval
+is claimed by this cohort.
