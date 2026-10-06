@@ -319,3 +319,35 @@ reconciliation with optimistic mutations, legacy non-queued setter interaction,
 shutdown draining/owner closure, broader upstream feature ledger, full final
 runtime acceptance and fresh independent review. Same-instance fencing alone is
 not a complete manager lifecycle backport or PR readiness claim.
+
+## Versioned cache population and safe owned reads
+
+The portable snapshot behavior from pinned main6390c1cab41bd4d7683c7df88dd36537c8c7861e
+is adapted to the legacy cache. Storage reads stay outside its monitor. Queued
+and claimed values remain visible while a snapshot loads or is replaced; writes
+completing during a read also fence its stale result. A completed later snapshot,
+explicit replacement or eviction invalidates older reads. Replacement copies
+its input, supports null as an empty explicit snapshot while preserving pending
+values, and never resurrects a retired instance. Registered defaults and dynamic
+stored columns are retained. No storage format, schema or public signature is
+removed; the old mutable getCache() API remains available. Owned UserData integer
+and string reads now take one monitor-protected value lookup, preserving numeric
+string parsing and normal storage fallback when the cache is absent/retired.
+
+The first eight snapshot regressions all fail on the previous implementation
+(six failures, two errors). Ten final tests cover those cases, a mutation queued
+before a read but committed during it, and actual typed getter behavior without
+raw map access. Together with existing cache tests,24 focused tests pass. Actual
+Java8 clean install passes101 unit+8 artifact tests; the exact paired consumer
+clean verify passes14 unit+1 artifact test, zero failures/errors/skips. Logs are
+`ac-cache-snapshot-clean-install.log` and `vp-cache-snapshot-clean-verify.log`.
+Base class versions remain<=52 in both jars. Live SQLite Spigot1.8.8 acceptance
+for CacheSnapshot proves vote/reward, points10/total1, graceful stop and restart
+against the artifact hash in `checked-cache-runtime-results-CacheSnapshot.json`.
+
+This is not the entire modern shared runtime port. Legacy SQL/file read helpers
+still need checked error propagation: an unavailable store must not look like a
+new user with defaults. Manager generation fencing, non-queued setter/storage
+admission and shutdown draining also remain unresolved. External mutation through
+the legacy raw map is not advertised as thread-safe. The full ledger, final
+runtime acceptance and independent review remain due; no PR readiness is claimed.

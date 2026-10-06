@@ -4,6 +4,9 @@ import java.io.IOException;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Objects;
+import java.util.Set;
 import java.util.Map.Entry;
 import java.util.Queue;
 import java.util.UUID;
@@ -32,6 +35,10 @@ public class UserDataCache {
 	private boolean removing;
 	private boolean inFlight;
 	private boolean flushFailureReported;
+	private long snapshotVersion;
+	private long replacementVersion;
+	private final HashMap<String, Long> changedAt = new HashMap<>();
+	private final HashMap<String, DataValue> inFlightValues = new HashMap<>();
 	private boolean scheduled = false;
 	@Getter
 	private UUID uuid;
@@ -48,6 +55,7 @@ public class UserDataCache {
 			throw new IllegalStateException("User cache is retiring or retired");
 		}
 		cache.put(change.getKey(), change.toUserDataValue());
+		changedAt.put(change.getKey(), ++snapshotVersion);
 		if (queue) {
 			cachedChanges.add(change);
 			if (!scheduled) {
@@ -58,42 +66,45 @@ public class UserDataCache {
 	}
 
 	public UserDataCache cache() {
-		if (uuid != null) {
-			AdvancedCoreUser user = getUser();
-			ArrayList<String> keys = user.getUserData().getKeys();
-			HashMap<String, DataValue> data = user.getUserData().getValues();
-			ArrayList<String> changedKeys = new ArrayList<>();
-			for (UserDataKey dataKey : manager.getKeys()) {
-				String key = dataKey.getKey();
-				keys.remove(key);
-				if (data.containsKey(key)) {
-					DataValue dataValue = data.get(key);
-					manager.getPlugin().devDebug("Caching " + dataValue.getTypeName() + " " + key + " for "
-							+ uuid.toString() + ", value: " + dataValue.toString());
-					// temp try/catch to prevent plugin failures
-					try {
-						if (cache.containsKey(key)) {
-							if (!cache.get(key).toString().equals(dataValue.toString())) {
-								changedKeys.add(key);
-							}
-						}
-					} catch (Exception e) {
-						e.printStackTrace();
-					}
-					cache.put(key, dataValue);
-				} else {
-					manager.getPlugin().devDebug("Loading default cache value for " + key + " for " + uuid.toString());
-					cache.put(key, dataKey.getDefault());
-				}
-
-			}
-			if (!changedKeys.isEmpty()) {
-				manager.getPlugin().getUserManager().onChange(user, ArrayUtils.convert(changedKeys));
-			}
-			if (keys.size() > 0) {
-				manager.getPlugin().devDebug("Keys not cached: " + ArrayUtils.makeStringList(keys));
-			}
+		final UUID currentUuid;
+		final long expectedVersion;
+		final HashMap<String, DataValue> before;
+		synchronized (this) {
+			if (uuid == null || cache == null || removing) return this;
+			currentUuid = uuid;
+			expectedVersion = snapshotVersion;
+			before = new HashMap<>(cache);
 		}
+		AdvancedCoreUser user = manager.getPlugin().getUserManager().getUser(currentUuid, false);
+		ArrayList<String> keys = new ArrayList<>(user.getUserData().getKeys());
+		HashMap<String, DataValue> refreshed = new HashMap<>(user.getUserData().getValues());
+		// Keep dynamic stored fields as well as registered defaults, as pinned main does.
+		for (UserDataKey dataKey : manager.getKeys()) {
+			keys.remove(dataKey.getKey());
+			if (!refreshed.containsKey(dataKey.getKey())) refreshed.put(dataKey.getKey(), dataKey.getDefault());
+		}
+		final HashMap<String, DataValue> published;
+		synchronized (this) {
+			if (uuid == null || cache == null || removing || !uuid.equals(currentUuid)
+					|| replacementVersion > expectedVersion) return this;
+			preservePendingValues(refreshed);
+			for (Entry<String, Long> entry : changedAt.entrySet()) {
+				if (entry.getValue() > expectedVersion && cache.containsKey(entry.getKey())) {
+					refreshed.put(entry.getKey(), cache.get(entry.getKey()));
+				}
+			}
+			cache = refreshed;
+			recordSnapshotReplacement();
+			published = new HashMap<>(cache);
+		}
+		ArrayList<String> changedKeys = new ArrayList<>();
+		for (Entry<String, DataValue> entry : published.entrySet()) {
+			DataValue prior = before.get(entry.getKey());
+			if (prior != null && entry.getValue() != null
+					&& !Objects.equals(prior.toString(), entry.getValue().toString())) changedKeys.add(entry.getKey());
+		}
+		if (!changedKeys.isEmpty()) manager.getPlugin().getUserManager().onChange(user, ArrayUtils.convert(changedKeys));
+		if (!keys.isEmpty()) manager.getPlugin().devDebug("Caching additional keys: " + ArrayUtils.makeStringList(keys));
 		return this;
 	}
 
@@ -120,6 +131,9 @@ public class UserDataCache {
 					uuid = null;
 					scheduled = false;
 				} else cache.clear();
+				changedAt.clear();
+				inFlightValues.clear();
+				replacementVersion = ++snapshotVersion;
 			}
 		} finally {
 			if (markedRemoval) synchronized (this) { removing = false; }
@@ -169,6 +183,11 @@ public class UserDataCache {
 		return inFlight || (cachedChanges != null && !cachedChanges.isEmpty());
 	}
 
+	/** One coherent internal read; the legacy mutable getCache() API remains available. */
+	public synchronized DataValue getCachedValue(String key) {
+		return cache == null ? null : cache.get(key);
+	}
+
 	public synchronized boolean isCached(String key) {
 		if (cache != null) {
 			return cache.containsKey(key);
@@ -189,6 +208,7 @@ public class UserDataCache {
 		final ArrayList<UserDataChange> changes;
 		final HashMap<String, DataValue> values = new HashMap<>();
 		final ArrayList<String> keys = new ArrayList<>();
+		final HashMap<String, Long> claimedVersions = new HashMap<>();
 		synchronized (this) {
 			if (inFlight) throw new IllegalStateException("Cannot recursively flush a user cache storage write");
 			if (uuid == null || cachedChanges == null || cachedChanges.isEmpty()) return null;
@@ -198,6 +218,8 @@ public class UserDataCache {
 				values.put(change.getKey(), change.toUserDataValue());
 				keys.add(change.getKey());
 			}
+			for (String key : values.keySet()) claimedVersions.put(key, changedAt.get(key));
+			inFlightValues.putAll(values);
 			cachedChanges.clear();
 			inFlight = true;
 		}
@@ -216,7 +238,16 @@ public class UserDataCache {
 					restored.addAll(changes);
 					restored.addAll(cachedChanges);
 					cachedChanges = restored;
+				} else {
+					// A write completing during a read must fence that read even when
+					// its original queued mutation predates the read's version.
+					for (String key : values.keySet()) {
+						if (Objects.equals(claimedVersions.get(key), changedAt.get(key))) {
+							changedAt.put(key, ++snapshotVersion);
+						}
+					}
 				}
+				inFlightValues.clear();
 				inFlight = false;
 			}
 		}
@@ -287,7 +318,29 @@ public class UserDataCache {
 		}
 	}
 
-	public void updateCache(HashMap<String, DataValue> tempCache) {
-		cache = tempCache;
+	public synchronized void updateCache(HashMap<String, DataValue> tempCache) {
+		if (cache == null || removing) return;
+		HashMap<String, DataValue> replacement = tempCache == null ? new HashMap<>() : new HashMap<>(tempCache);
+		preservePendingValues(replacement);
+		cache = replacement;
+		recordSnapshotReplacement();
+	}
+
+	private Set<String> pendingKeys() {
+		Set<String> keys = new HashSet<>(inFlightValues.keySet());
+		if (cachedChanges != null) for (UserDataChange change : cachedChanges) keys.add(change.getKey());
+		return keys;
+	}
+
+	/** Monitor must be held; retain the latest visible value of each pending key. */
+	private void preservePendingValues(HashMap<String, DataValue> replacement) {
+		for (String key : pendingKeys()) {
+			if (cache.containsKey(key)) replacement.put(key, cache.get(key));
+		}
+	}
+
+	private void recordSnapshotReplacement() {
+		replacementVersion = ++snapshotVersion;
+		changedAt.keySet().retainAll(pendingKeys());
 	}
 }

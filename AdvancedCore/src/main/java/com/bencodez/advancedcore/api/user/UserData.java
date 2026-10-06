@@ -109,13 +109,10 @@ public class UserData {
 				UserDataCache cache = user.getCache();
 				if (cache != null) {
 					user.cacheIfNeeded();
-					if (cache.isCached(key)) {
-						if (cache.getCache().get(key).isInt()) {
-							// user.getPlugin().debug("Using cache: " + key + " " +
-							// cache.getCache().get(key).getInt());
-							return cache.getCache().get(key).getInt();
-						}
-						String str = cache.getCache().get(key).getString();
+					DataValue cached = cache.getCachedValue(key);
+					if (cached != null) {
+						if (cached.isInt()) return cached.getInt();
+						String str = cached.getString();
 						if (str != null && !str.equals("null")) {
 							try {
 								return Integer.parseInt(str);
@@ -282,8 +279,9 @@ public class UserData {
 			if (useCache) {
 				UserDataCache cache = user.getCache();
 				if (cache != null) {
-					if (cache.isCached(key)) {
-						String str = cache.getCache().get(key).getString();
+					DataValue cached = cache.getCachedValue(key);
+					if (cached != null) {
+						String str = cached.getString();
 						if (str != null) {
 							return str;
 						}
