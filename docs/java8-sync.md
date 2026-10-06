@@ -2616,3 +2616,60 @@ Remaining full scope includes retained-progress publication after effects, queue
 crash recovery, explicit clear/wipe concurrency, startup cold-read repair, broader
 lifecycle/platform acceptance and the complete pinned upstream ledger. Independent
 final review remains pending. No push or PR opening is authorized.
+
+
+### Post-effect queue publication recovery (2026-10-06)
+
+Two regressions first failed against AdvancedCore
+`df8b65219e1166c31b98c1f483e2ac4e5a0756d9`: a completed offline/timed effect followed
+by a failed checked removal settled its receipt and released the occurrence. A
+subsequent poll could admit the reward again. Both desired-behavior assertions now
+pass unchanged.
+
+Offline/timed removal and post-effect recovery metadata use one captured publication
+under the existing per-user persisted replay owner. It retains the serial tail and
+occurrence until that exact storage edit is acknowledged. SQL/IO failures retry only
+the captured edit with bounded backoff on the existing delayed timer; they never
+call the reward handler. Appended entries are preserved. Missing entries and other
+permanent errors terminate explicitly rather than spinning. Retirement cancels
+queued retries and a racing future publication, but keeps a running physical commit
+owned until its result is known. Acknowledged writes remain acknowledged even when
+retirement races their completion. No new executor, store, dependency or wire format
+was introduced. Pre-effect admission retains the previous coalesced polling behavior.
+
+Ten new regression tests cover offline/timed removals, recovery-prefix publication,
+repeated outage/repair, append preservation, shared serial ownership, queued and
+running retirement, late future publication, and permanent missing-entry failure.
+Focused48 tests pass. Full Java8 producer clean install:519 unit+18 artifact=537;
+consumer clean verify against the exact local dependency:45 unit+1 artifact=46.
+Zero failures/errors/skips. The new tests were subsequently rerun with bounded
+2-second completion waits:10 tests pass. Base classes1834/2451,maxmajor52.
+SHA256: AdvancedCore `d97f7c30013c471e4d92e639c966b3cfbfd5067d7b058fd0e1fdc0895c8a1bb5`;
+VotingPlugin `ff7187cb6208f65d66b4106eb30477be91f107f77d6d8108970df1462efc0502`.
+
+Native Java8/Spigot1.8.8 fixtures e418ac06c0(timed removal),f765b79f43(offline removal)
+and ab87833bd9(completed-root checkpoint recovery) each pass12 checks on that exact
+consumer. Fixture-only SQLite triggers reject the selected physical update. The
+completion cases retain a fully checkpointed entry until repair; a repeated poll is
+fenced and only removal is retried. The completed-root case permits every native
+action checkpoint, then rejects the completed root-prefix write and its recovery
+publication. After repair the retained prefix is published and normal timed replay
+skips the completed root: its callback runs once. Each case verifies7 experience,
+a potion, exactly3 overflow diamonds recovered after clean restart, checked physical
+queue state, completion removal, SQLite integrity and clean shutdown.
+
+Fixture corrections are retained as evidence, not counted as passing acceptance:
+an offline helper was first run from the wrong directory and then had a replacement-
+order method-name typo. The initial checkpoint fault targeted action checkpoints too
+early; its narrowed expression then used instr(), which the real SQLite3.7.2 driver
+rejects (confirmed by a Java8 probe). Compatible LIKE matching of the actual encoded
+completed-root prefix corrected the fixture without weakening once-only assertions
+or changing production dependencies. An intermediate focused cancellation assertion
+also found duplicate cancel calls; the implementation was corrected, not the test.
+
+Same-process post-effect publication recovery is now tested. This does not prove
+crash recovery or exactly-once behavior across a crash between a non-idempotent
+effect and durable acknowledgement. Explicit clear/wipe concurrency, startup cold-
+read repair, same-instance reenable/failed shutdown, partial native-action restart,
+the broader runtime/platform matrix and complete upstream ledger still require work.
+Independent final review remains pending. No push or PR opening is authorized.

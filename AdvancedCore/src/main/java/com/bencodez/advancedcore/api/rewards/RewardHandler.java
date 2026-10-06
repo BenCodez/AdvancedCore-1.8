@@ -3000,6 +3000,7 @@ public class RewardHandler {
 		if (repeatTimer != null) repeatTimer.cancel();
 		if (delayedTimer != null) delayedTimer.shutdown();
 		AdvancedCoreUser.cancelTimedStorageWakeups(plugin);
+		AdvancedCoreUser.retireQueuePublications(plugin);
 	}
 
 	public void shutdown() {

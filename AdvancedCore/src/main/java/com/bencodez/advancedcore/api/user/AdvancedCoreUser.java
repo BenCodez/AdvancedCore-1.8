@@ -69,6 +69,7 @@ public class AdvancedCoreUser {
         final HashMap<String,Integer> legacy=new HashMap<>();
         CompletableFuture<Void> tail=CompletableFuture.completedFuture(null);
         TimedStorageWakeup timedStorageWakeup;
+        QueuePublication publication;
         int timedStorageFailures;
     }
 
@@ -1050,6 +1051,87 @@ public class AdvancedCoreUser {
         return owner.dispatchOffPrimary(()->dispatchTimedQueue(owner,runtime),TimeUnit.SECONDS.toMillis(30));
     }
 
+    /** One captured storage publication; retries never invoke a reward handler. */
+    private final class QueuePublication {
+        private final PersistedReplayClaims claims;
+        private final ServerThreadRewardDispatch owner;
+        private final Runnable edit;
+        private final java.util.concurrent.ScheduledExecutorService timer;
+        private final CompletableFuture<Void> result=new CompletableFuture<Void>() {
+            @Override public boolean cancel(boolean interrupt){return false;}
+        };
+        private boolean running,retired,finished,acknowledged;
+        private int failures;
+        private Object retryToken;
+        private java.util.concurrent.ScheduledFuture<?> retryFuture;
+        QueuePublication(PersistedReplayClaims claims,ServerThreadRewardDispatch owner,Runnable edit) {
+            this.claims=claims;this.owner=owner;this.edit=edit;
+            this.timer=plugin.getRewardHandler().getDelayedTimer();
+        }
+        void start() {
+            boolean reject;
+            synchronized(this){reject=retired || finished; if(!reject){running=true;retryToken=null;retryFuture=null;}}
+            if(reject){finish(new IllegalStateException("Queue publication runtime retired"));return;}
+            owner.dispatchOffPrimary(()->{edit.run();return CompletableFuture.<Void>completedFuture(null);},TimeUnit.SECONDS.toMillis(30))
+                .whenComplete((unused,failure)->settled(failure));
+        }
+        private void settled(Throwable failure) {
+            Object token=null;long delay=0;
+            synchronized(this) {
+                running=false;
+                if(failure==null)acknowledged=true;
+                if(failure!=null && !retired && !finished && isTimedStorageFailure(failure) && timer!=null && !timer.isShutdown()) {
+                    failures=Math.min(8,failures+1);token=new Object();retryToken=token;
+                    delay=Math.min(TimeUnit.MINUTES.toMillis(5),TimeUnit.SECONDS.toMillis(1L<<failures));
+                }
+            }
+            if(token==null){finish(failure);return;}
+            if(failures==1)plugin.getLogger().warning("Queued reward publication is pending; retrying storage acknowledgement");
+            final Object captured=token;
+            try {
+                java.util.concurrent.ScheduledFuture<?> future=timer.schedule(()->{
+                    synchronized(this){if(finished || retired || retryToken!=captured)return;}
+                    start();
+                },delay,TimeUnit.MILLISECONDS);
+                boolean stale;
+                synchronized(this){stale=finished || retired || retryToken!=captured;if(!stale)retryFuture=future;}
+                if(stale)future.cancel(false);
+            }catch(RuntimeException rejected){finish(rejected);}
+        }
+        void retire() {
+            java.util.concurrent.ScheduledFuture<?> future;boolean complete;
+            synchronized(this){retired=true;future=retryFuture;retryFuture=null;retryToken=null;complete=!running;}
+            if(future!=null)future.cancel(false);
+            if(complete)finish(new IllegalStateException("Queue publication retired before acknowledgement"));
+        }
+        private void finish(Throwable failure) {
+            java.util.concurrent.ScheduledFuture<?> future;
+            synchronized(this){if(finished)return;finished=true;retryToken=null;future=retryFuture;retryFuture=null;if(acknowledged)failure=null;}
+            if(future!=null)future.cancel(false);
+            synchronized(REPLAY_CLAIMS_LOCK){if(claims.publication==this)claims.publication=null;}
+            if(failure==null)result.complete(null);else result.completeExceptionally(failure);
+        }
+    }
+
+    private CompletionStage<Void> publishQueueEdit(ServerThreadRewardDispatch owner,PersistedReplayClaims claims,Runnable edit) {
+        QueuePublication publication=new QueuePublication(claims,owner,edit);
+        synchronized(REPLAY_CLAIMS_LOCK) {
+            if(claims.publication!=null)throw new IllegalStateException("Queued publication owner already active");
+            claims.publication=publication;
+        }
+        publication.start();return publication.result;
+    }
+
+    /** Admission is already closed; wait for a running physical write, cancel only queued retries. */
+    public static void retireQueuePublications(AdvancedCorePlugin plugin) {
+        ArrayList<QueuePublication> publications=new ArrayList<>();
+        synchronized(REPLAY_CLAIMS_LOCK) {
+            HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);
+            if(users!=null)for(PersistedReplayClaims claims:users.values())if(claims.publication!=null)publications.add(claims.publication);
+        }
+        for(QueuePublication publication:publications)publication.retire();
+    }
+
     private static final class TimedStorageWakeup {
         volatile java.util.concurrent.ScheduledFuture<?> future;
         final ServerThreadRewardDispatch owner;
@@ -1112,7 +1194,7 @@ public class AdvancedCoreUser {
                 PersistedReplayClaims claims=entries.next();TimedStorageWakeup wakeup=claims.timedStorageWakeup;
                 claims.timedStorageWakeup=null;
                 if(wakeup!=null && wakeup.future!=null)futures.add(wakeup.future);
-                if(claims.occurrences.isEmpty() && claims.tail.isDone())entries.remove();
+                if(claims.occurrences.isEmpty() && claims.tail.isDone() && claims.publication==null)entries.remove();
             }
             if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);
         }
@@ -1122,7 +1204,7 @@ public class AdvancedCoreUser {
     private void releaseTimedWakeupOwner(PersistedReplayClaims captured) {
         synchronized(REPLAY_CLAIMS_LOCK) {
             HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);
-            if(captured.occurrences.isEmpty() && captured.tail.isDone() && captured.timedStorageWakeup==null && users!=null && users.get(getUUID())==captured){users.remove(getUUID());if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);}
+            if(captured.occurrences.isEmpty() && captured.tail.isDone() && captured.timedStorageWakeup==null && captured.publication==null && users!=null && users.get(getUUID())==captured){users.remove(getUUID());if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);}
         }
     }
 
@@ -1169,21 +1251,24 @@ public class AdvancedCoreUser {
                     if(effect==null)throw new IllegalStateException("Timed reward omitted its completion stage");return effect;
                 },TimeUnit.SECONDS.toMillis(30));
                 replay.handle((ignored,failure)->owner.dispatchOffPrimary(()->{
-                    if(failure==null)mutateTimedQueue(pending->{if(!pending.remove(current.get()))throw new IllegalStateException("Timed occurrence disappeared before completion");return pending;});
+                    if(failure==null)return publishQueueEdit(owner,captured,()->mutateTimedQueue(pending->{if(!pending.remove(current.get()))throw new IllegalStateException("Timed occurrence disappeared before completion");return pending;}));
                     else {
                         String before=current.get();TimedQueueEntry pendingEntry=decodeTimedEntry(before);
                         int retry=Math.min(8,asyncRetryCount(pendingEntry.key)+1);
                         long retryTime=System.currentTimeMillis()+Math.min(TimeUnit.MINUTES.toMillis(5),TimeUnit.SECONDS.toMillis(1L<<retry));
                         String key=withAsyncRetryCount(withAsyncReplayProgress(stripTimedExecutionMarker(pendingEntry.key),failure),retry);
                         String restored=encodeTimedEntry(key,retryTime);
-                        mutateTimedQueue(pending->{int index=pending.indexOf(before);if(index<0)throw new IllegalStateException("Timed occurrence disappeared during recovery");pending.set(index,restored);return pending;});current.set(restored);retryPublished.set(true);loadTimedDelayedTimer(retryTime);
+                        Runnable edit=()->{mutateTimedQueue(pending->{int index=pending.indexOf(before);if(index<0)throw new IllegalStateException("Timed occurrence disappeared during recovery");pending.set(index,restored);return pending;});current.set(restored);};
+                        CompletionStage<Void> publication;
+                        if(effectsStarted.get())publication=publishQueueEdit(owner,captured,edit);
+                        else {edit.run();publication=CompletableFuture.completedFuture(null);}
+                        return publication.thenCompose(published->{retryPublished.set(true);loadTimedDelayedTimer(retryTime);return AdvancedCoreUser.<Void>failedStage(failure);});
                     }
-                    return failure==null?CompletableFuture.<Void>completedFuture(null):AdvancedCoreUser.<Void>failedStage(failure);
                 },TimeUnit.SECONDS.toMillis(30))).thenCompose(stage->stage).whenComplete((ignored,failure)->{
                     synchronized(REPLAY_CLAIMS_LOCK){captured.occurrences.remove(id);if(existing==null){int count=captured.legacy.getOrDefault(stored,0);if(count<=1)captured.legacy.remove(stored);else captured.legacy.put(stored,count-1);}}
                     if(failure!=null && !effectsStarted.get() && !retryPublished.get() && isTimedStorageFailure(failure))requestTimedStorageWakeup(owner,runtime);
                     if(failure==null)outcome.complete(null);else outcome.completeExceptionally(failure);tail.complete(null);
-                    synchronized(REPLAY_CLAIMS_LOCK){HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);if(captured.occurrences.isEmpty() && captured.tail.isDone() && captured.timedStorageWakeup==null && users!=null && users.get(getUUID())==captured){users.remove(getUUID());if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);}}
+                    synchronized(REPLAY_CLAIMS_LOCK){HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);if(captured.occurrences.isEmpty() && captured.tail.isDone() && captured.timedStorageWakeup==null && captured.publication==null && users!=null && users.get(getUUID())==captured){users.remove(getUUID());if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);}}
                 });
             });
         }
@@ -1252,6 +1337,7 @@ public class AdvancedCoreUser {
             }
             final PersistedReplayClaims captured=claims;
             java.util.concurrent.atomic.AtomicReference<String> current=new java.util.concurrent.atomic.AtomicReference<>(stored);
+            java.util.concurrent.atomic.AtomicBoolean effectsStarted=new java.util.concurrent.atomic.AtomicBoolean();
             CompletableFuture<Void> result=new CompletableFuture<Void>() {@Override public boolean cancel(boolean interrupt){return false;}};
             outcomes.add(result);
             previous.whenComplete((ignored,priorFailure)->{
@@ -1270,16 +1356,20 @@ public class AdvancedCoreUser {
                         current.set(updated);
                     });
                     Reward.ReplayState replayState=Reward.replayStateFor(options);replayState.captureAdmittedRuntime(capturedRuntime);options.setAsyncReplayState(replayState);
+                    effectsStarted.set(true);
                     CompletionStage<Void> effect=plugin.getRewardHandler().givePersistedQueueRewardAsync(this,new PersistedQueueReference(metadata.rewardReference),options);
                     if(effect==null)throw new IllegalStateException("Queued reward omitted its completion stage");return effect;
                 },TimeUnit.SECONDS.toMillis(30));
                 replay.handle((value,failure)->owner.dispatchOffPrimary(()->{
-                    if(failure==null)mutateOfflineQueue(pending->{if(!pending.remove(current.get()))throw new IllegalStateException("Queued occurrence disappeared before completion");return pending;});
-                    else if(!Reward.isOfflineReplayDeferred(failure)) {
-                        String before=current.get(),updated=withAsyncReplayProgress(before,failure);
-                        if(!before.equals(updated))mutateOfflineQueue(pending->{int index=pending.indexOf(before);if(index<0)throw new IllegalStateException("Queued occurrence disappeared during recovery");pending.set(index,updated);return pending;});
-                    }
-                    return failure==null || Reward.isOfflineReplayDeferred(failure)?CompletableFuture.<Void>completedFuture(null):AdvancedCoreUser.<Void>failedStage(failure);
+                    if(failure==null)return publishQueueEdit(owner,captured,()->mutateOfflineQueue(pending->{if(!pending.remove(current.get()))throw new IllegalStateException("Queued occurrence disappeared before completion");return pending;}));
+                    if(Reward.isOfflineReplayDeferred(failure))return CompletableFuture.<Void>completedFuture(null);
+                    String before=current.get(),updated=withAsyncReplayProgress(before,failure);
+                    if(before.equals(updated))return AdvancedCoreUser.<Void>failedStage(failure);
+                    Runnable edit=()->{mutateOfflineQueue(pending->{int index=pending.indexOf(before);if(index<0)throw new IllegalStateException("Queued occurrence disappeared during recovery");pending.set(index,updated);return pending;});current.set(updated);};
+                    CompletionStage<Void> publication;
+                    if(effectsStarted.get())publication=publishQueueEdit(owner,captured,edit);
+                    else {edit.run();publication=CompletableFuture.completedFuture(null);}
+                    return publication.thenCompose(published->AdvancedCoreUser.<Void>failedStage(failure));
                 },TimeUnit.SECONDS.toMillis(30))).thenCompose(stage->stage).whenComplete((value,failure)->{
                     synchronized(REPLAY_CLAIMS_LOCK) {
                         captured.occurrences.remove(id);
@@ -1289,7 +1379,7 @@ public class AdvancedCoreUser {
                     tail.complete(null);
                     synchronized(REPLAY_CLAIMS_LOCK) {
                         HashMap<String,PersistedReplayClaims> users=REPLAY_CLAIMS.get(plugin);
-                        if(captured.occurrences.isEmpty() && captured.tail.isDone() && captured.timedStorageWakeup==null && users!=null && users.get(getUUID())==captured){users.remove(getUUID());if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);}
+                        if(captured.occurrences.isEmpty() && captured.tail.isDone() && captured.timedStorageWakeup==null && captured.publication==null && users!=null && users.get(getUUID())==captured){users.remove(getUUID());if(users.isEmpty())REPLAY_CLAIMS.remove(plugin);}
                     }
                 });
             });
