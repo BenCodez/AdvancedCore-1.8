@@ -74,7 +74,7 @@ public class UserDataManager {
 		}, 60 * 3, 60 * 60, TimeUnit.SECONDS);
 	}
 
-	public void addKey(UserDataKey userDataKey) {
+	public synchronized void addKey(UserDataKey userDataKey) {
 		keys.add(userDataKey);
 		if (userDataKey instanceof UserDataKeyInt) {
 			intColumns.add(userDataKey.getKey());
@@ -82,6 +82,15 @@ public class UserDataManager {
 			booleanColumns.add(userDataKey.getKey());
 		}
 
+	}
+
+	/**
+	 * Capture registered schema membership without holding the registration monitor
+	 * while callers perform SQL work. Key objects retain their legacy mutability;
+	 * the public getKeys() collection remains available for compatibility.
+	 */
+	public synchronized ArrayList<UserDataKey> getRegisteredKeysSnapshot() {
+		return new ArrayList<>(keys);
 	}
 
 	@Deprecated

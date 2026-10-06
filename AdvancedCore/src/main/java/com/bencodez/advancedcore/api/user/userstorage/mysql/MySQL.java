@@ -108,7 +108,7 @@ public class MySQL {
 		sql += "uuid VARCHAR(37), ";
 
 		// add custom column types
-		for (UserDataKey key : plugin.getUserManager().getDataManager().getKeys()) {
+		for (UserDataKey key : plugin.getUserManager().getDataManager().getRegisteredKeysSnapshot()) {
 			sql += "`" + key.getKey() + "` " + key.getColumnType() + ", ";
 		}
 		sql += "PRIMARY KEY ( uuid ));";

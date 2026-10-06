@@ -3594,3 +3594,39 @@ schemas, serialized data, wire formats, release metadata and public existing sig
 are unchanged. See isolated cache-cleanup-upstream-audit.md for immutable IDs/callers.
 Mixed merge patches and wider schema/cache population/lifecycle backports remain
 unfinished; this is not whole-main parity or PR readiness.
+
+
+## Registered SQL schema membership synchronization
+
+Pinned AdvancedCore main commit `6390c1cab41bd4d7683c7df88dd36537c8c7861e` includes
+`5eac8bd739ad3cf7ff119efc41f18b08297863df`, whose registration/snapshot synchronization
+is adapted to the fork's native SQL implementation. `addKey` and the additive
+`getRegisteredKeysSnapshot` use the same manager monitor. SQLite initial table queries,
+SQLite custom-column migration, MySQL initial table creation and the existing manual
+MySQL column-size command each capture detached membership before processing keys or
+performing SQL. No SQL work is added inside the registration monitor.
+
+Existing public `getKeys` still returns its mutable ArrayList and UserDataKey objects
+retain their existing setters. The snapshot freezes list membership only; arbitrary
+external raw-list edits and concurrent key-object mutations do not gain a thread-safety
+contract. No modern backend hierarchy, Java9+ API or production dependency is imported.
+Existing schemas, configuration, data, wire formats and release versions are unchanged.
+
+Actual Java8 regression result: original two tests failed with a lock assertion and
+ConcurrentModificationException; all four final tests pass. They cover registration
+exclusion, actual SQLite migration with late registration and preserved row/idempotence,
+query projection with registration during type resolution, and legacy collection/key
+compatibility. ActualJava8 clean install619 unit +18 artifact =637 PASS; exact locally
+installed producer consumer clean verify45 unit +1 artifact =46 PASS, zero failures,
+errors or skips. Both artifacts have only base bytecode major<=52.
+Producer SHA256 `a4711202d3aaf2efd4825a5be063c0d753c513ef586992c225f1a5f1e9f94dfb`;
+consumer SHA256 `bb37b131e79f1c20ff8f3894c285b5402bc7023899d364d4a9e6eb3212af00f4`.
+
+Six native checks pass on that consumer under realJava8/Spigot1.8.8: first-pass detached
+membership, next-pass inclusion/idempotence, existing user preservation, database
+integrity, physical single late column, and clean shutdown/linkage. The runtime fixture
+runs DDL on the existing storage worker. MySQL runtime registration races and broader
+schema reconciliation are not established by that SQLite acceptance. Cache-default
+population and wider registration/type-reader ownership remain separate pending audits.
+All167 original checkout states and both pinned reference states are verified unchanged.
+This cohort does not establish whole-main parity or final PR readiness.

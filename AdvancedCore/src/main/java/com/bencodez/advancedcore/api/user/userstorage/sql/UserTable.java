@@ -102,7 +102,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 
 	public void addCustomColumns() {
 		// add custom column types
-		for (UserDataKey key : plugin.getUserManager().getDataManager().getKeys()) {
+		for (UserDataKey key : plugin.getUserManager().getDataManager().getRegisteredKeysSnapshot()) {
 			addColoumn(key);
 		}
 	}
@@ -446,7 +446,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		String sql = "CREATE TABLE IF NOT EXISTS " + getName() + " (";
 		sql += "uuid VARCHAR(37), ";
 		// add custom column types
-		for (UserDataKey key : AdvancedCorePlugin.getInstance().getUserManager().getDataManager().getKeys()) {
+		for (UserDataKey key : AdvancedCorePlugin.getInstance().getUserManager().getDataManager().getRegisteredKeysSnapshot()) {
 			sql += key.getKey() + " " + key.getColumnType() + ", ";
 		}
 		sql += "PRIMARY KEY ( uuid ));";
