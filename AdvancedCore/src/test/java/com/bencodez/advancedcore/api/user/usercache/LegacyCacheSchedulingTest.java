@@ -15,7 +15,7 @@ import com.bencodez.advancedcore.api.user.UserManager;
 import com.bencodez.advancedcore.api.user.usercache.change.UserDataChangeString;
 
 class LegacyCacheSchedulingTest {
-    @Test void failedChangeNotificationDoesNotDisableLaterFlushes() {
+    @Test void failedChangeNotificationDoesNotDisableLaterFlushes() throws Exception {
         Fixture f = new Fixture();
         doThrow(new IllegalStateException("notification failed"))
             .doNothing().when(f.users).onChange(eq(f.user), any(String[].class));
@@ -25,24 +25,24 @@ class LegacyCacheSchedulingTest {
         f.cache.addChange(new UserDataChangeString("Points", "2"), true);
         assertEquals(2, f.tasks.size());
         f.tasks.get(1).run();
-        verify(f.data, times(2)).setValues(any());
+        verify(f.data, times(2)).setValuesStrict(any());
         assertFalse(f.cache.hasChangesToProcess());
     }
-    @Test void changeQueuedDuringStorageGetsItsOwnScheduledFlush() {
+    @Test void changeQueuedDuringStorageGetsItsOwnScheduledFlush() throws Exception {
         Fixture f = new Fixture();
         doAnswer(call -> {
             f.cache.addChange(new UserDataChangeString("Points", "2"), true);
             return null;
-        }).doNothing().when(f.data).setValues(any());
+        }).doNothing().when(f.data).setValuesStrict(any());
         f.cache.addChange(new UserDataChangeString("Points", "1"), true);
         f.tasks.get(0).run();
         assertEquals(2, f.tasks.size());
         assertTrue(f.cache.hasChangesToProcess());
         f.tasks.get(1).run();
         assertFalse(f.cache.hasChangesToProcess());
-        verify(f.data, times(2)).setValues(any());
+        verify(f.data, times(2)).setValuesStrict(any());
     }
-    @Test void rejectedScheduleDoesNotPermanentlyMarkTheCacheScheduled() {
+    @Test void rejectedScheduleDoesNotPermanentlyMarkTheCacheScheduled() throws Exception {
         Fixture f = new Fixture();
         doThrow(new RejectedExecutionException("timer stopped"))
             .doAnswer(call -> { f.tasks.add(call.getArgument(0)); return null; })
@@ -55,7 +55,7 @@ class LegacyCacheSchedulingTest {
         f.tasks.get(0).run();
         assertFalse(f.cache.hasChangesToProcess());
     }
-    @Test void queuedMutationsCoalesceWithoutExtraTimers() {
+    @Test void queuedMutationsCoalesceWithoutExtraTimers() throws Exception {
         Fixture f = new Fixture();
         f.cache.addChange(new UserDataChangeString("Points", "1"), true);
         f.cache.addChange(new UserDataChangeString("Points", "2"), true);
@@ -64,18 +64,18 @@ class LegacyCacheSchedulingTest {
             java.util.HashMap<String, com.bencodez.simpleapi.sql.data.DataValue> values = call.getArgument(0);
             assertEquals("2", values.get("Points").getString());
             return null;
-        }).when(f.data).setValues(any());
+        }).when(f.data).setValuesStrict(any());
         f.tasks.get(0).run();
         assertEquals(1, f.tasks.size());
         assertFalse(f.cache.hasChangesToProcess());
     }
-    @Test void alreadyScheduledTaskCanFinishAfterCacheDump() {
+    @Test void alreadyScheduledTaskCanFinishAfterCacheDump() throws Exception {
         Fixture f = new Fixture();
         f.cache.addChange(new UserDataChangeString("Points", "1"), true);
         f.cache.dump();
         assertDoesNotThrow(() -> f.tasks.get(0).run());
         assertEquals(1, f.tasks.size());
-        verify(f.data).setValues(any());
+        verify(f.data).setValuesStrict(any());
     }
     private static class Fixture {
         final ScheduledExecutorService timer = mock(ScheduledExecutorService.class);
@@ -87,6 +87,7 @@ class LegacyCacheSchedulingTest {
         final ArrayList<Runnable> tasks = new ArrayList<>();
         final UserDataCache cache;
         Fixture() {
+            when(plugin.getLogger()).thenReturn(mock(java.util.logging.Logger.class));
             when(manager.getPlugin()).thenReturn(plugin);
             when(manager.getTimer()).thenReturn(timer);
             when(plugin.getUserManager()).thenReturn(users);

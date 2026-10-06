@@ -1,5 +1,7 @@
 package com.bencodez.advancedcore.api.user.usercache;
 
+import java.io.IOException;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map.Entry;
@@ -8,6 +10,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.ReentrantLock;
 
 import com.bencodez.advancedcore.api.user.AdvancedCoreUser;
 import com.bencodez.advancedcore.api.user.usercache.change.UserDataChange;
@@ -23,7 +26,12 @@ public class UserDataCache {
 
 	private Queue<UserDataChange> cachedChanges;
 
-	private UserDataManager manager;
+	private final UserDataManager manager;
+	// Acquired outside the cache monitor. Never held across extension callbacks.
+	private final ReentrantLock batchOwner = new ReentrantLock(true);
+	private boolean removing;
+	private boolean inFlight;
+	private boolean flushFailureReported;
 	private boolean scheduled = false;
 	@Getter
 	private UUID uuid;
@@ -36,6 +44,9 @@ public class UserDataCache {
 	}
 
 	public synchronized void addChange(UserDataChange change, boolean queue) {
+		if (cache == null || cachedChanges == null || removing) {
+			throw new IllegalStateException("User cache is retiring or retired");
+		}
 		cache.put(change.getKey(), change.toUserDataValue());
 		if (queue) {
 			cachedChanges.add(change);
@@ -87,10 +98,34 @@ public class UserDataCache {
 	}
 
 	public void clearCache() {
-		if (hasChangesToProcess()) {
-			processChanges();
+		finishCache(false);
+	}
+
+	private void finishCache(boolean retire) {
+		Runnable notification = null;
+		boolean markedRemoval = false;
+		batchOwner.lock();
+		try {
+			synchronized (this) {
+				if (inFlight) throw new IllegalStateException("Cannot retire a cache from its own storage write");
+				if (cache == null) return;
+				removing = true;
+				markedRemoval = true;
+			}
+			notification = flushClaimedChanges();
+			synchronized (this) {
+				if (retire) {
+					cache = null;
+					cachedChanges = null;
+					uuid = null;
+					scheduled = false;
+				} else cache.clear();
+			}
+		} finally {
+			if (markedRemoval) synchronized (this) { removing = false; }
+			batchOwner.unlock();
 		}
-		cache.clear();
+		if (notification != null) notification.run();
 	}
 
 	public void clearChanges() {
@@ -119,27 +154,22 @@ public class UserDataCache {
 	}
 
 	public void dump() {
-		if (hasChangesToProcess()) {
-			processChanges();
-		}
-		cache = null;
-		cachedChanges = null;
-		uuid = null;
+		finishCache(true);
 	}
 
 	public AdvancedCoreUser getUser() {
 		return manager.getPlugin().getUserManager().getUser(uuid, false);
 	}
 
-	public boolean hasCache() {
-		return !cache.isEmpty();
+	public synchronized boolean hasCache() {
+		return cache != null && !cache.isEmpty();
 	}
 
-	public boolean hasChangesToProcess() {
-		return !cachedChanges.isEmpty();
+	public synchronized boolean hasChangesToProcess() {
+		return inFlight || (cachedChanges != null && !cachedChanges.isEmpty());
 	}
 
-	public boolean isCached(String key) {
+	public synchronized boolean isCached(String key) {
 		if (cache != null) {
 			return cache.containsKey(key);
 		}
@@ -147,30 +177,58 @@ public class UserDataCache {
 	}
 
 	public void processChanges() {
-		if (uuid != null) {
-			if (cachedChanges.size() > 0) {
-				manager.getPlugin()
-						.extraDebug("Processing changes for " + uuid.toString() + ", Changes: " + cachedChanges.size());
-				AdvancedCoreUser user = getUser();
-				HashMap<String, DataValue> values = new HashMap<>();
-				ArrayList<String> keys = new ArrayList<>();
-				while (!cachedChanges.isEmpty()) {
-					UserDataChange change = cachedChanges.poll();
-					values.put(change.getKey(), change.toUserDataValue());
-					keys.add(change.getKey());
-					change.dump();
-					// manager.getPlugin().extraDebug("Processing change for " + change.getKey());
+		Runnable notification;
+		batchOwner.lock();
+		try { notification = flushClaimedChanges(); }
+		finally { batchOwner.unlock(); }
+		if (notification != null) notification.run();
+	}
+
+	/** Called only by the batch owner; claims a finite batch under the cache monitor. */
+	private Runnable flushClaimedChanges() {
+		final ArrayList<UserDataChange> changes;
+		final HashMap<String, DataValue> values = new HashMap<>();
+		final ArrayList<String> keys = new ArrayList<>();
+		synchronized (this) {
+			if (inFlight) throw new IllegalStateException("Cannot recursively flush a user cache storage write");
+			if (uuid == null || cachedChanges == null || cachedChanges.isEmpty()) return null;
+			changes = new ArrayList<>(cachedChanges);
+			// Preparation failure leaves the original queue intact.
+			for (UserDataChange change : changes) {
+				values.put(change.getKey(), change.toUserDataValue());
+				keys.add(change.getKey());
+			}
+			cachedChanges.clear();
+			inFlight = true;
+		}
+		final AdvancedCoreUser user;
+		boolean committed = false;
+		try {
+			user = getUser();
+			user.getUserData().setValuesStrict(values);
+			committed = true;
+		} catch (SQLException | IOException failure) {
+			throw new IllegalStateException("User cache batch was not acknowledged", failure);
+		} finally {
+			synchronized (this) {
+				if (!committed) {
+					Queue<UserDataChange> restored = new ConcurrentLinkedQueue<>();
+					restored.addAll(changes);
+					restored.addAll(cachedChanges);
+					cachedChanges = restored;
 				}
-				if (!values.isEmpty()) {
-					user.getUserData().setValues(values);
-				}
-				manager.getPlugin().getUserManager().onChange(user, ArrayUtils.convert(keys));
+				inFlight = false;
 			}
 		}
+		// Post-commit callbacks may reenter clear/dump. Their failures cannot retry the write.
+		return () -> {
+			try { manager.getPlugin().getUserManager().onChange(user, ArrayUtils.convert(keys)); }
+			finally { for (UserDataChange change : changes) change.dump(); }
+		};
 	}
 
 	public void processChangesAsync() {
-		if (uuid != null && cachedChanges.size() > 0) {
+		if (hasChangesToProcess()) {
 			manager.getPlugin().getTimer().execute(new Runnable() {
 
 				@Override
@@ -193,8 +251,9 @@ public class UserDataCache {
 				public void run() {
 					try {
 						processChanges();
+						synchronized (UserDataCache.this) { flushFailureReported = false; }
 					} catch (Exception e) {
-						manager.getPlugin().debug(e);
+						reportBackgroundFailure(e);
 					} finally {
 						onScheduledFlushComplete();
 					}
@@ -205,6 +264,20 @@ public class UserDataCache {
 			// Preserve the legacy visible scheduling failure, allowing a later retry.
 			throw e;
 		}
+	}
+
+	private void reportBackgroundFailure(Exception failure) {
+		String message = null;
+		synchronized (this) {
+			if (!flushFailureReported) {
+				flushFailureReported = true;
+				message = "Background user cache flush failed for " + uuid
+						+ (hasChangesToProcess() ? "; pending changes are retained for retry."
+								: "; the committed batch will not be retried.");
+			}
+		}
+		if (message != null) manager.getPlugin().getLogger().warning(message + " Enable debug for details.");
+		manager.getPlugin().debug(failure);
 	}
 
 	private synchronized void onScheduledFlushComplete() {

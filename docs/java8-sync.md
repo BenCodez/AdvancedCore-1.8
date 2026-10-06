@@ -275,3 +275,47 @@ These tests do not prove cache integration. Queue restoration, concurrent flush
 ownership, cache retirement, callback ordering and shutdown behavior are still
 under implementation. The full upstream ledger and final independent review
 remain incomplete; this cohort is not full-backport or PR readiness.
+
+## Checked cache batches and same-instance retirement
+
+The cache now serializes finite batch claims through a Java8-compatible owner
+lock acquired outside its monitor. It calls the checked UserData adapter and
+restores failed batches ahead of newer queued changes. Payloads are not dumped
+before acknowledgement. Successful notification/cleanup runs after releasing
+the storage owner, and listener failure cannot requeue a committed write.
+Clear/dump wait for the active owner, reject new admission visibly during their
+final flush, and preserve identity/pending data when that flush fails. Recursive
+storage callbacks cannot flush or retire their own active batch; a rejected
+recursive retirement cannot clear the outer retirement marker. Delayed tasks
+can safely finish after dump. Background failures produce a warning once until
+a successful background attempt, retaining the existing three-second retry
+interval; no user values or SQL are included in that warning.
+
+Nine focused regressions cover checked failure/retry ordering, notification
+failure, failed retirement/retry, in-flight retirement and later accepted work,
+callback retirement on another thread, retirement admission, preparation
+failure, bounded outage warnings/recovery and recursive storage callbacks.
+The five existing scheduler regressions retain their assertions and now observe
+the checked adapter. Actual Java8 clean install passes91 unit+8 artifact tests,
+zero failures/errors/skips. The exact dependency is validated by the paired
+VotingPlugin build, documented in its coordinated acceptance section.
+
+The full run exposed a pre-existing mixed Mockito4 inline/subclass handler
+lookup assertion in artifact fixtures (verified in installed MockUtil bytecode).
+Failsafe now excludes mockito-inline and those fixtures use the one core mock
+maker. Unit tests retain inline support for their static mock boundaries.
+Existing artifact assertions are unchanged. The first attempted default-answer
+fixture adjustment did not by itself solve the mixed-maker problem; failed logs
+remain evidence rather than being reported as successful builds.
+
+A controlled real Java8/Spigot1.8.8 SQLite fixture verifies online vote receipt,
+reward, cached SetPoints/AddPoints, persisted points10/total1, graceful stop and
+restart persistence. Artifact hashes and exact candidate scope are in
+`checked-cache-runtime-results-*.json` in the isolated evidence directory.
+This is not MySQL/FLAT/proxy or failed-shutdown acceptance.
+
+Remaining: manager cache-generation replacement/removal, population and snapshot
+reconciliation with optimistic mutations, legacy non-queued setter interaction,
+shutdown draining/owner closure, broader upstream feature ledger, full final
+runtime acceptance and fresh independent review. Same-instance fencing alone is
+not a complete manager lifecycle backport or PR readiness claim.
