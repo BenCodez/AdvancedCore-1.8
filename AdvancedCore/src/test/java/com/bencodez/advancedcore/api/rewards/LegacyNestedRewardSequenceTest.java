@@ -263,6 +263,14 @@ class LegacyNestedRewardSequenceTest {
             CompletionStage<Void> retry=Reward.replayCommandSequence(f.dispatch.plugin,options.getPlaceholders(),"console",Arrays.asList("changed template"),Arrays.asList("changed expansion"),state,"root",physical);f.drain();await(retry);assertEquals(Arrays.asList("original expansion"),calls);
         });
     }
+    @Test void awaitedConsoleListKeepsNextTickAndOneTickStaggerAndSlashRemoval() {
+        fixture(f->{
+            org.bukkit.Server server=mock(org.bukkit.Server.class);List<String> commands=new ArrayList<>();
+            when(Bukkit.getServer()).thenReturn(server);when(server.dispatchCommand(any(),anyString())).thenAnswer(c->{assertTrue(Bukkit.isPrimaryThread());commands.add(c.getArgument(1));return true;});
+            CompletionStage<Void> result=com.bencodez.advancedcore.api.misc.MiscUtils.getInstance().executeConsoleCommandsAsync("player",new ArrayList<>(Arrays.asList("/first %player%","/second")),new HashMap<>(),true);
+            assertTrue(commands.isEmpty());f.dispatch.runNext();assertTrue(commands.isEmpty());f.dispatch.runNext();assertEquals(Arrays.asList("first player"),commands);assertFalse(result.toCompletableFuture().isDone());verify(f.dispatch.scheduler).runTaskLater(eq(f.dispatch.plugin),any(Runnable.class),eq(1L));f.dispatch.runNext();await(result);assertEquals(Arrays.asList("first player","second"),commands);
+        });
+    }
     private Object await(CompletionStage<?> stage) {
         try{return stage.toCompletableFuture().get(2,TimeUnit.SECONDS);}
         catch(ExecutionException failure){throw new CompletionException(failure.getCause());}

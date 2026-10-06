@@ -39,8 +39,20 @@ public final class ServerThreadRewardDispatch {
         return dispatch(action, timeoutMillis, false);
     }
 
+    /** Schedule on Bukkit ticks, including a next-tick handoff for zero, on this generation. */
+    public <T> CompletionStage<T> dispatchAfterTicks(Supplier<CompletionStage<T>> action, long delayTicks,
+            long timeoutMillis) {
+        if (delayTicks < 0) throw new IllegalArgumentException("Tick delay must not be negative");
+        return dispatch(action, timeoutMillis, true, delayTicks);
+    }
+
     private <T> CompletionStage<T> dispatch(Supplier<CompletionStage<T>> action, long timeoutMillis,
             boolean primaryTarget) {
+        return dispatch(action, timeoutMillis, primaryTarget, -1);
+    }
+
+    private <T> CompletionStage<T> dispatch(Supplier<CompletionStage<T>> action, long timeoutMillis,
+            boolean primaryTarget, long delayTicks) {
         java.util.Objects.requireNonNull(action, "action");
         if (timeoutMillis <= 0) throw new IllegalArgumentException("Dispatch timeout must be positive");
         Request<T> request = new Request<>(action, timeoutMillis);
@@ -51,7 +63,7 @@ public final class ServerThreadRewardDispatch {
         }
         if (rejected) { request.fail(new IllegalStateException("Reward dispatcher is disabled")); return request.result; }
         try {
-            if (Bukkit.isPrimaryThread() == primaryTarget) request.run();
+            if (delayTicks < 0 && Bukkit.isPrimaryThread() == primaryTarget) request.run();
             else {
                 request.waitingForScheduler = true;
                 ScheduledFuture<?> deadline = plugin.getTimer().schedule(
@@ -59,7 +71,8 @@ public final class ServerThreadRewardDispatch {
                     timeoutMillis, TimeUnit.MILLISECONDS);
                 request.setDeadline(deadline);
                 // Scheduling is admission only. Request.run claims ownership before any side effect.
-                if (primaryTarget) Bukkit.getScheduler().runTask(plugin, request::run);
+                if (delayTicks > 0) Bukkit.getScheduler().runTaskLater(plugin, request::run, delayTicks);
+                else if (primaryTarget) Bukkit.getScheduler().runTask(plugin, request::run);
                 else Bukkit.getScheduler().runTaskAsynchronously(plugin, request::run);
             }
         } catch (Throwable failure) { reject(request, failure); }

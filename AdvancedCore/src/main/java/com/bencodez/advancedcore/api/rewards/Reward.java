@@ -699,7 +699,8 @@ public class Reward {
 				currentReplayState(), currentReplayKey(), dispatch);
 	}
 
-	static CompletionStage<Void> replayCommandSequence(AdvancedCorePlugin plugin,
+	/** Explicit replay context for continuations that cross scheduler boundaries. */
+	public static CompletionStage<Void> replayCommandSequence(AdvancedCorePlugin plugin,
 			HashMap<String, String> placeholders, String lane, List<String> commandTemplates,
 			List<String> expandedCommands,
 			ReplayState replayState, String activeKey,

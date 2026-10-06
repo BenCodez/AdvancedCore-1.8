@@ -3374,3 +3374,39 @@ complete. Arbitrary pending inline-definition immutability is not a separate
 pinned-main contract; retain root snapshot provenance and audit actual prepared
 effect behavior rather than inventing an additional nested-YAML queue format.
 The whole backport remains incomplete; no final review, PR or push.
+
+
+## Captured Bukkit tick admission and awaited console API
+
+ServerThreadRewardDispatch now exposes additive dispatchAfterTicks, using Bukkit
+runTaskLater for positive ticks and runTask for zero. It retains the same owner,
+pending admissions, monotonic deadline and close/claim fencing. A zero-tick task
+remains queued even on the primary thread; admitted physical stages cannot time
+out as unexecuted. No wall-clock replacement for Bukkit ticks is introduced.
+
+MiscUtils adds awaited single/list console APIs. Preparation stays on the
+captured owner, legacy single online-player and list offline-player substitution
+order stays intact, and leading slash removal is retained. Lists keep an initial
+next-tick dispatch and one tick between staggered commands; nonstaggered later
+commands use immediate owner admission. Replay state/key are captured before
+scheduler hops and passed explicitly, rather than relying on callback thread
+locals. The explicit replayCommandSequence context overload is now public for
+this cross-package use. Existing void overloads and builtin wiring are unchanged.
+
+Three dispatcher regressions prove zero-tick handoff, exact positive Bukkit
+ticks, deadline/retirement fencing and awaited physical completion; the real
+MiscUtils list regression proves next-tick/one-tick progression, slash removal,
+player placeholder substitution and primary-thread dispatch. Focused suites:
+40 passed. Java8 clean install/consumer clean verify, same explicit local Maven
+and temp paths: 567 unit + 18 artifact = 585 AdvancedCore; 45 unit + 1 artifact =
+46 VotingPlugin. Zero failures/errors/skips, exact installed producer verified.
+Producer SHA-256: 9ef5efc0c05f860474b918fafa1cea27f35b5635e27a8425157ba975cfc4d4e0.
+Consumer SHA-256: 026d00d77c56de1da2d2cb068c5e2bab9544d6ad26d384623e58ef6f0415bd26.
+All base classes remain major <=52.
+
+Actual builtin numeric/random/console/player integration and live command
+completion/SIGKILL acceptance still remain. Do not infer complete command replay
+or exactly-once external effects from these API tests. Sibling failed-publication
+retry and lifecycle/admin queue ownership still need audit. No schema, existing
+signature, release metadata or proxy payload is changed. No push, PR or final
+review; the complete backport remains in progress.

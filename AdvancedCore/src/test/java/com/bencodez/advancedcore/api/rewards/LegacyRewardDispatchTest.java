@@ -122,6 +122,25 @@ class LegacyRewardDispatchTest {
             assertSame(rejected,failure(f.owner.dispatchOffPrimary(()->CompletableFuture.completedFuture("bad"),30)));
         });
     }
+    @Test void zeroTickAdmissionQueuesEvenOnPrimaryAndAwaitsPhysicalResult() {
+        fixture(f->{
+            f.primary.set(true);CompletableFuture<String> physical=new CompletableFuture<>();AtomicInteger effects=new AtomicInteger();
+            CompletionStage<String> result=f.owner.dispatchAfterTicks(()->{effects.incrementAndGet();return physical;},0,30);assertEquals(0,effects.get());assertEquals(1,f.queued.size());assertFalse(result.toCompletableFuture().isDone());
+            f.runNext();assertEquals(1,effects.get());assertFalse(result.toCompletableFuture().isDone());f.deadlines.get(0).run();assertFalse(result.toCompletableFuture().isDone());physical.complete("done");assertEquals("done",result.toCompletableFuture().join());
+        });
+    }
+    @Test void delayedAdmissionUsesExactBukkitTicksAndRetiredOwnerFencesLateCallback() {
+        fixture(f->{
+            AtomicInteger effects=new AtomicInteger();CompletionStage<String> result=f.owner.dispatchAfterTicks(()->{effects.incrementAndGet();return CompletableFuture.completedFuture("bad");},7,30);
+            verify(f.scheduler).runTaskLater(eq(f.plugin),any(Runnable.class),eq(7L));verify(f.scheduler,never()).runTask(eq(f.plugin),any(Runnable.class));assertFalse(result.toCompletableFuture().isDone());f.owner.close();assertInstanceOf(IllegalStateException.class,failure(result));f.runNext();assertEquals(0,effects.get());
+        });
+    }
+    @Test void delayedAdmissionDeadlineFencesCallbackAndRejectsNegativeTicks() {
+        fixture(f->{
+            AtomicInteger effects=new AtomicInteger();CompletionStage<String> result=f.owner.dispatchAfterTicks(()->{effects.incrementAndGet();return CompletableFuture.completedFuture("bad");},7,30);f.deadlines.get(0).run();assertInstanceOf(TimeoutException.class,failure(result));f.runNext();assertEquals(0,effects.get());
+            assertThrows(IllegalArgumentException.class,()->f.owner.dispatchAfterTicks(()->CompletableFuture.completedFuture("bad"),-1,30));
+        });
+    }
     private Throwable failure(CompletionStage<?> result) {return assertThrows(CompletionException.class,()->result.toCompletableFuture().join()).getCause();}
     private void fixture(Consumer<Fixture> test) {
         try(MockedStatic<Bukkit> bukkit=mockStatic(Bukkit.class)) {
@@ -141,6 +160,7 @@ class LegacyRewardDispatchTest {
             when(plugin.isEnabled()).thenReturn(true);when(plugin.getTimer()).thenReturn(timer);
             when(timer.schedule(any(Runnable.class),anyLong(),eq(TimeUnit.MILLISECONDS))).thenAnswer(call->{deadlines.add(call.getArgument(0));return deadline;});
             when(scheduler.runTask(eq(plugin),any(Runnable.class))).thenAnswer(call->{queued.add(call.getArgument(1));return null;});
+            when(scheduler.runTaskLater(eq(plugin),any(Runnable.class),anyLong())).thenAnswer(call->{queued.add(call.getArgument(1));return null;});
             when(scheduler.runTaskAsynchronously(eq(plugin),any(Runnable.class))).thenAnswer(call->{asyncQueued.add(call.getArgument(1));return null;});
         }
         void runNext(){primary.set(true);try{queued.remove(0).run();}finally{primary.set(false);}}
