@@ -487,6 +487,35 @@ public class LegacyReplayItemDeliveryTest {
 		verify(inventory, never()).addItem(item);
 	}
 
+    @Test public void rejectedOverflowRetryRemainsPendingButReportsFailureAndCanBeExplicitlySaved() throws Exception {
+        Fixture f=createFixture();java.util.logging.Logger logger=mock(java.util.logging.Logger.class);
+        when(f.plugin.getLogger()).thenReturn(logger);
+        Player player=mock(Player.class);UUID id=UUID.randomUUID();PlayerInventory inventory=mock(PlayerInventory.class);
+        ItemStack item=snapshotItem(),extra=snapshotItem();when(player.getUniqueId()).thenReturn(id);
+        when(player.isOnline()).thenReturn(true);when(player.getInventory()).thenReturn(inventory);
+        when(inventory.addItem(item)).thenReturn(new HashMap<>(java.util.Collections.singletonMap(0,extra)));
+        f.handler.getLastMessageTime().put(id,System.currentTimeMillis());
+        AtomicReference<Runnable> nativeDelivery=new AtomicReference<>();AtomicInteger admissions=new AtomicInteger();
+        doAnswer(call->{
+            if(admissions.incrementAndGet()==1){nativeDelivery.set(call.getArgument(1));return null;}
+            throw new java.util.concurrent.RejectedExecutionException("owner unavailable");
+        }).when(f.bukkitScheduler).runTask(eq(f.plugin),any(Runnable.class),eq(player));
+        CompletionStage<Void> result=f.handler.giveItemAsync(player,item);
+        // Retire the private persistence executor only after native admission. The
+        // insertion has started, so neither success nor a replayable failure is safe.
+        f.handler.getTimer().shutdownNow();assertTrue(f.handler.getTimer().awaitTermination(2,TimeUnit.SECONDS));
+        try(MockedStatic<Bukkit> bukkit=mockStatic(Bukkit.class)) {
+            bukkit.when(()->Bukkit.getPlayer(id)).thenReturn(player);nativeDelivery.get().run();
+        }
+        assertFalse(result.toCompletableFuture().isDone());verify(inventory,times(1)).addItem(item);
+        verify(logger).log(eq(java.util.logging.Level.WARNING),
+                eq("Unable to schedule full-inventory overflow persistence retry; delivery remains pending until saved"),
+                any(java.util.concurrent.RejectedExecutionException.class));
+        f.handler.save();result.toCompletableFuture().get(2,TimeUnit.SECONDS);
+        assertEquals(extra,f.data.getItemStack("FullInventory."+id+".Items.0"));
+        verify(inventory,times(1)).addItem(item);
+    }
+
 	@Test
 	public void rejectedItemSchedulerSignalsThatDeliveryNeverStarted() throws Exception {
 		Fixture fixture = createFixture();

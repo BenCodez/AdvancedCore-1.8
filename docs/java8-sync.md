@@ -4001,3 +4001,52 @@ The bounded modern build-target omissions are recorded separately in
 [upstream-build-dispositions.md](upstream-build-dispositions.md). Mixed dependency
 or compiler-processing patches are not classified as modern-only on that basis.
 The remaining ledger and final independent review remain incomplete.
+
+
+### Overflow retry rejection diagnostic and exact-artifact validation
+
+A new deterministic production-path regression proves an operator-visible gap:
+stop the private persistence executor after native delivery admission, reject the
+owner fallback, and the retry is also rejected while the partial insertion stays
+pending with no diagnostic. The unchanged baseline fails the logger assertion
+(`evidence/overflow-retry-rejection-red.log`). The fix reports that retry rejection
+at WARNING with its cause. It preserves the reservation and pending completion;
+it does not acknowledge volatile overflow or label a partial insertion safely
+replayable. An explicit successful save settles the same delivery without another
+inventory insertion. The fixture checks both that ownership and actual saved data.
+
+The rejected retry catch is also present in pinned main, so this is a narrow
+additional diagnostic rather than a missing fork API. The normal 30-second retry
+cadence is inherited unchanged; it is not used as proof of persistence or completion.
+World-drop and persistence fallback behavior remain unchanged by this fix. Broader
+partial-insertion/crash, drop failure and shutdown recovery need their own evidence;
+this warning does not establish exactly-once delivery after a process crash.
+
+Actual Java 8 `-Dtest=LegacyReplayItemDeliveryTest,LegacyFullInventoryLifecycleTest test`:
+31 PASS. Actual Java 8 producer `AdvancedCore/pom.xml clean install`: 635 unit +
+72 artifact = 707 PASS. Exact installed producer verified by hash before consumer
+`VotingPlugin/pom.xml clean verify`: 45 unit + 1 artifact = 46 PASS. All runs use
+the same explicit workspace-local Maven/resolver/tmp flags documented above;
+zero failures/errors/skips. Producer SHA256:
+`6fd9615af6da56a657eb4176e1ad2ab7bbd6b0f86ecf0012c1ac1ce0cee60c30`.
+Consumer SHA256:
+`721f8369723c90ab99754c863cfd3b7e6296b5e4b0323dfde8a40a3ff239a898`.
+All 1842 producer and 2459 consumer base classes have major version <= 52;
+Java 8 ignores multi-release entries. Build manifests and logs are under workspace
+`evidence/overflow-retry-rejection-*` (build-results.json, clean-install.log,
+consumer-clean-verify.log and focused.log).
+
+Actual Java 8 / Spigot 1.8.8 acceptance with that exact consumer: six PASS checks
+for native asynchronous overflow park/persist, disable preserving the legacy
+FullInventory schema, restart recovery, a connected protocol client receiving
+exactly three diamonds, final snapshot removal, and clean lifecycle/SQLite integrity.
+The runtime helper awaits `giveItemAsync` settlement before inspecting the stored
+snapshot. Command: `python3 runtime/replay-overflow-acceptance/run.py` from the
+isolated workspace; evidence: `evidence/overflow-retry-rejection-spigot-runtime.log`
+and `evidence/replay-overflow-runtime-3491bc8be8.json`.
+This does not prove outer reward checkpoint crash recovery, rejected-retry logging
+on a live server, arbitrary queued retirement, concurrent persistence failure,
+all-full world drops or global queue bounds. The failure/recovery diagnostic is
+verified by the deterministic real-entry-point regression, not that live smoke test.
+The remaining upstream ledger and fresh independent final review are incomplete.
+No push, PR readiness, release or deployment is claimed.

@@ -410,9 +410,12 @@ public class FullInventoryHandler {
 				if (persistReservedOverflow(reservationId)) completeReplayOverflow(reservationId, completion);
 				else scheduleReservedOverflowPersistenceRetry(reservationId, completion);
 			}, 30, TimeUnit.SECONDS);
-		} catch (Throwable ignored) {
+		} catch (Throwable failure) {
 			// Shutdown may reject this retry. Leave the completion pending: acknowledging
 			// an in-memory-only remainder would lose it from the durable reward replay.
+			plugin.getLogger().log(Level.WARNING,
+					"Unable to schedule full-inventory overflow persistence retry; delivery remains pending until saved",
+					failure);
 		}
 	}
 
