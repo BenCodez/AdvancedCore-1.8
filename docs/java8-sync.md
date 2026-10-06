@@ -3955,3 +3955,49 @@ acceptance is claimed for this test/documentation-only audit.
 This is deterministic pipeline evidence, not new end-to-end database/crash acceptance.
 Remaining replay/storage-generation commits and the full upstream ledger still need
 individual source review. No final PR readiness is claimed.
+
+
+### Nested replay and checkpoint admission ledger audit
+
+Complete production patches reviewed against the pinned main:
+
+- `c439becf55905891d7939973e37c70afc964ce9c`: frozen nested reward lists,
+  sequential children, persisted child cursor, and skipping completed children
+  before registry resolution. Present in `Reward.replayNestedRewardSequence` and
+  the retained `RewardHandler.giveRewardAsync` configuration/list dispatcher;
+  the fork does not require main's reorganized `RewardExecutor` source layout.
+- `3a7964616986d2c4609a009771487f874dcc24fa`: AdvancedRewards, AdvancedWorld
+  and Lucky delegate to that child-checkpoint sequence. Present in the retained
+  `RewardHandler` builtins. Java 8 uses `Arrays.asList` / empty collections and
+  exceptional-stage helpers; Bukkit 1.8 retains its supported configuration API
+  and the fork's established branch prefixes. AdvancedWorld still sets its
+  world constraint on the admitted server owner before child dispatch.
+- `1167618dd3519cb224f0bde809c7267a83173181`: mixed commands validate player
+  availability before console effects, preserve console-before-player order,
+  and prevent a queued checkpoint from publishing after admission timeout.
+  Present in the builtin/user paths and `ReplayState.persistCheckpointAsync`.
+  Java 8 uses the existing owner dispatcher's deadline/claim mechanism instead
+  of modern `delayedExecutor`/timeout helpers. Once a write is actually admitted,
+  its physical completion remains authoritative; the queue timeout does not
+  falsely report that an in-flight write was cancelled.
+
+The existing 33 `LegacyNestedRewardSequenceTest` tests exercise duplicate child
+occurrences, frozen-list recovery after a completed child is removed, malformed
+cursors, actual AdvancedRewards/AdvancedWorld/Lucky builtins, and mixed command
+availability/order. A new production checkpoint test verifies both a fired
+admission deadline and a delayed deadline callback with an expired monotonic
+clock: neither path can later invoke the queued checkpoint consumer.
+Actual Java 8 focused suite: 79 PASS (46 pipeline + 33 nested), zero failures,
+errors or skips. Full Java 8 unit suite: 634 PASS, zero failures/errors/skips.
+Commands use the documented workspace-local Maven flags with
+`-Dtest=LegacyOrderedRewardPipelineTest,LegacyNestedRewardSequenceTest test`
+and then `test`; logs are `evidence/replay-nested-timeout-focused.log` and
+`evidence/replay-nested-timeout-full-unit.log` under the isolated workspace.
+No production or packaging input changed in this audit. Prior artifact/runtime
+results remain separate evidence; these tests do not establish fresh process-crash,
+MySQL replay or complete upstream compatibility acceptance.
+
+The bounded modern build-target omissions are recorded separately in
+[upstream-build-dispositions.md](upstream-build-dispositions.md). Mixed dependency
+or compiler-processing patches are not classified as modern-only on that basis.
+The remaining ledger and final independent review remain incomplete.

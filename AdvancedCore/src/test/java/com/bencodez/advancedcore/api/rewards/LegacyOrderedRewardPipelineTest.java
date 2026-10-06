@@ -320,6 +320,25 @@ class LegacyOrderedRewardPipelineTest {
         });
     }
 
+    @Test void queuedCheckpointCannotPublishAfterAdmissionTimeoutEvenWhenDeadlineCallbackIsDelayed() {
+        for(boolean fireDeadline:Arrays.asList(false,true))fixture(f -> {
+            java.util.concurrent.atomic.AtomicInteger writes=new java.util.concurrent.atomic.AtomicInteger();
+            RewardOptions options=new RewardOptions();options.setAsyncReplayCheckpointConsumer(checkpoint->writes.incrementAndGet());
+            Reward.ReplayState state=Reward.replayStateFor(options);
+            f.dispatch.primary.set(true);
+            CompletionStage<Void> result;
+            try {result=state.persistCheckpointAsync(f.dispatch.plugin,new HashMap<>());}
+            finally {f.dispatch.primary.set(false);}
+            assertFalse(result.toCompletableFuture().isDone());assertEquals(1,f.dispatch.asyncQueued.size());assertEquals(0,writes.get());
+            if(fireDeadline)f.dispatch.deadlines.get(0).run();
+            else f.dispatch.clock.set(java.util.concurrent.TimeUnit.SECONDS.toNanos(30));
+            f.dispatch.runAsyncNext();
+            assertInstanceOf(java.util.concurrent.TimeoutException.class,
+                    assertThrows(CompletionException.class,()->result.toCompletableFuture().join()).getCause());
+            assertEquals(0,writes.get());
+        });
+    }
+
     @Test void rootWaitsForEffectAndCheckpointBeforeAdmittingNextInjection() {
         fixture(f -> {
             AdvancedCoreUser user=onlineUser();repeat(f.reward);doReturn("root").when(f.reward).getRewardName();
