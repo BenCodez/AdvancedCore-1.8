@@ -1209,3 +1209,63 @@ upstream ledger/features/durable root queue/final independent review remains
 unfinished. This supersedes the old Options-before-flush TODO only for tested
 native storage-config reload. Do not treat the setter/config tests as a full
 provider/migration guarantee.
+
+### Public provider initialization and SQLite predecessor retirement
+
+The native public `loadUserAPI` now uses the existing storage admission/replacement
+owner. Initial lazy SQLite bootstrap keeps public override dispatch, coalesces
+concurrent readers, and runs inside accepted admission instead of retiring its own
+read. Final retirement prevents both public and lazy provider resurrection before
+factory side effects. SQLite candidates are prepared before publication; successful
+replacement closes the predecessor's stored physical connection. Cleanup must not
+use `Database.getConnection`, which can reopen a retired connection in the pinned
+SimpleAPI. Unpublished factory-owned candidates are cleaned on preparation/close
+failure, retaining the original failure and sealing admission until explicit retry.
+
+Explicit initialization of a second storage type retains the first provider:
+`convertDataStorage(from,to)` requires both. This cohort does not fence or validate
+the entire conversion loop. Public signatures, configuration, schema, dependency,
+release and proxy payload versions remain unchanged.
+
+The corrected unchanged-native baseline produces 2 assertion failures, 0 errors;
+the first attempt lacked the fixture's required static plugin context and is not
+product evidence. Final focused lifecycle/config/setter/admission tests: 27 pass.
+The extended first attempt also exposed a Mockito stubbing-order fixture error,
+fixed without weakening assertions. Final lifecycle class contains 10 tests.
+
+Actual Temurin 1.8.0_504 / Maven 3.9.9 coordinated commands (from each fork):
+`mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon
+-Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository
+-Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install`
+and the same flags with `-f VotingPlugin/pom.xml clean verify`. Both run with the
+workspace Java 8 JAVA_HOME/PATH. AdvancedCore: 279 unit + 16 packaged-artifact checks;
+VotingPlugin: 45 unit + 1 artifact check; all zero failures/errors/skips.
+Producer SHA256 `ac61e7565d5969803260fb221f7c50a23d9056b2d8b25c3741c76f328a6dc434`;
+consumer `2cd194972ee1cc35235825cd95a3b7b629c25c0b01a514d179a736bbbf35a12b`.
+Base class counts 1822/2439; maximum class-file major 52. Evidence:
+`sqlite-provider-build-results.json`, `sqlite-provider-clean-install.log`,
+`sqlite-provider-consumer-clean-verify.log`, `sqlite-provider-extended-fixed-test.log`.
+
+Exact consumer real Java 8 / Spigot 1.8.8 SQLite acceptance: full configuration
+reload closes the captured predecessor, public SQLite reinitialization closes its
+predecessor and preserves stored marker data, temporary fixture marker is restored,
+async reward/cache mutations, online vote, points 10/total 1, clean disable,
+SQLite integrity and restart persistence pass. NuVotifier 2.7.2, PlaceholderAPI
+2.11.6 and Vault 1.7.3 are the fixture integrations.
+Real MariaDB 11.8.6 acceptance also proves SQLite initialization retains the main
+MySQL source, pending points 18 survive configuration reload, final points 19 persist
+on clean disable and restart, and the preceding global-pool ownership checks pass.
+ConnectorJ 5.1.14 is supplied only on the test-server classpath, not as a new
+production dependency. Four final server logs contain no tested lifecycle/linkage/
+failure markers or fixture credentials. Evidence: `sqlite-provider-live-results.json`,
+`global-provider-mysql-runtime-results.json`,
+`checked-cache-runtime-results-SQLiteOwnerSQL.json` and corresponding live logs.
+
+Not established: full storage conversion, active type-switch acceptance, raw provider
+handle protection, options-only type reload, direct core MySQL replacement while
+borrowed global readers remain active, same-instance plugin re-enable, blocked
+server-owner callbacks during reload, failed shutdown, or complete proxy routing.
+SimpleAPI constructors/schema helpers may swallow failures before a candidate is
+returned; this is not strict schema-initialization acknowledgement. The complete
+upstream ledger, remaining features and fresh independent final review remain
+unfinished. No source push or PR creation is authorized yet.

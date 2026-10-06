@@ -124,7 +124,9 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	@Getter
 	private CMIHandler cmiHandle;
 
-	private Database database;
+	private volatile Database database;
+	private final Object sqliteInitialization = new Object();
+	private final ThreadLocal<Boolean> sqliteBootstrap = ThreadLocal.withInitial(() -> false);
 
 	@Getter
 	private FullInventoryHandler fullInventoryHandler;
@@ -397,17 +399,32 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	}
 
 	public UserTable getSQLiteUserTable() {
-		if (database == null && loadUserData) {
-			loadUserAPI(getStorageType());
-		}
-		if (loadUserData) {
-			for (Table table : database.getTables()) {
-				if (table instanceof UserTable) {
-					return (UserTable) table;
+		if (!loadUserData) return null;
+		if (database == null) {
+			if (getUserStorageOwnership().isReplacingOnCurrentThread()) {
+				initializeSQLiteIfMissing();
+			} else {
+				try (com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Scope admission = getUserStorageOwnership().admit()) {
+					initializeSQLiteIfMissing();
 				}
 			}
 		}
+		Database current = database;
+		if (current == null) throw new IllegalStateException("SQLite user storage is unavailable");
+		for (Table table : current.getTables()) {
+			if (table instanceof UserTable) return (UserTable) table;
+		}
 		return null;
+	}
+
+	private void initializeSQLiteIfMissing() {
+		synchronized (sqliteInitialization) {
+			if (database != null) return;
+			if (sqliteBootstrap.get()) throw new IllegalStateException("SQLite initialization is already in progress on this thread");
+			sqliteBootstrap.set(true);
+			try { loadUserAPI(getStorageType()); }
+			finally { sqliteBootstrap.remove(); }
+		}
 	}
 
 	public UserStorage getStorageType() {
@@ -803,21 +820,79 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 		TabCompleteHandler.getInstance().addTabCompleteOption("(TimeType)", times);
 	}
 
-	@SuppressWarnings("deprecation")
 	public void loadUserAPI(UserStorage storageType) {
-		if (storageType.equals(UserStorage.SQLITE)) {
-			ArrayList<Column> columns = new ArrayList<>();
-			Column key = new Column("uuid", DataType.STRING);
-			columns.add(key);
-			UserTable table = new UserTable(this, "Users", columns, key);
-			database = new Database(this, "Users", table);
-			table.addCustomColumns();
-		} else if (storageType.equals(UserStorage.MYSQL)) {
-			setMysql(new MySQL(javaPlugin, javaPlugin.getName() + "_Users",
-					getOptions().getYmlConfig().getData().getConfigurationSection("MySQL")));
-		} else if (storageType.equals(UserStorage.FLAT)) {
+		java.util.Objects.requireNonNull(storageType, "storageType");
+		if (getUserStorageOwnership().isReplacingOnCurrentThread()
+				|| (storageType == UserStorage.SQLITE && database == null && sqliteBootstrap.get())) {
+			loadUserAPIOwned(storageType);
+		} else {
+			getUserStorageOwnership().replace(5, TimeUnit.SECONDS, this::flushStorageForReplacement, () -> loadUserAPIOwned(storageType));
+		}
+	}
+
+	private void loadUserAPIOwned(UserStorage storageType) {
+		if (storageType == UserStorage.SQLITE) {
+			synchronized (sqliteInitialization) {
+				Database candidate = java.util.Objects.requireNonNull(createSQLiteProvider(), "SQLite provider");
+				try {
+					if (candidate.getDB() == null) throw new IllegalStateException("SQLite provider did not initialize");
+					java.sql.Connection connection = candidate.getDB().getConnection();
+					if (connection == null || connection.isClosed()) throw new IllegalStateException("SQLite provider did not initialize");
+					if (candidate == database) return;
+					closeSQLiteProvider(database);
+					database = candidate;
+				} catch (java.sql.SQLException failure) {
+					IllegalStateException reported = new IllegalStateException("SQLite initialization was not acknowledged", failure);
+					cleanupSQLiteCandidate(candidate, reported);
+					throw reported;
+				} catch (RuntimeException | Error failure) {
+					cleanupSQLiteCandidate(candidate, failure);
+					throw failure;
+				}
+			}
+		} else if (storageType == UserStorage.MYSQL) {
+			MySQL candidate = java.util.Objects.requireNonNull(createMySQLProvider(), "MySQL provider");
+			try { setMysql(candidate); }
+			catch (RuntimeException | Error failure) {
+				if (mysql != candidate) {
+					try { candidate.close(); }
+					catch (RuntimeException | Error cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+				}
+				throw failure;
+			}
+		} else if (storageType == UserStorage.FLAT) {
 			getLogger().severe("Detected using FLAT storage, this will be removed in the future!");
 		}
+	}
+
+	Database createSQLiteProvider() {
+		ArrayList<Column> columns = new ArrayList<>();
+		Column key = new Column("uuid", DataType.STRING);
+		columns.add(key);
+		UserTable table = new UserTable(this, "Users", columns, key);
+		Database candidate = new Database(this, "Users", table);
+		try { table.addCustomColumns(); return candidate; }
+		catch (RuntimeException | Error failure) { cleanupSQLiteCandidate(candidate, failure); throw failure; }
+	}
+
+	@SuppressWarnings("deprecation")
+	MySQL createMySQLProvider() {
+		return new MySQL(javaPlugin, javaPlugin.getName() + "_Users",
+				getOptions().getYmlConfig().getData().getConfigurationSection("MySQL"));
+	}
+
+	private void cleanupSQLiteCandidate(Database candidate, Throwable failure) {
+		if (candidate == database) return;
+		try { closeSQLiteProvider(candidate); }
+		catch (RuntimeException | Error cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+	}
+
+	private void closeSQLiteProvider(Database provider) {
+		if (provider == null || provider.getDB() == null) return;
+		// getSQLConnection/Database.getConnection can reopen a retired connection.
+		java.sql.Connection connection = provider.getDB().getConnection();
+		if (connection != null) try { connection.close(); }
+		catch (java.sql.SQLException failure) { throw new IllegalStateException("SQLite provider close was not acknowledged", failure); }
 	}
 
 	private void loadUUIDs() {
@@ -936,11 +1011,7 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 			if (userManager != null && userManager.getDataManager() != null) userManager.getDataManager().clearCacheForShutdown();
 		}, () -> {
 			if (mysql != null) mysql.close();
-			if (database != null && database.getDB() != null) {
-				java.sql.Connection connection = database.getDB().getConnection();
-				if (connection != null) try { connection.close(); }
-				catch (java.sql.SQLException failure) { throw new IllegalStateException("SQLite provider close was not acknowledged", failure); }
-			}
+			closeSQLiteProvider(database);
 		});
 		if (skullCacheHandler != null) skullCacheHandler.close();
 		if (fullInventoryHandler != null) fullInventoryHandler.save();
