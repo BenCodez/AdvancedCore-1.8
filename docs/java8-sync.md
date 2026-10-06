@@ -3249,3 +3249,47 @@ exactly 1; native totals remain 3 diamonds and 7 experience. Occurrence identity
 SQLite integrity, linkage and shutdown pass. These are acknowledged selected-child
 checks with retained definitions and explicitly saved player state, not arbitrary
 mutated pending inline values, unacknowledged effects or power loss.
+
+
+## Lucky selected-child completion and replay
+
+The existing Lucky builtin now has an additive async callback that freezes the
+winning paths before child dispatch and awaits the existing durable sequential
+child cursor. Positive integer denominator parsing, normalized Lucky.<number>
+paths, descending denominator order, parent-level OnlyOneLucky, legacy prefixes,
+registration priority and the original synchronous callback remain unchanged.
+The async path does not hold the shared injection monitor across nested futures.
+The guaranteed denominator 1 regression fails on the preceding implementation
+because its result settles while the child is pending. Four new tests exercise
+the actual registered builtin, including child failure, invalid keys, ordering,
+OnlyOneLucky scope and retry without reevaluating chance. Focused suite: 20 pass.
+
+With Temurin 8u504 and Maven 3.9.9, the same explicit workspace-local repository
+and temporary directory commands recorded above were run: AdvancedCore clean
+install passes 557 unit + 18 artifact tests (575); VotingPlugin clean verify
+passes 45 unit + 1 artifact test (46) against the exact installed producer.
+Zero failures/errors/skips. Producer SHA-256:
+6433d0baeed1afd7b12756dfc75fc6ece9df7948a12e6808c93719b6b6f8caf0.
+Consumer SHA-256:
+1231b7ff31d3f7eeae7a00f3ead804ff73161892e58b60e45c3a00b9abc5ef47.
+All 1834/2451 base classes remain major <=52.
+
+Actual Java 8 / Spigot 1.8.8 named, inline and recursive forms pass six checks:
+physical parent retention while the child is pending and queue removal only
+following child completion, on the exact consumer above. Runtime fixtures use
+the guaranteed denominator 1 rather than probabilistic success assertions.
+
+This freezes the selected path sequence, not arbitrary mutable pending inline
+values. AdvancedWorld, prepared inline definitions, lifecycle/admin races, the
+remaining upstream dispositions and full platform matrix remain unfinished.
+No schema, release metadata, public API or proxy payload change is made here.
+No final review, main alignment or PR readiness is claimed; no PR or push.
+
+Offline bb258d9d2c and timed bd7407cf76 SIGKILL acceptance pass 12 checks each.
+After an acknowledged selected-child checkpoint and explicitly saved native
+player data, kill -9 leaves the parent pending. Changing OnlyOneLucky to true
+and adding Lucky.2 before restart does not change the persisted selection.
+Automatic login/timed startup recovery retains occurrence identity, native
+3 diamonds/7 experience and effect count 1, then removes the physical queue.
+SQLite integrity, clean shutdown and Java 8 linkage pass. This does not prove
+unacknowledged effects, power loss or arbitrary changed pending definitions.

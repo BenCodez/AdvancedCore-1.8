@@ -168,6 +168,49 @@ class LegacyNestedRewardSequenceTest {
             }
         });
     }
+    @Test void realLuckyBuiltinAwaitsGuaranteedChildAndPropagatesFailure() {
+        fixture(f->{
+            Reward child=f.reward("child");CompletableFuture<Void> effect=new CompletableFuture<>();when(child.giveRewardAsync(eq(f.user),any())).thenReturn(effect);
+            YamlConfiguration config=new YamlConfiguration();config.set("Lucky.1","child");Reward parent=f.reward("parent");when(parent.getConfig().getConfigData()).thenReturn(config);
+            CompletionStage<Object> result=f.builtin("Lucky").onRewardRequestAsync(parent,f.user,config,new HashMap<>());f.drain();
+            verify(child).giveRewardAsync(eq(f.user),any());assertFalse(result.toCompletableFuture().isDone());
+            effect.completeExceptionally(new IllegalStateException("child failure"));f.drain();assertThrows(CompletionException.class,()->await(result));
+        });
+    }
+    @Test void luckyIgnoresNonpositiveAndNonnumericKeys() {
+        fixture(f->{
+            YamlConfiguration config=new YamlConfiguration();config.set("Lucky.0","child");config.set("Lucky.-1","child");config.set("Lucky.invalid","child");
+            Reward parent=f.reward("parent");when(parent.getConfig().getConfigData()).thenReturn(config);
+            CompletionStage<Object> result=f.builtin("Lucky").onRewardRequestAsync(parent,f.user,config,new HashMap<>());f.drain();await(result);verify(f.handler,never()).getReward(anyString());
+        });
+    }
+    @Test void luckyKeepsDescendingDenominatorOrderAndParentOnlyOneSetting() {
+        for(boolean onlyOne:Arrays.asList(false,true))fixture(f->{
+            List<String> calls=new ArrayList<>();Reward common=f.reward("common"),rare=f.reward("rare");CompletableFuture<Void> first=new CompletableFuture<>();
+            when(rare.giveRewardAsync(eq(f.user),any())).thenAnswer(c->{calls.add("rare");return first;});when(common.giveRewardAsync(eq(f.user),any())).thenAnswer(c->{calls.add("common");return CompletableFuture.completedFuture(null);});
+            YamlConfiguration config=new YamlConfiguration();config.set("Lucky.1","common");config.set("Lucky.20","rare");config.set("OnlyOneLucky",onlyOne);config.set("Lucky.OnlyOneLucky",!onlyOne);
+            Reward parent=f.reward("parent");when(parent.getConfig().getConfigData()).thenReturn(config);
+            com.bencodez.advancedcore.api.misc.MiscUtils chance=mock(com.bencodez.advancedcore.api.misc.MiscUtils.class);when(chance.checkChance(eq(1.0),anyDouble())).thenReturn(true);
+            try(MockedStatic<com.bencodez.advancedcore.api.misc.MiscUtils> random=mockStatic(com.bencodez.advancedcore.api.misc.MiscUtils.class)) {
+                random.when(com.bencodez.advancedcore.api.misc.MiscUtils::getInstance).thenReturn(chance);
+                CompletionStage<Object> result=f.builtin("Lucky").onRewardRequestAsync(parent,f.user,config,new HashMap<>());f.drain();assertEquals(Arrays.asList("rare"),calls);assertFalse(result.toCompletableFuture().isDone());
+                first.complete(null);f.drain();await(result);assertEquals(onlyOne?Arrays.asList("rare"):Arrays.asList("rare","common"),calls);
+                verify(chance).checkChance(1,1);verify(chance).checkChance(1,20);
+            }
+        });
+    }
+    @Test void luckyRetryDoesNotRollChanceOrOnlyOneAgain() {
+        fixture(f->{
+            Reward child=f.reward("child");CompletableFuture<Void> failure=new CompletableFuture<>();when(child.giveRewardAsync(eq(f.user),any())).thenReturn(failure);
+            YamlConfiguration config=new YamlConfiguration();config.set("Lucky.1","child");Reward parent=f.reward("parent");when(parent.getConfig().getConfigData()).thenReturn(config);HashMap<String,String> metadata=new HashMap<>();
+            com.bencodez.advancedcore.api.rewards.injected.RewardInject inject=f.builtin("Lucky");CompletionStage<Object> initial=inject.onRewardRequestAsync(parent,f.user,config,metadata);f.drain();failure.completeExceptionally(new IllegalStateException("retry"));f.drain();assertThrows(CompletionException.class,()->await(initial));
+            config.set("Lucky.20","other");config.set("OnlyOneLucky",true);when(child.giveRewardAsync(eq(f.user),any())).thenReturn(CompletableFuture.completedFuture(null));
+            com.bencodez.advancedcore.api.misc.MiscUtils chance=mock(com.bencodez.advancedcore.api.misc.MiscUtils.class);
+            try(MockedStatic<com.bencodez.advancedcore.api.misc.MiscUtils> random=mockStatic(com.bencodez.advancedcore.api.misc.MiscUtils.class)) {
+                random.when(com.bencodez.advancedcore.api.misc.MiscUtils::getInstance).thenReturn(chance);CompletionStage<Object> retry=inject.onRewardRequestAsync(parent,f.user,config,metadata);f.drain();await(retry);verifyNoInteractions(chance);verify(child,times(2)).giveRewardAsync(eq(f.user),any());
+            }
+        });
+    }
     private Object await(CompletionStage<?> stage) {
         try{return stage.toCompletableFuture().get(2,TimeUnit.SECONDS);}
         catch(ExecutionException failure){throw new CompletionException(failure.getCause());}

@@ -1982,6 +1982,42 @@ public class RewardHandler {
 
 		injectedRewards.add(new RewardInjectConfigurationSection("Lucky") {
 
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean supportsAsyncSynchronization(){return false;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders) {
+                return Reward.hasReplaySelection(placeholders) && !Reward.hasCompletedNestedRewardSequence(placeholders,"lucky:"+getPath());
+            }
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,
+                    AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if(section==null && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                String choices=Reward.replaySelection(placeholders,()->{
+                    HashMap<Integer,String> luckyRewards=new HashMap<>();
+                    for(String name:section.getKeys(false)) {
+                        if(MessageAPI.isInt(name)) {
+                            int denominator=Integer.parseInt(name);
+                            if(denominator>0)luckyRewards.put(denominator,"Lucky."+denominator);
+                        }
+                    }
+                    HashMap<String,Integer> selected=new LinkedHashMap<>();
+                    for(Entry<Integer,String> entry:luckyRewards.entrySet()) {
+                        if(MiscUtils.getInstance().checkChance(1,entry.getKey()))selected.put(entry.getValue(),entry.getKey());
+                    }
+                    selected=ArrayUtils.sortByValuesStr(selected,false);
+                    ArrayList<String> paths=new ArrayList<>(selected.keySet());
+                    if(reward.getConfig().getConfigData().getBoolean("OnlyOneLucky",false) && paths.size()>1)paths.subList(1,paths.size()).clear();
+                    return paths.isEmpty()?null:String.join("\n",paths);
+                });
+                if(choices==null)return java.util.concurrent.CompletableFuture.completedFuture(null);
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey(),occurrence=Reward.currentReplayOccurrenceId();
+                return Reward.replayNestedRewardSequence(plugin,placeholders,"lucky:"+getPath(),java.util.Arrays.asList(choices.split("\\n")),state,key,(path,index)->{
+                    RewardBuilder builder=new RewardBuilder(reward.getConfig().getConfigData(),path).withPrefix(reward.getName()).withPlaceHolder(placeholders);
+                    Reward.withReplayState(builder.getRewardOptions(),state,key,path+":"+index,occurrence);
+                    return builder.sendAsync(user);
+                }).thenApply(unused->(Object)null);
+            }
+
 			@Override
 			public String onRewardRequested(Reward reward, AdvancedCoreUser user, ConfigurationSection section,
 					HashMap<String, String> placeholders) {
