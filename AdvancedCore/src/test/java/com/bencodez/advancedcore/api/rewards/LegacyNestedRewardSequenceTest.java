@@ -111,6 +111,26 @@ class LegacyNestedRewardSequenceTest {
             CompletionStage<Object> result=f.builtin("Random").onRewardRequestAsync(mock(Reward.class),f.user,config,new HashMap<>());f.drain();assertNull(await(result));
         });
     }
+    @Test void realAdvancedRewardsBuiltinRunsChildrenSequentiallyAndAwaitsBoth() {
+        fixture(f->{
+            Reward first=f.reward("first"),last=f.reward("last");CompletableFuture<Void> one=new CompletableFuture<>(),two=new CompletableFuture<>();List<String> calls=new ArrayList<>();
+            when(first.giveRewardAsync(eq(f.user),any())).thenAnswer(c->{calls.add("first");return one;});when(last.giveRewardAsync(eq(f.user),any())).thenAnswer(c->{calls.add("last");return two;});
+            YamlConfiguration config=new YamlConfiguration();config.set("AdvancedRewards.a","first");config.set("AdvancedRewards.b","last");
+            Reward parent=mock(Reward.class);when(parent.getRewardName()).thenReturn("parent");
+            CompletionStage<Object> result=f.builtin("AdvancedRewards").onRewardRequestAsync(parent,f.user,config,new HashMap<>());f.drain();
+            assertEquals(Arrays.asList("first"),calls);assertFalse(result.toCompletableFuture().isDone());one.complete(null);f.drain();assertEquals(Arrays.asList("first","last"),calls);assertFalse(result.toCompletableFuture().isDone());two.complete(null);f.drain();await(result);
+        });
+    }
+    @Test void realAdvancedRewardsInlinePreservesLegacyBranchPrefixAndFailure() {
+        fixture(f->{
+            YamlConfiguration config=new YamlConfiguration();config.set("AdvancedRewards.branch.EXP",7);CompletableFuture<Void> effect=new CompletableFuture<>();
+            try(MockedConstruction<Reward> constructed=mockConstruction(Reward.class,(mock,context)->{assertEquals("parent_AdvancedRewards_branch_branch",context.arguments().get(0));when(mock.giveRewardAsync(eq(f.user),any())).thenReturn(effect);})) {
+                Reward parent=mock(Reward.class);when(parent.getRewardName()).thenReturn("parent");
+                CompletionStage<Object> result=f.builtin("AdvancedRewards").onRewardRequestAsync(parent,f.user,config,new HashMap<>());f.drain();assertEquals(1,constructed.constructed().size());assertFalse(result.toCompletableFuture().isDone());
+                effect.completeExceptionally(new IllegalStateException("child failure"));f.drain();assertThrows(CompletionException.class,()->await(result));
+            }
+        });
+    }
     private Object await(CompletionStage<?> stage) {
         try{return stage.toCompletableFuture().get(2,TimeUnit.SECONDS);}
         catch(ExecutionException failure){throw new CompletionException(failure.getCause());}

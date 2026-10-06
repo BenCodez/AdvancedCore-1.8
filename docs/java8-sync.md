@@ -3099,3 +3099,80 @@ completed native effects remain once and unfinished list work completes. Queue
 removal, occurrence retention, SQLite integrity, native saved-player state,
 Java 8 linkage and clean shutdown pass. These acknowledged-checkpoint tests do
 not prove arbitrary mutated inline definitions or unacknowledged external effects.
+
+
+## AdvancedRewards sequential awaited replay (2026-10-06)
+
+Adapted the pinned AdvancedRewards frozen-key sequence behavior into the existing
+anonymous legacy injector. It checkpoints the configured branch-key snapshot,
+runs children sequentially, awaits each child's real completion, and persists its
+cursor before advancing. Child replay paths include the branch key and index,
+share the parent's state/occurrence and dispatch through the admitted runtime.
+Missing unfinished definitions fail explicitly. Async injector serialization is
+disabled so recursive children using the same shared injector cannot deadlock;
+legacy synchronous callbacks, registration identity, priority/post ordering and
+synchronous synchronization configuration remain unchanged.
+
+Preserved the fork's existing prefix `parent_AdvancedRewards_branch`, including
+the resulting inline generated name `parent_AdvancedRewards_branch_branch`.
+Pinned modern code uses a different shorter prefix; copying it would change
+existing generated names. The regression asserts the actual inline constructor
+name and propagates child failure. Another test drives two actual registered
+builtin named children with incomplete futures and proves ordered admission and
+parent retention through both. Both new tests failed before the adaptation;
+the focused nested suite now passes 12 tests with zero failures/errors/skips.
+
+Old exact consumer `4617acfd7b77237f1cf71be4be61c1721e6164a594035ff17b96e202983b6249`
+also failed real Spigot case `db1fc3dc35`: direct instrumentation observed the
+registered AdvancedRewards callback settle while its child was unresolved. On
+the new exact consumer, named, inline and recursive forms pass four checks each:
+physical parent queue retained while child is pending, queue removed only after
+completion, actual callback settles after child release, and Java 8 linkage/clean
+shutdown. Recursive acceptance checks the real nested injector rather than an
+implementation-shaped synchronization-flag assertion.
+
+Temurin 8u504 was first on PATH; Maven 3.9.9 commands:
+
+```shell
+mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install
+mvn -B -f VotingPlugin/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean verify
+```
+
+AdvancedCore: 549 unit + 18 artifact checks = 567 passed; SHA-256 `dd27d203224df480fa91fc2135640967f90a54a1b5ab07bdad65eb4c47010557`.
+VotingPlugin: 45 unit + 1 artifact check = 46 passed against that exact installed
+workspace-local producer; SHA-256 `27fb65e2c40b751a186652ca9d397503cca5f48e5c9b5d6da72df1b6e2a79bcd`. Zero failures/errors/skips.
+All 1,834 producer and 2,451 consumer base classes remain major <=52.
+No dependency, API signature, config key/default, release version, database schema
+or proxy/queue format changed.
+
+Other nested injectors, arbitrary prepared inline-definition freezing,
+clear/wipe/lifecycle races, the remaining ledger/platform matrix and final
+independent review remain in scope. A frozen branch-key list does not prove that
+all mutable branch values or external side effects are frozen. No full-main
+alignment, power-loss/cross-store guarantee, final approval or PR readiness is
+claimed. No push, PR, release or deployment was performed.
+
+
+AdvancedRewards SIGKILL acceptance passed 12 checks in each lane on that exact
+consumer: c052506815, f8c1e0e7b8. The first branch cursor is acknowledged before the
+second child's physical checkpoint is held. Both native effects are saved before
+SIGKILL (-9 without plugin disable). The fixture removes the completed first
+branch and adds an unavailable new branch before restart. Automatic offline-login
+and timed-startup replay skip the missing completed branch, retain the original
+frozen key list, finish the second child's checkpoint without repeating either
+effect and remove the parent queue. The durable effect count remains exactly 2;
+saved native totals remain 6 diamonds and 14 experience. Occurrence identity,
+SQLite integrity, Java 8 linkage and clean shutdown pass.
+
+The initial offline fixture attempt `6f3652455c` recovered correctly but retained
+an assertion from the earlier one-child crash point expecting effect two in the
+restart log. That assertion was corrected for this two-completed-effects crash
+point: require effect two in the initial log, no effect execution in the restart
+log, and count 2 before/after restart. Both lanes were rerun; production code and
+native once assertions were unchanged. This is acknowledged named-branch/cursor
+recovery, not arbitrary pending inline mutation, unacknowledged effects or power
+loss.
