@@ -1743,3 +1743,90 @@ write shutdown, and restart persistence in fixture `2928e89d6e`. Its owned fixtu
 body settled before cleanup. SQLite integrity and both runtime log/error/credential
 audits passed. Evidence: `pagination-final-live-results.json`,
 `global-provider-mysql-runtime-results-2928e89d6e.json`, and `pagination-live.log`.
+
+
+### Viewer timer ownership and Bukkit-thread item updates (2026-10-06)
+
+The updating-button lifecycle patches at
+`82dff7bedb759f8352b5a24aa217afbdbb76cbb1`,
+`8021c3168cc655e0caaec95825f2180db0b75622`, and
+`04eed7b7612be2244c26392b9b385055442e4c12` are ported with legacy inventory
+adaptations. The full viewer-cancellation test patch at
+`61323ba4b9198b5b5a653560a9a66fc0ceab033e` is retained. The timer portion of
+`fbccf80091d3d680505dbdf1b1ca218ba3cd5084` is now integrated; that commit
+remains partial because its other rendering/fill/lifecycle changes are unfinished.
+
+`BInventory` retains the legacy global timer API and adds viewer-scoped periodic
+registration/cancellation plus tracked delayed click tasks. Registration and
+cancellation share one lock, preventing a cancellation from passing an in-progress
+schedule and leaving its newly returned future unowned. Completed futures are
+reclaimed on the next registration; opening another page cancels only that
+viewer's timers. Parameterless cancellation still cancels every timer, and
+force-close still cancels legacy globally registered tasks while preserving other
+viewers' scoped tasks. Closing uses the current GUI session identity rather than
+one shared last-rendered inventory field.
+
+Periodic item construction, placeholder expansion, readiness checks, and inventory
+writes now run on the Bukkit owner thread. Each periodic registration admits at
+most one queued owner callback; rejected scheduler admission clears coalescing and
+propagates its failure. A closed viewer is checked before readiness so an unloaded
+cache cannot retain its timer indefinitely. Updates retain their original native
+inventory target: an old page's queued callback cannot update or cancel the new
+page. Native inventory equality, rather than Java wrapper identity, is required
+on Spigot 1.8.8. Source slots are mapped through the active session page before
+writing, keeping the navigation row intact. Delayed clicks retain their original
+GUI/target, and null fill slots are ignored without falling through to the ordinary
+button slot. Existing public constructors/getters, configurations, materials,
+commands, storage formats, proxy payloads, and release metadata remain unchanged.
+
+The missing public viewer-timer API fails one baseline assertion with zero errors.
+The readiness-confirmed previous packaged artifact also fails live because its
+item construction runs on the timer thread. Focused regressions cover independent
+viewer cancellation, owner execution, delayed targeting, stale-page rejection,
+coalescing, scheduler failure, fill slots, registration/cancellation overlap, and
+completed-future reclamation. The final Java 8 clean install passes AdvancedCore
+364 unit plus 18 artifact tests; exact-dependent VotingPlugin clean verify passes
+45 unit plus one artifact test. All failures, errors, and skips are zero. Both
+artifacts' base classes remain at major version 52 or lower (1818/2435 classes).
+Their six-class decrease reflects replacement of anonymous runnable classes with
+Java 8 lambdas, not removal of public compatibility classes.
+Artifact SHA-256:
+
+- AdvancedCore: `29cc1af34989c84ed446e4221b457e2b12462c9225bc9ebcff727c786ca37a92`
+- VotingPlugin: `2b1bf98ad91f3a6ffbe1ee4505422e7656b183c6361cf8014ad5e32c5c30cfd0`
+
+Real Java 8 / Spigot 1.8.8 fixture `32237ba904` uses two connected 1.8.8 protocol
+clients and one shared paginated GUI. Both open page two and acknowledge native
+slot-zero item revisions. The first acknowledges revisions one/two, then closes;
+the second continues through revisions one through five. Server assertions prove
+owner-thread construction, correct GUI/page/content/navigation, and no further
+updates to the closed viewer. Graceful disable and SQLite integrity pass. Client
+acknowledgments precede fixture closes; neither a server-side write alone nor a
+configured CI job is counted as client acceptance. This is protocol observation,
+not a claim that a graphical Minecraft client was visually inspected.
+
+Failed fixture attempts are retained. Fresh players had no stored user data and
+the normal login path did not populate their caches: the fixture now initializes
+its caches through the existing API off-owner and confirms readiness. The first
+candidate incorrectly compared native wrappers with `==`; live evidence showed
+both clients' wrappers were different objects but equal native inventories. The
+corrected production guard uses `equals`, preserving different-page rejection.
+Another fixture closed windows before the final state had transmitted. It now
+waits for bounded client acknowledgments of actual item revisions, preserving the
+same update/count assertions. No arbitrary delay or production login changes were
+introduced. Fixture cache work is settled before failure cleanup.
+
+The exact final consumer also passes retained native item/pagination/damage,
+MySQL/global borrowed/owned pool lifecycle, storage conversions/repaired retry,
+console completion, pending-write shutdown, and restart persistence in fixture
+`a918c76505`. SQLite integrity, error/credential audits, and both fixture cleanup
+fences pass. Evidence: `viewer-timer-final-build-results.json`,
+`viewer-timer-final-live-results.json`, final build/live logs, and retained failed
+attempts. Workspace-only helpers, clients, generated artifacts, and dependencies
+are excluded from source commits.
+
+Other GUI families, actual delayed-click integration, initial zero-delay/view-open
+ordering, stale queued opens/closes, complete fill-button copying/loading, and the
+remaining full upstream ledger/features/runtime matrix still require work. Fresh
+independent final review has not run. The full goal remains active; no source push
+or PR opening is authorized.
