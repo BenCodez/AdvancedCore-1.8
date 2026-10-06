@@ -218,6 +218,27 @@ public class UserDataCache {
 
 	/** Serialize a direct checked write with queued batches and retirement. */
 	public void writeDirect(String key, DataValue value, Runnable storageWrite) {
+		mutateDirectInternal(key, ignored -> value, ignored -> storageWrite.run(), false);
+	}
+
+	/**
+	 * Read, transform and physically write under the existing batch owner.
+	 * The transform must be side-effect-free; a missing cached value is passed as
+	 * null, not interpreted as an empty stored queue. Storage exceptions propagate.
+	 * Notifications run after ownership is released, as for direct replacement.
+	 * A post-commit notification failure carries the acknowledged value in
+	 * CommittedUserDataMutationException; callers must not retry the mutation.
+	 */
+	public DataValue mutateDirect(String key, java.util.function.Function<DataValue, DataValue> transform,
+			java.util.function.Consumer<DataValue> storageWrite) {
+		Objects.requireNonNull(transform, "transform");
+		Objects.requireNonNull(storageWrite, "storageWrite");
+		return mutateDirectInternal(key, transform, storageWrite, true);
+	}
+
+	private DataValue mutateDirectInternal(String key, java.util.function.Function<DataValue, DataValue> transform,
+			java.util.function.Consumer<DataValue> storageWrite, boolean requireValue) {
+		DataValue committedValue = null;
 		Runnable pendingNotification = null;
 		Runnable directNotification = null;
 		Throwable failure = null;
@@ -229,9 +250,17 @@ public class UserDataCache {
 			pendingNotification = flushClaimedChanges();
 			final AdvancedCoreUser user = getUser();
 			final Long expectedVersion;
-			synchronized (this) { expectedVersion = changedAt.get(key); inFlight = true; }
+			final DataValue current;
+			synchronized (this) {
+				expectedVersion = changedAt.get(key);
+				current = cache.get(key);
+				inFlight = true;
+			}
 			try {
-				storageWrite.run();
+				DataValue value = transform.apply(current);
+				if (requireValue) Objects.requireNonNull(value, "transformed value");
+				storageWrite.accept(value);
+				committedValue = value;
 				synchronized (this) {
 					// Later queued changes remain optimistic and must not be overwritten.
 					if (Objects.equals(expectedVersion, changedAt.get(key))) {
@@ -255,10 +284,14 @@ public class UserDataCache {
 			}
 			if (notificationFailure != null) {
 				if (failure != null) { if (failure != notificationFailure) failure.addSuppressed(notificationFailure); }
+				else if (requireValue && committedValue != null) {
+					throw new CommittedUserDataMutationException(committedValue, notificationFailure);
+				}
 				else if (notificationFailure instanceof RuntimeException) throw (RuntimeException) notificationFailure;
 				else throw (Error) notificationFailure;
 			}
 		}
+		return committedValue;
 	}
 
 	/** Called only by the batch owner; claims a finite batch under the cache monitor. */

@@ -745,3 +745,41 @@ Evidence: `checked-cache-runtime-results-DetachedSnapSQL.json` and
 `snapshot-candidate-live.log`. Fixture-only diagnostic plugin removed; owned
 server/client processes exited. This does not prove full queued replay,
 MySQL/FLAT/proxy acceptance or failed-shutdown behavior for the candidate API.
+
+### Checked cached read-modify-write foundation
+
+`UserDataCache.mutateDirect(key, transform, storageWrite)` performs the read,
+side-effect-free transform and synchronous physical write under the existing
+batch owner. It flushes older queued changes first, publishes the candidate only
+after the supplied checked write succeeds, and preserves a later optimistic
+queued replacement. Null cached values remain missing evidence; transforms must
+explicitly handle them, not assume an empty durable queue. Null transformed
+values are rejected by the new API, while the legacy public `writeDirect`
+replacement retains its prior nullable-value behavior. Extension notifications
+remain outside ownership; their failure does not mean the physical write failed.
+Recursive storage-phase mutation/retirement is rejected. No new owner/executor.
+
+Six regressions exercise two concurrent append transformations without a lost
+update, queued-predecessor ordering and later replacement, write failure and
+unknown value preservation, legacy null compatibility and checked null rejection,
+recursive mutation/retirement fencing, and a post-commit notification failure
+carrying the acknowledged value in `CommittedUserDataMutationException`. Legacy
+`writeDirect` retains its original callback exception behavior. This is not yet
+a complete persisted reward queue API: root deferral, capacity/codec/provenance/occurrences/checkpoints,
+uncached canonical UUID ownership, cache-generation transitions and lifecycle
+coordination still require integration. No schema/config/wire/version changes.
+
+Actual Java 8 producer clean install passed 189 unit + 12 artifact tests;
+exact consumer clean verify passed 19 unit + 1 artifact test, all zero failures,
+errors and skips. Base classes 1816 / 2436 have maximum major 52. Evidence:
+`queue-mutation-build-results.json` and paired clean Maven logs.
+
+Final consumer SHA256 `cf7564df70f88ccadef1211dd28ab4130ed2b4277d21309da272be489aaf81f0`
+passed real Java 8 / Spigot 1.8.8 acceptance with owned identity `QueueAckSQL`:
+worker-thread cached mutation followed by checked SQLite readback and restoration
+of the original fixture field; detached snapshot; pending async reward receipt;
+real vote/reward; points10,total1; graceful stop; SQLite integrity; restart
+persistence; no observed linkage/checked-write errors. Evidence:
+`checked-cache-runtime-results-QueueAckSQL.json`, `queue-mutation-final-live.log`.
+Fixture plugin removed and all owned server/client processes exited. This does
+not claim persisted queue replay, MySQL/FLAT/proxy or failed-shutdown acceptance.
