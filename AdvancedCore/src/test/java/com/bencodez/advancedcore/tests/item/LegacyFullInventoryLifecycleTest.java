@@ -60,11 +60,12 @@ class LegacyFullInventoryLifecycleTest {
             ExecutorService workers=Executors.newFixedThreadPool(2);
             try {
                 Future<?> check=workers.submit(f.owner.remove(0));assertTrue(entered.await(2,TimeUnit.SECONDS));
-                Future<?> save=workers.submit(f.handler::save);
+                java.util.concurrent.atomic.AtomicReference<Thread> savingThread=new java.util.concurrent.atomic.AtomicReference<>();
+                Future<?> save=workers.submit(()->{savingThread.set(Thread.currentThread());f.handler.save();});
                 java.lang.reflect.Field field=FullInventoryHandler.class.getDeclaredField("deliveryLock");field.setAccessible(true);ReentrantReadWriteLock lock=(ReentrantReadWriteLock)field.get(f.handler);
                 long end=System.nanoTime()+TimeUnit.SECONDS.toNanos(2);
-                while(!lock.hasQueuedThreads()&&System.nanoTime()<end)Thread.yield();
-                assertTrue(lock.hasQueuedThreads());assertFalse(save.isDone());
+                while((savingThread.get()==null || !lock.hasQueuedThread(savingThread.get()))&&System.nanoTime()<end)Thread.yield();
+                assertNotNull(savingThread.get());assertTrue(lock.hasQueuedThread(savingThread.get()));assertFalse(save.isDone());
                 release.countDown();check.get(2,TimeUnit.SECONDS);save.get(2,TimeUnit.SECONDS);
                 assertEquals(item,f.data.getItemStack("FullInventory."+f.id+".Items.0"));
             } finally {release.countDown();workers.shutdownNow();assertTrue(workers.awaitTermination(2,TimeUnit.SECONDS));}
