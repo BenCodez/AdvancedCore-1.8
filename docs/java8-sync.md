@@ -2203,3 +2203,45 @@ confirms its legacy contains(Object) is a containsValue alias, and the old handl
 uses it with a UUID. That discovery has not been patched or classified complete.
 All 167 originals remain unchanged. Full source ledger, broader runtime matrix and
 fresh independent final review remain incomplete. No source push or PR authorized.
+
+## Root injection checkpoint pipeline (in progress toward full recovery)
+
+The awaited root pipeline now uses the pinned main registry fingerprint
+(class/path/priority/post order), explicit replay path and logical occurrence,
+and the existing user action snapshots. Normal and post injections run in order;
+each physical receipt is followed by the off-owner checkpoint consumer and its
+completion hook before another injection starts. Checkpoint submission retains
+one admitted ServerThreadRewardDispatch generation. A count-only or changed
+registry checkpoint is refused before effects. Fresh reused RewardOptions do not
+inherit a previous independent recipient's progress. Public synchronous APIs and
+ordinary callback exception isolation remain; durable callbacks propagate failure
+with completed-prefix/registry/action metadata for recovery.
+
+Five new production-entry regressions cover unsafe legacy checkpoint refusal,
+effect/write/next ordering, failed-write prefix recovery and changed-registry
+refusal, runtime retirement, and explicit context/fresh occurrence independence.
+The baseline refusal test fails with one assertion failure before the port.
+Focused native-action plus ordered-root tests: 37 passed. Exact Java8 AdvancedCore
+clean install: 439 unit plus 18 artifact tests (457); exact VotingPlugin clean
+verify against it: 45 unit plus one artifact test (46). No failures/errors/skips.
+Base classes 1822/2439, maximum major 52. Candidate SHA256:
+
+- AdvancedCore: `30f501533116b4410d61f228156ed45b6d51368d99ef9c0d558b3ef0b6300e74`
+- VotingPlugin: `15e07e3aefc2f557d7af63dc074e131fbbbffe15f8a750ba9ae413aa680e16cb`
+
+Real Java8/Spigot1.8.8 fixture `7f4f8207e7` runs a real VotingPlugin user's root
+reward through the production registry, verifies native experience/potion effects,
+checks the off-owner fixture checkpoint file exists before root completion, then
+proves three overflow diamonds survive disable/restart and reach the connected
+protocol client. SQLite integrity and clean enable/disable pass. This checkpoint
+consumer is a fixture file writer, not the unfinished production offline/timed
+queue adapter. It does not prove crash exactly-once or complete nested recovery.
+
+Production offline/timed queue claims, protected-entry migration, checked cache/
+store writes, recovery deletion, nested/random/choice integration and crash/failure
+acceptance remain unfinished. Capture the item handler and action dispatcher from
+the admitted root generation as well: the current action scope still obtains its
+owner from the plugin getter at collection construction; deferred item suppliers
+still obtain FullInventoryHandler when run. Those sibling paths are not covered
+by the checkpoint generation fix. Full upstream ledger and fresh independent
+final review remain incomplete. No source push or PR opening is authorized.

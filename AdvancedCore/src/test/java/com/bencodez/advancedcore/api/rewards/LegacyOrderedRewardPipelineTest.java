@@ -236,6 +236,78 @@ class LegacyOrderedRewardPipelineTest {
             delivered.complete(null);first.toCompletableFuture().join();second.toCompletableFuture().join();
         });
     }
+    @Test void rootRejectsCountOnlyCheckpointBeforeAnyEffect() {
+        fixture(f -> {
+            AdvancedCoreUser user=onlineUser();repeat(f.reward);List<String> effects=new ArrayList<>();
+            f.injections.add(async("effect",p->{effects.add("executed");return CompletableFuture.completedFuture(null);}));
+            RewardOptions options=new RewardOptions().setCheckRepeat(false);options.setLegacyAsyncReplayCheckpoint(true);
+            CompletionStage<Void> result=f.reward.giveRewardUserAsync(user,new HashMap<>(),options);
+            f.dispatch.runUserPreparation();
+            assertThrows(CompletionException.class,()->result.toCompletableFuture().join());assertTrue(effects.isEmpty());
+        });
+    }
+
+    @Test void rootWaitsForEffectAndCheckpointBeforeAdmittingNextInjection() {
+        fixture(f -> {
+            AdvancedCoreUser user=onlineUser();repeat(f.reward);doReturn("root").when(f.reward).getRewardName();
+            List<String> phases=new ArrayList<>();CompletableFuture<Object> physical=new CompletableFuture<>();
+            f.injections.add(async("first",p->{phases.add("first");return physical;}));
+            f.injections.add(async("second",p->{phases.add("second");return CompletableFuture.completedFuture(null);}));
+            RewardOptions options=new RewardOptions().setCheckRepeat(false);options.setAsyncReplayOccurrenceId("occurrence");
+            options.setAsyncReplayCheckpointConsumer(checkpoint->{assertFalse(Bukkit.isPrimaryThread());phases.add("write-"+checkpoint.getReplayProgress().get("root"));});
+            CompletionStage<Void> result=f.reward.giveRewardUserAsync(user,new HashMap<>(),options);f.dispatch.runUserPreparation();
+            assertEquals(Arrays.asList("first"),phases);physical.complete("done");assertEquals(Arrays.asList("first"),phases);
+            f.dispatch.runNext();assertEquals(Arrays.asList("first"),phases);assertFalse(result.toCompletableFuture().isDone());
+            f.dispatch.runAsyncNext();assertEquals(Arrays.asList("first","write-1"),phases);assertFalse(result.toCompletableFuture().isDone());
+            drain(f);result.toCompletableFuture().join();assertEquals(Arrays.asList("first","write-1","second","write-2"),phases);
+        });
+    }
+    @Test void failedCheckpointRetainsCompletedPrefixAndResumeSkipsPhysicalEffect() {
+        fixture(f -> {
+            AdvancedCoreUser user=onlineUser();repeat(f.reward);doReturn("root").when(f.reward).getRewardName();List<String> effects=new ArrayList<>();
+            f.injections.add(async("first",p->{effects.add("first");return CompletableFuture.completedFuture(null);}));
+            f.injections.add(async("second",p->{effects.add("second");return CompletableFuture.completedFuture(null);}));
+            RewardOptions options=new RewardOptions().setCheckRepeat(false);options.setAsyncReplayOccurrenceId("stable");
+            options.setAsyncReplayCheckpointConsumer(checkpoint->{throw new IllegalStateException("checked store unavailable");});
+            CompletionStage<Void> result=f.reward.giveRewardUserAsync(user,new HashMap<>(),options);drain(f);
+            Reward.RewardReplayFailure failure=assertInstanceOf(Reward.RewardReplayFailure.class,assertThrows(CompletionException.class,()->result.toCompletableFuture().join()).getCause());
+            assertEquals(Arrays.asList("first"),effects);assertEquals(1,failure.getReplayProgress().get("root"));
+            RewardOptions retry=new RewardOptions().setCheckRepeat(false);retry.setAsyncReplayProgress(failure.getReplayProgress());retry.setAsyncReplayRegistryFingerprints(failure.getReplayRegistryFingerprints());retry.setAsyncReplayOccurrenceId("stable");
+            retry.setAsyncReplayCheckpointConsumer(checkpoint->assertFalse(Bukkit.isPrimaryThread()));
+            CompletionStage<Void> resumed=f.reward.giveRewardUserAsync(user,failure.getReplayPlaceholders(),retry);drain(f);resumed.toCompletableFuture().join();assertEquals(Arrays.asList("first","second"),effects);
+            // Changing the registry must fail before touching another effect.
+            f.injections.get(0).postReward();CompletionStage<Void> changed=f.reward.giveRewardUserAsync(user,new HashMap<>(),retry);drain(f);
+            assertThrows(CompletionException.class,()->changed.toCompletableFuture().join());assertEquals(Arrays.asList("first","second"),effects);
+        });
+    }
+    @Test void rootCheckpointCannotUseReplacementRuntimeAfterPhysicalEffect() {
+        fixture(f -> {
+            AdvancedCoreUser user=onlineUser();repeat(f.reward);CompletableFuture<Object> physical=new CompletableFuture<>();List<String> writes=new ArrayList<>();
+            f.injections.add(async("first",p->physical));RewardOptions options=new RewardOptions().setCheckRepeat(false);options.setAsyncReplayCheckpointConsumer(checkpoint->writes.add("write"));
+            CompletionStage<Void> result=f.reward.giveRewardUserAsync(user,new HashMap<>(),options);f.dispatch.runUserPreparation();
+            f.dispatch.owner.close();ServerThreadRewardDispatch replacement=new ServerThreadRewardDispatch(f.dispatch.plugin);when(f.dispatch.plugin.getRewardDispatch()).thenReturn(replacement);
+            try {physical.complete("committed");assertThrows(CompletionException.class,()->result.toCompletableFuture().join());assertTrue(writes.isEmpty());assertTrue(f.dispatch.asyncQueued.isEmpty());}finally{replacement.close();}
+        });
+    }
+    @Test void rootContextIsExplicitAndFreshOptionsReuseDoesNotSkipIndependentRecipients() {
+        fixture(f -> {
+            AdvancedCoreUser user=onlineUser();repeat(f.reward);doReturn("root").when(f.reward).getRewardName();List<String> occurrences=new ArrayList<>();
+            f.injections.add(async("first",p->{assertEquals("root/0",Reward.currentReplayKey());assertNotNull(Reward.currentReplayState());occurrences.add(Reward.currentReplayOccurrenceId());assertNotEquals(Reward.currentReplayOccurrenceId(),Reward.currentReplaySideEffectOccurrenceId());return CompletableFuture.completedFuture(null);}));
+            RewardOptions shared=new RewardOptions().setCheckRepeat(false);
+            CompletionStage<Void> first=f.reward.giveRewardUserAsync(user,new HashMap<>(),shared);drain(f);first.toCompletableFuture().join();
+            assertNull(Reward.currentReplayState());assertNull(Reward.currentReplayKey());assertNull(Reward.currentReplayOccurrenceId());
+            CompletionStage<Void> second=f.reward.giveRewardUserAsync(user,new HashMap<>(),shared);drain(f);second.toCompletableFuture().join();
+            assertEquals(2,occurrences.size());assertNotEquals(occurrences.get(0),occurrences.get(1));assertTrue(shared.getAsyncReplayProgress().isEmpty());assertNull(shared.getAsyncReplayState());
+        });
+    }
+    private void drain(Fixture f) {
+        int iterations=0;
+        while(!f.dispatch.queued.isEmpty() || !f.dispatch.asyncQueued.isEmpty()) {
+            assertTrue(iterations++<100,"pipeline did not settle");
+            if(!f.dispatch.queued.isEmpty())f.dispatch.runNext();else f.dispatch.runAsyncNext();
+        }
+    }
+
     private Reward.ReplayState replayState() {
         try {java.lang.reflect.Constructor<Reward.ReplayState> constructor=Reward.ReplayState.class.getDeclaredConstructor(java.util.Map.class);constructor.setAccessible(true);return constructor.newInstance((Object)null);}catch(Exception failure){throw new AssertionError(failure);}
     }

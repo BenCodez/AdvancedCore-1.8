@@ -15,6 +15,10 @@ public class RewardOptions {
     @Getter @Setter private java.util.Map<String,Integer> asyncReplayProgress = new HashMap<>();
     @Getter @Setter private java.util.Map<String,String> asyncReplayRegistryFingerprints = new HashMap<>();
     @Getter @Setter private boolean legacyAsyncReplayCheckpoint;
+    @Getter @Setter private Reward.ReplayState asyncReplayState;
+    @Getter @Setter private String asyncReplayKey;
+    @Getter @Setter private String asyncReplayOccurrenceId;
+    @Getter @Setter private java.util.function.Consumer<Reward.ReplayCheckpoint> asyncReplayCheckpointConsumer;
     @Getter private boolean livePlayerStateSet;
     @Getter private boolean livePlayerVanished;
     public RewardOptions captureLivePlayerState(boolean online, boolean vanished) {
@@ -81,6 +85,10 @@ public class RewardOptions {
 		copy.asyncReplayProgress=new HashMap<>(asyncReplayProgress);
 		copy.asyncReplayRegistryFingerprints=new HashMap<>(asyncReplayRegistryFingerprints);
 		copy.legacyAsyncReplayCheckpoint=legacyAsyncReplayCheckpoint;
+        copy.asyncReplayState=asyncReplayState;
+        copy.asyncReplayKey=asyncReplayKey;
+        copy.asyncReplayOccurrenceId=asyncReplayOccurrenceId;
+        copy.asyncReplayCheckpointConsumer=asyncReplayCheckpointConsumer;
 		copy.livePlayerStateSet=livePlayerStateSet;
 		copy.livePlayerVanished=livePlayerVanished;
 		return copy;

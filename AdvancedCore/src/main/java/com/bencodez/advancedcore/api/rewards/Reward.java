@@ -2,6 +2,9 @@ package com.bencodez.advancedcore.api.rewards;
 
 import java.io.File;
 import java.util.Map;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.Map.Entry;
 import java.util.Base64;
 import java.nio.charset.StandardCharsets;
@@ -41,6 +44,9 @@ import lombok.Setter;
  * The Class Reward.
  */
 public class Reward {
+    private static final ThreadLocal<ReplayState> ACTIVE_REPLAY_STATE = new ThreadLocal<>();
+    private static final ThreadLocal<String> ACTIVE_REPLAY_KEY = new ThreadLocal<>();
+    private static final ThreadLocal<String> ACTIVE_REPLAY_OCCURRENCE_ID = new ThreadLocal<>();
 	private static final String REPLAY_SELECTION_PREFIX = "__advancedcore_replay_selection_";
 	private static final String REPLAY_COMMAND_PREFIX = "__advancedcore_replay_commands_";
 	private static final String REPLAY_NESTED_LIST_PREFIX = "__advancedcore_replay_nested_list_";
@@ -104,6 +110,12 @@ public class Reward {
 		private boolean livePlayerOnline;
 		private boolean livePlayerVanished;
 		private Consumer<ReplayCheckpoint> checkpointConsumer;
+        private ServerThreadRewardDispatch checkpointOwner;
+        private synchronized void bindOwner(ServerThreadRewardDispatch owner) {
+            if (checkpointOwner != null && checkpointOwner != owner)
+                throw new IllegalStateException("Reward replay belongs to a retired dispatcher generation");
+            checkpointOwner = owner;
+        }
 		private ReplayState(Map<String, Integer> initial) { this(initial, null, false); }
 		private ReplayState(Map<String, Integer> initial, Map<String, String> initialFingerprints,
 				boolean legacyCheckpoint) {
@@ -184,10 +196,16 @@ public class Reward {
 		private CompletionStage<Void> persistCheckpointAsync(AdvancedCorePlugin plugin,
                 HashMap<String,String> placeholders, long timeout, TimeUnit timeoutUnit) {
             Consumer<ReplayCheckpoint> consumer;
-            synchronized(this) {consumer=checkpointConsumer;}
+            ServerThreadRewardDispatch owner;
+            synchronized(this) {
+                consumer=checkpointConsumer;
+                if(consumer==null)return CompletableFuture.completedFuture(null);
+                if(checkpointOwner==null)checkpointOwner=plugin.getRewardDispatch();
+                owner=checkpointOwner;
+            }
             if(consumer==null)return CompletableFuture.completedFuture(null);
             ReplayCheckpoint checkpoint=new ReplayCheckpoint(copyProgress(),copyRegistryFingerprints(),placeholders);
-            return plugin.getRewardDispatch().dispatchOffPrimary(()->{
+            return owner.dispatchOffPrimary(()->{
                 consumer.accept(checkpoint);
                 return CompletableFuture.<Void>completedFuture(null);
             },timeoutUnit.toMillis(timeout));
@@ -426,42 +444,171 @@ public class Reward {
 		}
 	}
 
-	/** Ordered injection completion; persisted replay checkpointing is integrated separately. */
-	public CompletionStage<Void> giveInjectedRewardsAsync(AdvancedCoreUser user,
-			HashMap<String, String> placeholders) {
-		ServerThreadRewardDispatch owner = plugin.getRewardDispatch();
-		return owner.dispatch(() -> giveInjectedRewardsAsyncOwned(user, placeholders, owner),
-				getServerThreadDispatchTimeoutMillis());
+    /** Ordered effect and checkpoint completion on one admitted dispatcher generation. */
+    public CompletionStage<Void> giveInjectedRewardsAsync(AdvancedCoreUser user, HashMap<String,String> placeholders) {
+        ServerThreadRewardDispatch owner=plugin.getRewardDispatch();
+        ReplayState state=new ReplayState(null);state.bindOwner(owner);
+        return owner.dispatch(()->giveInjectedRewardsAsyncOwned(user,placeholders,owner,
+            new ArrayList<>(plugin.getRewardHandler().getInjectedRewards()),state,0,getRewardName(),UUID.randomUUID().toString()),getServerThreadDispatchTimeoutMillis());
+    }
+
+    private CompletionStage<Void> giveInjectedRewardsAsyncOwned(AdvancedCoreUser user,
+            HashMap<String,String> placeholders,ServerThreadRewardDispatch owner,ArrayList<RewardInject> injections,
+            ReplayState state,int fallback,String replayKey,String occurrenceId) {
+        List<RewardInject> ordered=new ArrayList<>();List<RewardInject> post=new ArrayList<>();
+        for(RewardInject inject:injections) {if(inject.isPostReward())post.add(inject);else ordered.add(inject);}
+        ordered.addAll(post);
+        int resumeAfter=state.getCompleted(replayKey,fallback);
+        if(resumeAfter<0 || resumeAfter>ordered.size())return failedStage(new IllegalStateException("Reward replay progress exceeds the injection registry"));
+        String fingerprint=injectionRegistryFingerprint(ordered);
+        if(!state.matchesRegistryFingerprint(fingerprint))return failedStage(new IncompatibleReplayCheckpointException(replayKey));
+        // A count without a corresponding registry identity is not a safe persisted checkpoint.
+        if(resumeAfter>0 && !fingerprint.equals(state.copyRegistryFingerprints().get(replayKey)))
+            return failedStage(new IncompatibleReplayCheckpointException(replayKey));
+        AtomicInteger completed=new AtomicInteger(resumeAfter);
+        CompletionStage<Void> sequence=CompletableFuture.completedFuture(null);
+        for(int index=0;index<ordered.size();index++) {
+            RewardInject inject=ordered.get(index);String injectionKey=replayKey+"/"+index;
+            if(index<resumeAfter) {
+                sequence=sequence.thenCompose(ignored->owner.dispatch(()->notifyReplayCheckpointPersisted(inject,user,occurrenceId,injectionKey),getServerThreadDispatchTimeoutMillis()));
+                continue;
+            }
+            sequence=sequence.thenCompose(ignored->{
+                state.setRegistryFingerprint(replayKey,fingerprint);
+                return invokeInjectionAsync(inject,user,placeholders,owner,state,injectionKey,occurrenceId);
+            }).thenCompose(value->owner.dispatch(()->{
+                if(inject.isAddAsPlaceholder() && value!=null) {
+                    String text=value instanceof Boolean || value instanceof String || value instanceof Double || value instanceof Integer?value.toString():"";
+                    placeholders.put(inject.getPlaceholderName(),text);
+                }
+                state.setCompleted(replayKey,completed.incrementAndGet());
+                return state.persistCheckpointAsync(plugin,placeholders).thenCompose(ignored->owner.dispatch(
+                    ()->notifyReplayCheckpointPersisted(inject,user,occurrenceId,injectionKey),getServerThreadDispatchTimeoutMillis()));
+            },getServerThreadDispatchTimeoutMillis()));
+        }
+        return sequence.handle((ignored,failure)->{
+            if(failure==null)return null;
+            // Ordinary awaited callers retain their existing exception contract.
+            if(!state.hasCheckpointConsumer()) {
+                if(failure instanceof java.util.concurrent.CompletionException)throw (java.util.concurrent.CompletionException)failure;
+                throw new java.util.concurrent.CompletionException(failure);
+            }
+            RewardReplayFailure nested=findReplayFailure(failure);
+            if(nested!=null)throw nested;
+            throw new RewardReplayFailure(state,placeholders,failure);
+        });
+    }
+
+    private CompletionStage<Void> notifyReplayCheckpointPersisted(RewardInject inject,AdvancedCoreUser user,
+            String occurrenceId,String injectionKey) {
+        try {
+            CompletionStage<Void> notification=inject.onReplayCheckpointPersisted(this,user,occurrenceId,injectionKey);
+            return notification==null?failedStage(new IllegalStateException("Reward injection returned a null replay-checkpoint result: "+inject.getPath())):notification;
+        }catch(Throwable failure){return failedStage(failure);}
+    }
+
+    private static <T> CompletableFuture<T> failedStage(Throwable failure) {
+        CompletableFuture<T> result=new CompletableFuture<>();result.completeExceptionally(failure);return result;
+    }
+
+	private static String injectionRegistryFingerprint(List<RewardInject> orderedRewards) {
+		StringBuilder registry = new StringBuilder();
+		for (RewardInject inject : orderedRewards) {
+			String path = inject.getPath() == null ? "" : inject.getPath();
+			registry.append(inject.getClass().getName()).append('\t').append(Base64.getUrlEncoder().withoutPadding()
+					.encodeToString(path.getBytes(StandardCharsets.UTF_8))).append('\t')
+					.append(inject.getPriority()).append('\t').append(inject.isPostReward()).append('\n');
+		}
+		try {
+			byte[] digest = MessageDigest.getInstance("SHA-256").digest(registry.toString().getBytes(StandardCharsets.UTF_8));
+			StringBuilder hex = new StringBuilder(digest.length * 2);
+			for (byte value : digest) hex.append(String.format("%02x", value & 0xff));
+			return hex.toString();
+		} catch (NoSuchAlgorithmException failure) {
+			throw new IllegalStateException("SHA-256 is unavailable for reward replay checkpoints", failure);
+		}
 	}
 
-	private CompletionStage<Void> giveInjectedRewardsAsyncOwned(AdvancedCoreUser user,
-			HashMap<String, String> placeholders, ServerThreadRewardDispatch owner) {
-		return giveInjectedRewardsAsyncOwned(user, placeholders, owner,
-				new ArrayList<>(plugin.getRewardHandler().getInjectedRewards()));
+	public static final class RewardReplayFailure extends RuntimeException {
+		private static final long serialVersionUID = 1L;
+		private final ReplayState replayState;
+		@Getter private final int completedInjectionCount;
+		@Getter private final HashMap<String, String> replayPlaceholders;
+
+		private RewardReplayFailure(ReplayState replayState, HashMap<String, String> replayPlaceholders, Throwable cause) {
+			super("Asynchronous reward replay failed after a completed asynchronous reward stage",
+					cause);
+			this.replayState = replayState;
+			this.completedInjectionCount = replayState.highestCompletedCount();
+			HashMap<String, String> placeholders = new HashMap<>(replayPlaceholders);
+			replayState.mergeReplayMetadataInto(placeholders);
+			this.replayPlaceholders = placeholders;
+		}
+
+		public Map<String, Integer> getReplayProgress() { return replayState.copyProgress(); }
+		public Map<String, String> getReplayRegistryFingerprints() { return replayState.copyRegistryFingerprints(); }
 	}
 
-	private CompletionStage<Void> giveInjectedRewardsAsyncOwned(AdvancedCoreUser user,
-			HashMap<String, String> placeholders, ServerThreadRewardDispatch owner, ArrayList<RewardInject> injections) {
-		ArrayList<RewardInject> postRewards = new ArrayList<>();
-		CompletionStage<Void> sequence = CompletableFuture.completedFuture(null);
-		for (RewardInject inject : injections) {
-			if (inject.isPostReward()) { postRewards.add(inject); continue; }
-			sequence = sequence.thenCompose(ignored -> invokeInjectionAsync(inject, user, placeholders, owner))
-					.thenCompose(value -> owner.dispatch(() -> {
-						if (inject.isAddAsPlaceholder() && value != null) {
-							String text = value instanceof Boolean || value instanceof String || value instanceof Double
-									|| value instanceof Integer ? value.toString() : "";
-							placeholders.put(inject.getPlaceholderName(), text);
-						}
-						return CompletableFuture.<Void>completedFuture(null);
-					}, getServerThreadDispatchTimeoutMillis()));
+	private static final class IncompatibleReplayCheckpointException extends IllegalStateException {
+		private static final long serialVersionUID = 1L;
+		private IncompatibleReplayCheckpointException(String replayKey) {
+			super("Cannot safely resume asynchronous reward replay '" + replayKey
+					+ "' because its injector registry changed or its legacy checkpoint has no registry fingerprint");
 		}
-		for (RewardInject inject : postRewards) {
-			sequence = sequence.thenCompose(ignored -> invokeInjectionAsync(inject, user, placeholders, owner))
-					.thenCompose(value -> owner.dispatch(
-							() -> CompletableFuture.<Void>completedFuture(null), getServerThreadDispatchTimeoutMillis()));
+	}
+
+	private static RewardReplayFailure findReplayFailure(Throwable failure) {
+		for (Throwable current = failure; current != null; current = current.getCause()) {
+			if (current instanceof RewardReplayFailure) return (RewardReplayFailure) current;
 		}
-		return sequence;
+		return null;
+	}
+
+	public static ReplayState currentReplayState() { return ACTIVE_REPLAY_STATE.get(); }
+
+	public static String currentReplayKey() { return ACTIVE_REPLAY_KEY.get(); }
+
+	public static String currentReplayOccurrenceId() { return ACTIVE_REPLAY_OCCURRENCE_ID.get(); }
+
+	public static String currentReplaySideEffectOccurrenceId() {
+		return replaySideEffectOccurrenceId(currentReplayOccurrenceId(), currentReplayKey());
+	}
+
+	public static String replaySideEffectOccurrenceId(String occurrenceId, String replayKey) {
+		if (occurrenceId == null || occurrenceId.isEmpty() || replayKey == null || replayKey.isEmpty()) {
+			return occurrenceId;
+		}
+		return occurrenceId + ":" + digest(replayKey);
+	}
+
+	public static ReplayState replayStateFor(RewardOptions options) {
+		ReplayState replayState = options.getAsyncReplayState();
+		if (replayState == null) {
+			replayState = ACTIVE_REPLAY_STATE.get();
+			if (replayState == null) {
+				// A caller may reuse its RewardOptions for independent recipients. Keep
+				// fresh top-level execution state local to this dispatch so completed
+				// stages cannot leak into the next send.
+				replayState = new ReplayState(options.getAsyncReplayProgress(),
+						options.getAsyncReplayRegistryFingerprints(), options.isLegacyAsyncReplayCheckpoint());
+			} else {
+				// Deferred/nested options must retain their explicitly inherited parent
+				// state after the current thread-local scope ends.
+				options.setAsyncReplayState(replayState);
+			}
+		}
+		if (options.getAsyncReplayCheckpointConsumer() != null) {
+			replayState.setCheckpointConsumer(options.getAsyncReplayCheckpointConsumer());
+		}
+		replayState.captureLivePlayerState(options);
+		return replayState;
+	}
+
+	public static boolean isDurableReplay(RewardOptions options) {
+		if (options == null) return false;
+		if (options.getAsyncReplayCheckpointConsumer() != null) return true;
+		ReplayState replayState = options.getAsyncReplayState();
+		return replayState != null && replayState.hasCheckpointConsumer();
 	}
 
 	/** Bukkit1.8 has a single server owner; no modern player-region scheduler is required. */
@@ -479,11 +626,16 @@ public class Reward {
 	protected long getServerThreadDispatchTimeoutMillis() { return TimeUnit.SECONDS.toMillis(30); }
 
 	private CompletionStage<Object> invokeInjectionAsync(RewardInject inject, AdvancedCoreUser user,
-			HashMap<String, String> placeholders, ServerThreadRewardDispatch owner) {
+			HashMap<String, String> placeholders, ServerThreadRewardDispatch owner, ReplayState replayState,
+            String injectionKey,String occurrenceId) {
 		Supplier<CompletionStage<Object>> request = () -> owner.dispatch(() -> {
-            AdvancedCoreUser.AsyncActionCollection collection=user==null?null:user.beginAsyncActionCollection();
+            ReplayState previous=ACTIVE_REPLAY_STATE.get();String previousKey=ACTIVE_REPLAY_KEY.get();String previousOccurrence=ACTIVE_REPLAY_OCCURRENCE_ID.get();
+            ACTIVE_REPLAY_STATE.set(replayState);ACTIVE_REPLAY_KEY.set(injectionKey);
+            if(occurrenceId==null)ACTIVE_REPLAY_OCCURRENCE_ID.remove();else ACTIVE_REPLAY_OCCURRENCE_ID.set(occurrenceId);
+            AdvancedCoreUser.AsyncActionCollection collection=null;
             CompletionStage<Object> result;
             try {
+                collection=user==null?null:user.beginAsyncActionCollection(replayState,placeholders,injectionKey);
                 if(inject.supportsAsyncRequest()) result=inject.onRewardRequestAsync(this,user,getConfig().getConfigData(),placeholders);
                 else {
                     try {
@@ -491,14 +643,20 @@ public class Reward {
                         if(inject.isSynchronize()) {synchronized(inject.getObject()){value=inject.onRewardRequest(this,user,getConfig().getConfigData(),placeholders);}}
                         else value=inject.onRewardRequest(this,user,getConfig().getConfigData(),placeholders);
                         result=CompletableFuture.completedFuture(value);
-                    }catch(Exception failure){failure.printStackTrace();result=CompletableFuture.completedFuture(null);}
+                    }catch(Exception failure){failure.printStackTrace();result=replayState.hasCheckpointConsumer()?failedStage(failure):CompletableFuture.completedFuture(null);}
                 }
                 if(result==null)throw new IllegalStateException("Reward injection returned null completion stage");
             }catch(Throwable failure){CompletableFuture<Object> failed=new CompletableFuture<>();failed.completeExceptionally(failure);result=failed;}
-            finally {if(user!=null)user.restoreAsyncActionCollectionScope(collection);}
+            finally {
+                if(user!=null && collection!=null)user.restoreAsyncActionCollectionScope(collection);
+                if(previous==null)ACTIVE_REPLAY_STATE.remove();else ACTIVE_REPLAY_STATE.set(previous);
+                if(previousKey==null)ACTIVE_REPLAY_KEY.remove();else ACTIVE_REPLAY_KEY.set(previousKey);
+                if(previousOccurrence==null)ACTIVE_REPLAY_OCCURRENCE_ID.remove();else ACTIVE_REPLAY_OCCURRENCE_ID.set(previousOccurrence);
+            }
             if(collection==null)return result;
             CompletableFuture<Object> combined=new CompletableFuture<>();
-            result.whenComplete((value,failure)->user.endAsyncActionCollection(collection).whenComplete((ignored,actionFailure)->{
+            AdvancedCoreUser.AsyncActionCollection capturedCollection=collection;
+            result.whenComplete((value,failure)->user.endAsyncActionCollection(capturedCollection).whenComplete((ignored,actionFailure)->{
                 if(failure!=null)combined.completeExceptionally(failure);
                 else if(actionFailure!=null)combined.completeExceptionally(actionFailure);
                 else combined.complete(value);
@@ -628,7 +786,9 @@ public class Reward {
 	 */
 	public void giveRewardUser(AdvancedCoreUser user, HashMap<String, String> phs, RewardOptions rewardOptions) {
 		RewardOptions effectiveOptions = rewardOptions == null ? new RewardOptions() : rewardOptions;
-		if (hasAsyncRewardInjection()) {
+		if (hasAsyncRewardInjection() || isDurableReplay(effectiveOptions) || effectiveOptions.isLegacyAsyncReplayCheckpoint()
+                || effectiveOptions.getCompletedAsyncInjections()>0 || !effectiveOptions.getAsyncReplayProgress().isEmpty()
+                || !effectiveOptions.getAsyncReplayRegistryFingerprints().isEmpty()) {
 			giveRewardUserAsync(user, phs, effectiveOptions).exceptionally(failure -> {
 				plugin.getLogger().log(java.util.logging.Level.WARNING, "Failed asynchronous reward delivery", failure);
 				return null;
@@ -647,6 +807,16 @@ public class Reward {
 		HashMap<String, String> requested = phs == null ? new HashMap<>() : new HashMap<>(phs);
 		RewardOptions options = rewardOptions == null ? new RewardOptions() : rewardOptions.copyForDispatch();
 		ServerThreadRewardDispatch owner = plugin.getRewardDispatch();
+        ReplayState replayState=replayStateFor(options);
+        String key=options.getAsyncReplayKey();String parent=ACTIVE_REPLAY_KEY.get();
+        final String replayKey=key==null?(parent==null?getRewardName():parent+"/"+getRewardName()):key;
+        String occurrence=options.getAsyncReplayOccurrenceId();
+        if(occurrence==null || occurrence.isEmpty()) {
+            occurrence=ACTIVE_REPLAY_OCCURRENCE_ID.get();
+            if(occurrence==null && options.getAsyncReplayCheckpointConsumer()==null)occurrence=UUID.randomUUID().toString();
+        }
+        final String occurrenceId=occurrence;
+        try {replayState.bindOwner(owner);}catch(Throwable failure){return failedStage(failure);}
 		return owner.dispatch(() -> {
 			// Freeze registration on its owner before identity preflight crosses a storage boundary.
 			ArrayList<RewardInject> injections = new ArrayList<>(plugin.getRewardHandler().getInjectedRewards());
@@ -658,7 +828,7 @@ public class Reward {
 					unavailable.completeExceptionally(new IllegalStateException("Player unavailable before asynchronous reward delivery"));
 					return unavailable;
 				}
-				return giveInjectedRewardsAsyncOwned(user, placeholders, owner, injections)
+				return giveInjectedRewardsAsyncOwned(user, placeholders, owner, injections,replayState,options.getCompletedAsyncInjections(),replayKey,occurrenceId)
 						.thenCompose(ignored -> owner.dispatch(() -> {
 							finishRewardUser(user, options, playerName);
 							return CompletableFuture.<Void>completedFuture(null);
