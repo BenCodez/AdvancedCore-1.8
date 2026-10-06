@@ -8,6 +8,10 @@ import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
@@ -243,6 +247,67 @@ public class Reward {
 				e.printStackTrace();
 			}
 		}
+	}
+
+	/** Ordered injection completion; persisted replay checkpointing is integrated separately. */
+	public CompletionStage<Void> giveInjectedRewardsAsync(AdvancedCoreUser user,
+			HashMap<String, String> placeholders) {
+		ServerThreadRewardDispatch owner = plugin.getRewardDispatch();
+		return owner.dispatch(() -> giveInjectedRewardsAsyncOwned(user, placeholders, owner),
+				getServerThreadDispatchTimeoutMillis());
+	}
+
+	private CompletionStage<Void> giveInjectedRewardsAsyncOwned(AdvancedCoreUser user,
+			HashMap<String, String> placeholders, ServerThreadRewardDispatch owner) {
+		ArrayList<RewardInject> injections = new ArrayList<>(plugin.getRewardHandler().getInjectedRewards());
+		ArrayList<RewardInject> postRewards = new ArrayList<>();
+		CompletionStage<Void> sequence = CompletableFuture.completedFuture(null);
+		for (RewardInject inject : injections) {
+			if (inject.isPostReward()) { postRewards.add(inject); continue; }
+			sequence = sequence.thenCompose(ignored -> invokeInjectionAsync(inject, user, placeholders, owner))
+					.thenCompose(value -> owner.dispatch(() -> {
+						if (inject.isAddAsPlaceholder() && value != null) {
+							String text = value instanceof Boolean || value instanceof String || value instanceof Double
+									|| value instanceof Integer ? value.toString() : "";
+							placeholders.put(inject.getPlaceholderName(), text);
+						}
+						return CompletableFuture.<Void>completedFuture(null);
+					}, getServerThreadDispatchTimeoutMillis()));
+		}
+		for (RewardInject inject : postRewards) {
+			sequence = sequence.thenCompose(ignored -> invokeInjectionAsync(inject, user, placeholders, owner))
+					.thenCompose(value -> owner.dispatch(
+							() -> CompletableFuture.<Void>completedFuture(null), getServerThreadDispatchTimeoutMillis()));
+		}
+		return sequence;
+	}
+
+	/** Bukkit1.8 has a single server owner; no modern player-region scheduler is required. */
+	public static <T> CompletionStage<T> continueOnServerThread(AdvancedCorePlugin plugin, AdvancedCoreUser user,
+			Supplier<CompletionStage<T>> request) {
+		return plugin.getRewardDispatch().dispatch(request, TimeUnit.SECONDS.toMillis(30));
+	}
+
+	protected long getServerThreadDispatchTimeoutMillis() { return TimeUnit.SECONDS.toMillis(30); }
+
+	private CompletionStage<Object> invokeInjectionAsync(RewardInject inject, AdvancedCoreUser user,
+			HashMap<String, String> placeholders, ServerThreadRewardDispatch owner) {
+		Supplier<CompletionStage<Object>> request = () -> owner.dispatch(() -> {
+			if (inject.supportsAsyncRequest()) return inject.onRewardRequestAsync(this, user, getConfig().getConfigData(), placeholders);
+			try {
+				Object value;
+				if (inject.isSynchronize()) {
+					synchronized (inject.getObject()) { value = inject.onRewardRequest(this, user, getConfig().getConfigData(), placeholders); }
+				} else value = inject.onRewardRequest(this, user, getConfig().getConfigData(), placeholders);
+				return CompletableFuture.completedFuture(value);
+			} catch (Exception failure) {
+				// Ordinary legacy callbacks retain their per-injection isolation contract.
+				failure.printStackTrace();
+				return CompletableFuture.completedFuture(null);
+			}
+		}, getServerThreadDispatchTimeoutMillis());
+		return inject.isSynchronize() && inject.supportsAsyncSynchronization()
+				? inject.runSynchronizedAsync(request) : request.get();
 	}
 
 	public void giveReward(AdvancedCoreUser user, RewardOptions rewardOptions) {

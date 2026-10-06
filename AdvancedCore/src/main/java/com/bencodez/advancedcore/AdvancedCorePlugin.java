@@ -175,6 +175,10 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	private TimeChecker timeChecker;
 
 	@Getter
+	private volatile com.bencodez.advancedcore.api.rewards.ServerThreadRewardDispatch rewardDispatch =
+			new com.bencodez.advancedcore.api.rewards.ServerThreadRewardDispatch(this);
+
+	@Getter
 	private ScheduledExecutorService timer;
 
 	@Getter
@@ -893,6 +897,7 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 
 	@Override
 	public void onDisable() {
+		rewardDispatch.close();
 
 		if (getOptions().getStorageType().equals(UserStorage.MYSQL)) {
 			getMysql().close();
@@ -930,6 +935,7 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 
 	@Override
 	public void onEnable() {
+		rewardDispatch = new com.bencodez.advancedcore.api.rewards.ServerThreadRewardDispatch(this);
 		javaPlugin = this;
 		bukkitScheduler = new BukkitScheduler(this);
 		timer = Executors.newSingleThreadScheduledExecutor();

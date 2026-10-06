@@ -534,3 +534,52 @@ restart persistence. Logs show no exception/linkage/write-failure markers;
 owned fixture processes stopped. This proves legacy runtime compatibility
 with the candidate API additions, not completion-aware queued replay.
 Evidence checked-cache-runtime-results-AsyncInjectSQL.json and paired logs.
+
+## Completion-aware injection dispatch on Bukkit1.8
+
+Reward.giveInjectedRewardsAsync now runs a registration-order snapshot on
+the Bukkit owner, waits for each opted-in physical stage, publishes its
+placeholder on that owner, and runs post injections last. Async failure or
+a null stage stops later effects. Ordinary legacy callback exceptions retain
+their logged per-injection isolation; their hidden scheduled work is still
+not observed. Existing synchronous reward entry points remain unchanged.
+
+The additive continueOnServerThread API uses the same per-plugin dispatcher.
+Bukkit1.8 has one owner thread, so modern region/player scheduler APIs are
+unnecessary. Java9 orTimeout is replaced with the existing plugin timer and
+a monotonic claim-time deadline check. Scheduler admission, actual execution
+and physical settlement are distinct. Timeouts, rejected scheduling and
+plugin disable fence queued callbacks before side effects. Claimed work is
+not timed out/cancelled as unexecuted. No new executor or dependency is added.
+Enable publishes a new dispatcher generation; disable closes old admission
+before shutting the timer down. A pipeline captures its generation and cannot
+continue through a replacement dispatcher. User callbacks settle outside
+dispatch ownership locks. This does not yet drain native storage at shutdown.
+
+Seven dispatch and six production-pipeline regressions pass. Actual Java8
+producer clean install161unit+12artifact and exact consumer clean verify
+19unit+1artifact pass, all zero failures/errors/skips; base major<=52.
+Evidence reward-pipeline-build-results.json, ac-reward-pipeline-clean-install.log
+and vp-reward-pipeline-clean-verify.log.
+
+The initial live harness attempt used a17-character Minecraft username and
+failed login before exercising the API; cleanup ran. The valid-name rerun
+RewardPipeSQL invokes the actual relocated API via a fixture-only console
+plugin. An actual Bukkit worker settles its stage; subsequent placeholder,
+normal callback, post callback and final receipt assert the main thread.
+The fixture snapshots its test hooks then immediately restores the registry.
+This fixture plugin is not a production dependency and is removed afterward.
+
+Root giveRewardAsync/event/requirements/deferral integration, native async
+storage action receipts, persisted queue provenance/checkpoints/replay and
+generated snapshot quarantine remain incomplete. PlayerRewardEvent is
+explicitly asynchronous and must retain that contract in the root adapter.
+No queue format, schema/configuration/wire or release version change occurs.
+The full upstream923e741a90ad87d3ae1717301ded125f6749fc43 remains partial.
+
+Exactconsumer09a7a449... passes the packaged async API assertion, real online
+vote/reward, points10,total1, graceful shutdown and restart persistence.
+No exception/linkage/checked-write failure markers appear in first/restart
+logs. Evidence checked-cache-runtime-results-RewardPipeSQL.json. Fixture-only
+acceptance jar removed and all owned fixture processes stopped. This is not
+MySQL/FLAT/proxy/failed-shutdown or durable queued-replay acceptance.
