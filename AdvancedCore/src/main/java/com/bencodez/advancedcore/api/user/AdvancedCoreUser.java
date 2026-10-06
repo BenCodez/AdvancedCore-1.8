@@ -711,7 +711,15 @@ public class AdvancedCoreUser {
 	}
 
     public void addOfflineRewards(Reward reward,HashMap<String,String> placeholders) {
-        final String entry=queuedRewardReference(reward)+"%placeholders%"+ArrayUtils.makeString(placeholders);
+        addOfflineRewards(reward,placeholders,null);
+    }
+
+    /** Retains the admitted occurrence and completed replay prefix when deferring a public reward. */
+    public void addOfflineRewards(Reward reward,HashMap<String,String> placeholders,RewardOptions options) {
+        RewardOptions captured=Reward.snapshotReplayOptionsForQueue(options);
+        HashMap<String,String> saved=placeholders==null?new HashMap<>():new HashMap<>(placeholders);
+        if(captured!=null)saved.putAll(captured.getPlaceholders());
+        final String entry=queuedRewardReference(reward,captured)+"%placeholders%"+ArrayUtils.makeString(saved);
         if(Bukkit.isPrimaryThread()) {
             ServerThreadRewardDispatch owner=plugin.getRewardDispatch();
             if(owner==null)throw new IllegalStateException("Reward dispatcher unavailable for queue admission");

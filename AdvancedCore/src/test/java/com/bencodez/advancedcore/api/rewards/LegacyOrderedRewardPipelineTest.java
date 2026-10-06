@@ -485,7 +485,34 @@ class LegacyOrderedRewardPipelineTest {
             if(force) {result.toCompletableFuture().join();assertEquals(Arrays.asList("delivered"),effects);assertFalse(checkpoints.isEmpty());}
             else {Throwable failure=assertThrows(CompletionException.class,()->result.toCompletableFuture().join());
                 assertTrue(Reward.isOfflineReplayDeferred(failure));assertTrue(effects.isEmpty());assertTrue(checkpoints.isEmpty());}
+            verify(user,never()).addOfflineRewards(any(),any());verify(user,never()).addOfflineRewards(any(),any(),any());
+        });
+    }
+
+    @Test void pausedPublicDispatchPassesReplayOptionsToQueueInBothEntryPoints() {
+        for(boolean asynchronous:new boolean[]{false,true})fixture(f -> {
+            fullSetup(f);when(f.dispatch.plugin.getOptions().isPauseRewards()).thenReturn(true);
+            when(f.dispatch.plugin.getLogger()).thenReturn(java.util.logging.Logger.getAnonymousLogger());
+            AdvancedCoreUser user=onlineUser();when(user.isOnline()).thenReturn(true);
+            RewardOptions options=new RewardOptions().setOnline(true).setCheckTimed(false);
+            options.setAsyncReplayOccurrenceId(java.util.UUID.randomUUID().toString());
+            options.setAsyncReplayProgress(java.util.Collections.singletonMap("root/child",1));
+            options.setAsyncReplayRegistryFingerprints(java.util.Collections.singletonMap("root/child","registry"));
+            Reward.ReplayState state=Reward.replayStateFor(options);
+            String marker="__advancedcore_replay_selection_child";state.recordReplayMetadata(marker,"selected");
+            options.setAsyncReplayState(state);
+            doAnswer(call->{
+                RewardOptions queued=Reward.snapshotReplayOptionsForQueue(call.getArgument(2));
+                assertEquals(options.getAsyncReplayOccurrenceId(),queued.getAsyncReplayOccurrenceId());
+                assertEquals(Integer.valueOf(1),queued.getAsyncReplayProgress().get("root/child"));
+                assertEquals("registry",queued.getAsyncReplayRegistryFingerprints().get("root/child"));
+                assertEquals("selected",queued.getPlaceholders().get(marker));return null;
+            }).when(user).addOfflineRewards(eq(f.reward),any(),any());
+            if(asynchronous) {CompletionStage<Void> result=f.reward.giveRewardAsync(user,options);drain(f);result.toCompletableFuture().join();}
+            else f.reward.giveReward(user,options);
+            verify(user,times(1)).addOfflineRewards(eq(f.reward),any(),any());
             verify(user,never()).addOfflineRewards(any(),any());
+            assertFalse(options.getPlaceholders().containsKey(marker));
         });
     }
 
@@ -494,7 +521,7 @@ class LegacyOrderedRewardPipelineTest {
             fullSetup(f);when(f.dispatch.plugin.getOptions().isPauseRewards()).thenReturn(true);AdvancedCoreUser user=onlineUser();when(user.isOnline()).thenReturn(true);
             RewardOptions replay=new RewardOptions();replay.setAsyncReplayCheckpointConsumer(checkpoint->fail("paused checkpoint"));
             CompletionStage<Void> result=f.reward.giveRewardAsync(user,replay);drain(f);
-            Throwable failure=assertThrows(CompletionException.class,()->result.toCompletableFuture().join());assertTrue(Reward.isOfflineReplayDeferred(failure));verify(user,never()).addOfflineRewards(any(),any());
+            Throwable failure=assertThrows(CompletionException.class,()->result.toCompletableFuture().join());assertTrue(Reward.isOfflineReplayDeferred(failure));verify(user,never()).addOfflineRewards(any(),any());verify(user,never()).addOfflineRewards(any(),any(),any());
         });
     }
     @Test void requirementExceptionRetainsDurableOccurrenceInsteadOfAcknowledgingIt() {
@@ -505,7 +532,7 @@ class LegacyOrderedRewardPipelineTest {
             };
             when(f.dispatch.plugin.getRewardHandler().getInjectedRequirements()).thenReturn(new ArrayList<>(Arrays.asList(requirement)));
             RewardOptions replay=new RewardOptions();replay.setAsyncReplayCheckpointConsumer(checkpoint->fail("failed requirement checkpoint"));
-            CompletionStage<Void> result=f.reward.giveRewardAsync(user,replay);drain(f);assertThrows(CompletionException.class,()->result.toCompletableFuture().join());verify(user,never()).addOfflineRewards(any(),any());
+            CompletionStage<Void> result=f.reward.giveRewardAsync(user,replay);drain(f);assertThrows(CompletionException.class,()->result.toCompletableFuture().join());verify(user,never()).addOfflineRewards(any(),any());verify(user,never()).addOfflineRewards(any(),any(),any());
         });
     }
     @Test void completeEntryPointFromServerOwnerRejectsRetiredQueuedAsyncEvent() {

@@ -4153,3 +4153,69 @@ Evidence under the isolated workspace: `server-affine-replay-red.log`,
 `server-affine-runtime.log`, and `offline-affinity-runtime-f211c8cb28.json`.
 The complete upstream ledger and full shared-runtime/root-recovery work remain
 incomplete. No final PR readiness is claimed.
+
+### Deferred public reward options and queued recovery
+
+Complete upstream production/test patch reviewed:
+`400bf780208b7b3bef913ff4107202905372368c`, against pinned main
+`6390c1cab41bd4d7683c7df88dd36537c8c7861e`.
+The fork already had replay-state copying and option-aware serialization, but
+its public queue API and deferral callers never used them. Added the compatible
+`addOfflineRewards(Reward, HashMap<String,String>, RewardOptions)` overload and
+wired paused, vanished and retryable-offline deferral in both public synchronous
+and asynchronous reward paths. The original two-argument API delegates with null
+options, retaining fresh occurrence behavior. The internal cross-package
+`snapshotReplayOptionsForQueue` bridge freezes options and merges the completed
+state/registry fingerprints/nested selection metadata before serialization;
+caller-owned options and placeholder maps remain unchanged. Existing queue
+markers and payload formats are reused. No configuration or schema migration is
+needed. Java 8 uses the existing captured dispatcher and checked native storage
+mutation instead of main's modern continuation helpers.
+
+Already admitted durable queue replays still release their claim and retain the
+original occurrence on deferral, rather than inserting another queued copy.
+Existing claim cleanup rechecks occurrences, serial tail, retained publication
+and storage wakeup under the shared claim lock before removing the current
+per-user claim object. The public null-options reward-user guard is retained.
+The fork does not replace this proven native queue implementation with main's
+different storage manager layout.
+
+Two new deterministic regressions cover option serialization/recovery and both
+public deferral entry points. They preserve the exact occurrence, completed
+prefix, registry identity, frozen child metadata and administrator placeholders.
+Existing negative deferral tests now prohibit both queue overloads.
+Reverting only the four deferral calls to the old overload makes the new
+entry-point regression fail with the expected missing option-aware admission;
+candidate source bytes were restored before positive validation.
+Actual Java 8 focused reward/offline/timed suite: 89 PASS, no failures/errors/skips.
+Full producer `clean install`: 716 unit + 78 artifact tests = 794 PASS.
+Producer and dedicated installed dependency match SHA-256
+`f16d6169caf200c7270c28d74e41723ce110547f768ba33bcc8ba3b8498a7420`.
+Exact dependent consumer `clean verify`: 45 unit + one artifact test = 46 PASS;
+SHA-256 `cc5f85f8406b1ac45b96690e8f81f0f88a5feb4d9330d379b656e6d34178fb60`.
+Both jars' base classes remain major version 52 or lower.
+
+The manual server-affinity fixture now also snapshots the actual completed
+runtime replay state, admits it through the new public queue overload, observes
+its occurrence/progress/metadata in checked SQLite, and verifies normal recovery
+skips the completed effect and removes the occurrence. All five fixture checks
+PASS on actual Java 8/Spigot 1.8.8 against that exact consumer artifact.
+The existing offline root/native-effects/physical-checkpoint fixture also passes
+all 10 checks, including normal disable/restart and recovery of exactly three
+parked diamonds. The timed physical-checkpoint/recovery-publication fixture passes
+12 checks, including failed completion removal, an actual timer retry that does
+not repeat effects, and another poll fenced while the original claim remains
+active. This is not a claim of SIGKILL recovery or exactly-once arbitrary
+external effects, live MySQL recovery, global capacity or full ledger completion.
+
+Workspace evidence: `deferred-options-focused-entrypoints-final.log`,
+`deferred-options-entrypoints-mutation.log`, `deferred-options-clean-install.log`,
+`deferred-options-consumer-clean-verify.log`, `deferred-options-build-results.json`,
+`deferred-options-runtime.log`, `offline-affinity-runtime-a883f548fa.json`,
+`deferred-options-offline-integration.log`, and
+`offline-replay-integration-runtime-3a64b74edf.json`,
+`deferred-options-timed-publication.log`, and
+`queue-publication-recovery-runtime-f3df9b2974.json`.
+All 167 recorded original checkouts and both pinned references remain unchanged
+(`deferred-options-isolation-after.json`). Full shared-runtime/root-recovery
+coverage, upstream classifications and final independent review remain pending.

@@ -1223,7 +1223,7 @@ public class Reward {
         // adapter recognizes this signal and releases the claim without deleting it.
         if(isDurableReplay(options))return failedStage(new OfflineReplayDeferredException());
         return owner.dispatchOffPrimary(()->{
-            checkRewardFile();user.addOfflineRewards(this,options.getPlaceholders());
+            checkRewardFile();user.addOfflineRewards(this,options.getPlaceholders(),options);
             return CompletableFuture.<Void>completedFuture(null);
         },getServerThreadDispatchTimeoutMillis());
     }
@@ -1259,6 +1259,14 @@ public class Reward {
 		if (options == null || options.getAsyncReplayState() == null) return;
 		options.getAsyncReplayState().copyTo(options);
 	}
+
+    /** Internal queue bridge: freeze replay metadata without changing caller-owned options. */
+    public static RewardOptions snapshotReplayOptionsForQueue(RewardOptions options) {
+        if(options==null)return null;
+        RewardOptions snapshot=options.copyForDispatch();
+        preserveReplayState(snapshot);
+        return snapshot;
+    }
 
 	public void giveReward(AdvancedCoreUser user, RewardOptions rewardOptions) {
         if (hasAsyncRewardInjection() || isDurableReplay(rewardOptions)) {
@@ -1345,7 +1353,7 @@ public class Reward {
 
 		if (plugin.getOptions().isPauseRewards()) {
 			checkRewardFile();
-			user.addOfflineRewards(this, rewardOptions.getPlaceholders());
+			user.addOfflineRewards(this, rewardOptions.getPlaceholders(), rewardOptions);
 			plugin.getLogger()
 					.info("Rewards are paused, saving offline reward " + getRewardName() + ": " + user.getPlayerName());
 			return;
@@ -1353,7 +1361,7 @@ public class Reward {
 
 		if ((plugin.getOptions().isTreatVanishAsOffline() && user.isVanished())) {
 			checkRewardFile();
-			user.addOfflineRewards(this, rewardOptions.getPlaceholders());
+			user.addOfflineRewards(this, rewardOptions.getPlaceholders(), rewardOptions);
 			plugin.getLogger()
 					.info(getRewardName() + ": " + user.getPlayerName() + " is vanished, saving reward offline");
 			return;
@@ -1364,7 +1372,7 @@ public class Reward {
 				&& (!isForceOffline() && !rewardOptions.isForceOffline()))) {
 			if (rewardOptions.isGiveOffline()) {
 				checkRewardFile();
-				user.addOfflineRewards(this, rewardOptions.getPlaceholders());
+				user.addOfflineRewards(this, rewardOptions.getPlaceholders(), rewardOptions);
 				plugin.debug("Saving offline reward " + getRewardName() + " for " + user.getPlayerName());
 			}
 			return;

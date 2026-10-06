@@ -32,7 +32,7 @@ log = evidence / ('offline-affinity-spigot-' + nonce + '.log')
 client_log = evidence / ('offline-affinity-client-' + nonce + '.log')
 result = {'fixture': str(fixture), 'artifact_sha256': hashlib.sha256(artifact.read_bytes()).hexdigest(),
           'outcome': 'FAIL', 'checks': {},
-          'limitations': 'Live Bukkit Server requirement, checked SQLite queued recovery and explicit force. Not process-crash, MySQL or timed reward acceptance.'}
+          'limitations': 'Live Bukkit Server requirement, checked SQLite queued recovery, completed replay options round trip and explicit force. Not process-crash, MySQL or timed reward acceptance.'}
 server = client = None
 streams = []
 def wait(test, label, seconds=35):
@@ -60,6 +60,7 @@ try:
     wait(lambda: 'affinity-acceptance-complete' in log.read_text(), 'queued reward recovery', 30)
     for marker in ['affinity-wrong-backend-retains-same-occurrence-without-effects',
                    'affinity-matching-backend-delivers-and-removes-once',
+                   'affinity-deferred-options-preserve-completed-prefix-without-repeating-effect',
                    'affinity-explicit-force-preserves-override-and-durable-removal']:
         assert marker in log.read_text()
         result['checks'][marker] = 'PASS'

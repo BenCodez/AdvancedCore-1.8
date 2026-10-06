@@ -14,6 +14,8 @@ import com.bencodez.votingplugin.advancedcore.api.user.AdvancedCoreUser;
 /** Manual real Java 8/Spigot fixture; never shipped in a plugin artifact. */
 public final class OfflineServerAffinityAcceptance extends JavaPlugin {
     private final AtomicInteger effects = new AtomicInteger();
+    private final java.util.concurrent.atomic.AtomicReference<Reward.ReplayState> completedState = new java.util.concurrent.atomic.AtomicReference<>();
+    private final java.util.concurrent.atomic.AtomicReference<String> completedOccurrence = new java.util.concurrent.atomic.AtomicReference<>();
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!(sender instanceof ConsoleCommandSender) || args.length != 1) return false;
         Player player = Bukkit.getPlayerExact(args[0]);
@@ -26,6 +28,8 @@ public final class OfflineServerAffinityAcceptance extends JavaPlugin {
                     org.bukkit.configuration.ConfigurationSection data, HashMap<String,String> placeholders) {
                 if (!data.getBoolean("AffinityEffect")) return null;
                 if (!Bukkit.isPrimaryThread()) throw new AssertionError("Effect must run on owner");
+                completedState.set(Reward.currentReplayState());
+                completedOccurrence.set(Reward.currentReplayOccurrenceId());
                 effects.incrementAndGet(); return null;
             }
         });
@@ -54,6 +58,19 @@ public final class OfflineServerAffinityAcceptance extends JavaPlugin {
                 if (!user.getUserData().getValuesStrict().get(path).getString().isEmpty() || effects.get() != 1)
                     throw new AssertionError("Matching backend did not consume exactly one occurrence");
                 getLogger().info("affinity-matching-backend-delivers-and-removes-once");
+                RewardOptions recovered = new RewardOptions();
+                recovered.setAsyncReplayState(completedState.get());
+                recovered.setAsyncReplayOccurrenceId(completedOccurrence.get());
+                completedState.get().recordReplayMetadata("__advancedcore_replay_selection_fixture", "frozen");
+                user.addOfflineRewards(normal, new HashMap<String,String>(), recovered);
+                String retained = user.getUserData().getValuesStrict().get(path).getString();
+                if (!retained.contains("%asyncprogress%v3-") || !retained.contains("%asyncoccurrence%" + completedOccurrence.get())
+                        || !retained.contains("__advancedcore_replay_selection_fixture"))
+                    throw new AssertionError("Deferred public options lost occurrence, progress or frozen metadata");
+                user.checkOfflineRewardsAsync().toCompletableFuture().get(10, TimeUnit.SECONDS);
+                if (effects.get() != 1 || !user.getUserData().getValuesStrict().get(path).getString().isEmpty())
+                    throw new AssertionError("Completed effect repeated after options round trip");
+                getLogger().info("affinity-deferred-options-preserve-completed-prefix-without-repeating-effect");
                 Reward forced = main.getRewardDispatch().dispatch(() -> {
                     YamlConfiguration forcedData = new YamlConfiguration();
                     forcedData.set("Server", "backend-b"); forcedData.set("AffinityEffect", true);

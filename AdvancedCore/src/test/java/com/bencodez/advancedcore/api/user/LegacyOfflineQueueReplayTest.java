@@ -24,7 +24,7 @@ class LegacyOfflineQueueReplayTest {
         RewardHandler rewards=mock(RewardHandler.class);when(f.plugin.getRewardHandler()).thenReturn(rewards);
         ServerThreadRewardDispatch owner=new ServerThreadRewardDispatch(f.plugin);when(f.plugin.getRewardDispatch()).thenReturn(owner);
         try {java.lang.reflect.Field plugin=AdvancedCoreUser.class.getDeclaredField("plugin");plugin.setAccessible(true);plugin.set(f.user,f.plugin);}catch(Exception failure){throw new AssertionError(failure);}
-        doCallRealMethod().when(f.user).checkOfflineRewardsAsync();doCallRealMethod().when(f.user).checkOfflineRewards();doCallRealMethod().when(f.user).forceRunOfflineRewards();doCallRealMethod().when(f.user).addOfflineRewards(any(),any());
+        doCallRealMethod().when(f.user).checkOfflineRewardsAsync();doCallRealMethod().when(f.user).checkOfflineRewards();doCallRealMethod().when(f.user).forceRunOfflineRewards();doCallRealMethod().when(f.user).addOfflineRewards(any(),any());doCallRealMethod().when(f.user).addOfflineRewards(any(),any(),any());
         HashMap<String,DataValue> values=new HashMap<>();values.put("OfflineRewards",new DataValueString(String.join("%line%",pending)));f.cache.updateCache(values);
         try {body.accept(new Fixture(f,rewards,options));}finally{owner.close();RewardHandler.getInstance().getRepeatTimer().cancel();}
         }
@@ -34,6 +34,35 @@ class LegacyOfflineQueueReplayTest {
         Fixture(LegacyDirectUserDataTest.Fixture f,RewardHandler rewards,AdvancedCoreConfigOptions options){this.f=f;this.rewards=rewards;this.options=options;}
         String pending(){return f.cache.getCachedValue("OfflineRewards").getString();}
     }
+    @Test void explicitDeferredOptionsRoundTripOccurrenceProgressAndNestedMetadata() {
+        fixture(Collections.emptyList(),x->{
+            doCallRealMethod().when(x.f.user).addOfflineRewards(any(),any(),any());
+            Reward reward=mock(Reward.class);when(reward.getRewardName()).thenReturn("daily");
+            String occurrence=UUID.randomUUID().toString(),marker="__advancedcore_replay_selection_child";
+            RewardOptions options=new RewardOptions().addPlaceholder("Server","backend-a");
+            options.setAsyncReplayOccurrenceId(occurrence);
+            options.setAsyncReplayProgress(Collections.singletonMap("root/child",1));
+            options.setAsyncReplayRegistryFingerprints(Collections.singletonMap("root/child","registry"));
+            Reward.ReplayState state=Reward.replayStateFor(options);
+            state.recordReplayMetadata(marker,"frozen-choice");options.setAsyncReplayState(state);
+            HashMap<String,String> placeholders=new HashMap<>();placeholders.put("operator","retained");
+            x.f.user.addOfflineRewards(reward,placeholders,options);
+            assertTrue(x.pending().contains("%asyncoccurrence%"+occurrence));assertTrue(x.pending().contains("%asyncprogress%v3-"));
+            assertEquals(Collections.singletonMap("operator","retained"),placeholders);
+            assertFalse(options.getPlaceholders().containsKey(marker),"Queue snapshot must not mutate caller options");
+            when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenAnswer(call->{
+                RewardOptions restored=call.getArgument(2);assertEquals(occurrence,restored.getAsyncReplayOccurrenceId());
+                assertEquals(Integer.valueOf(1),restored.getAsyncReplayProgress().get("root/child"));
+                assertEquals("registry",restored.getAsyncReplayRegistryFingerprints().get("root/child"));
+                assertEquals("frozen-choice",restored.getPlaceholders().get(marker));
+                assertEquals("backend-a",restored.getPlaceholders().get("Server"));
+                assertEquals("retained",restored.getPlaceholders().get("operator"));
+                return CompletableFuture.completedFuture(null);
+            });
+            x.f.user.checkOfflineRewardsAsync().toCompletableFuture().join();assertEquals("",x.pending());
+        });
+    }
+
     @Test void normalRecoveryDoesNotForceServerOrOnlineRequirements() {
         fixture(Collections.singletonList("daily"),x->{
             when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenAnswer(call->{
