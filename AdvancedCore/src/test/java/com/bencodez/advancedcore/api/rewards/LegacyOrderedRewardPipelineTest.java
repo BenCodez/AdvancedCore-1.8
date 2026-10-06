@@ -467,6 +467,28 @@ class LegacyOrderedRewardPipelineTest {
             assertThrows(CompletionException.class,()->f.reward.giveRewardAsync(user,replay).toCompletableFuture().join());verifyNoInteractions(Bukkit.getPluginManager());
         });
     }
+    @Test void retryableRequirementDefersNormalRecoveryButExplicitForceStillRunsEffects() {
+        for(boolean force:new boolean[]{false,true})fixture(f -> {
+            fullSetup(f);AdvancedCoreUser user=onlineUser();when(user.isOnline()).thenReturn(true);repeat(f.reward);
+            com.bencodez.advancedcore.api.rewards.injectedrequirement.RequirementInject requirement=
+                    new com.bencodez.advancedcore.api.rewards.injectedrequirement.RequirementInject("Server") {
+                @Override public boolean onRequirementRequest(Reward reward,AdvancedCoreUser target,ConfigurationSection config,RewardOptions options) {
+                    assertTrue(Bukkit.isPrimaryThread());return false;
+                }
+            }.allowReattempt();
+            when(f.dispatch.plugin.getRewardHandler().getInjectedRequirements()).thenReturn(new ArrayList<>(Arrays.asList(requirement)));
+            List<String> effects=new ArrayList<>();List<Reward.ReplayCheckpoint> checkpoints=new ArrayList<>();
+            f.injections.add(async("effect",p->{effects.add("delivered");return CompletableFuture.completedFuture(null);}));
+            RewardOptions replay=nestedOptions(checkpoints).setOnline(false).setCheckTimed(false);
+            if(force)replay.setGiveOffline(false).forceOffline();
+            CompletionStage<Void> result=f.reward.giveRewardAsync(user,replay);drain(f);
+            if(force) {result.toCompletableFuture().join();assertEquals(Arrays.asList("delivered"),effects);assertFalse(checkpoints.isEmpty());}
+            else {Throwable failure=assertThrows(CompletionException.class,()->result.toCompletableFuture().join());
+                assertTrue(Reward.isOfflineReplayDeferred(failure));assertTrue(effects.isEmpty());assertTrue(checkpoints.isEmpty());}
+            verify(user,never()).addOfflineRewards(any(),any());
+        });
+    }
+
     @Test void pausedDurableReplayRemainsDeferredWithoutAnotherQueueInsertion() {
         fixture(f -> {
             fullSetup(f);when(f.dispatch.plugin.getOptions().isPauseRewards()).thenReturn(true);AdvancedCoreUser user=onlineUser();when(user.isOnline()).thenReturn(true);

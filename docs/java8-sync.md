@@ -4105,3 +4105,51 @@ Backend adapters, schema/backend lifecycle, shared cache owner, shared runtime,
 transaction implementation and remaining facade delegation still require integration.
 See `docs/upstream-shared-user-dispositions.md`. No main-match, final independent
 review or PR readiness is claimed. No push, release or deployment was performed.
+
+### Server-affine offline recovery and explicit force
+
+Reviewed complete upstream commit
+`009ca9521044435c013de6c81e5f2c0b7822c853` against the pinned comparison
+`6390c1cab41bd4d7683c7df88dd36537c8c7861e` and its current callers.
+Normal recovery no longer sets `forceOffline` or disables `GiveOffline`.
+Previously this fork's asynchronous recovery accidentally applied the force
+settings to every poll, bypassing retryable Server and online requirements.
+The public `forceRunOfflineRewards()` retains its explicit override through a
+separate private admission flag. Normal/forced paths still use the same captured
+dispatcher, durable occurrence/checkpoint mutations, completion removal and
+claim cleanup. Public signatures, queue formats and configuration keys are
+unchanged. A deferral releases the active claim while retaining the same stored
+occurrence; it neither creates another queued copy nor runs effects.
+
+A new regression first failed against the previous implementation because normal
+recovery set `forceOffline=true`. Three added deterministic tests check normal
+queue options, explicit-force options and actual asynchronous reward decisions
+for retryable requirement failure (no effect/checkpoint vs awaited force effect).
+Actual Java 8 focused command, using the documented isolated flags:
+`mvn -B -f AdvancedCore/pom.xml -Dtest=LegacyOfflineQueueReplayTest,LegacyTimedQueueReplayTest,LegacyOrderedRewardPipelineTest test`:
+87 PASS, zero failures/errors/skips.
+Full producer `clean install`: 714 unit + 78 artifact tests = 792 PASS.
+Exact locally installed producer SHA-256:
+`3688cf464a885c7b63bc93aa7272b91e8a06bf99e8e4bda7ccc08b88e1ba47c8`.
+Dependent VotingPlugin `clean verify`: 45 unit + one artifact test = 46 PASS.
+Consumer SHA-256:
+`8868c74eddf6de95e6a9ff2c461008a31eee58ccfc7030a419e748aeed112a68`.
+Both artifacts retain maximum base-class major version 52.
+
+Manual reproducible acceptance:
+`python3 AdvancedCore/src/test/runtime/run-offline-server-affinity.py <workspace>`.
+Against that exact consumer on actual Java 8/Spigot 1.8.8 with a connected client,
+all four checks PASS: the real builtin Server requirement retains a wrong-backend
+occurrence unchanged over two polls without effects, the matching target runs
+one effect and durably removes it, explicit force overrides the mismatched target
+and durably removes its distinct occurrence, and Java 8 linkage/shutdown succeed.
+The fixture queries checked SQLite state and performs no vote processing. It is
+a manual test helper outside the packaged source roots, not a production plugin.
+This is not process-crash, live MySQL or timed-recovery acceptance.
+
+Evidence under the isolated workspace: `server-affine-replay-red.log`,
+`server-affine-replay-focused-final.log`, `server-affine-replay-clean-install.log`,
+`server-affine-consumer-clean-verify.log`, `server-affine-build-results.json`,
+`server-affine-runtime.log`, and `offline-affinity-runtime-f211c8cb28.json`.
+The complete upstream ledger and full shared-runtime/root-recovery work remain
+incomplete. No final PR readiness is claimed.

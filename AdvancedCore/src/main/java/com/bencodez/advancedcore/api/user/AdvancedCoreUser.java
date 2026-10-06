@@ -1305,14 +1305,18 @@ public class AdvancedCoreUser {
 
     /** Completion covers durable occurrence admission, effects/checkpoints and removal. */
     public CompletionStage<Void> checkOfflineRewardsAsync() {
+        return checkOfflineRewardsAsync(false);
+    }
+
+    private CompletionStage<Void> checkOfflineRewardsAsync(boolean force) {
         if(!plugin.getOptions().isProcessRewards())return CompletableFuture.completedFuture(null);
         Reward.ReplayState capturedRuntime=Reward.replayStateFor(new RewardOptions());capturedRuntime.captureRuntime(plugin);
         ServerThreadRewardDispatch owner=capturedRuntime.getActionDispatchOwner();
         if(owner==null)return failedStage(new IllegalStateException("Reward dispatcher unavailable"));
-        return owner.dispatchOffPrimary(()->dispatchOfflineQueue(owner,capturedRuntime),TimeUnit.SECONDS.toMillis(30));
+        return owner.dispatchOffPrimary(()->dispatchOfflineQueue(owner,capturedRuntime,force),TimeUnit.SECONDS.toMillis(30));
     }
 
-    private CompletionStage<Void> dispatchOfflineQueue(ServerThreadRewardDispatch owner,Reward.ReplayState capturedRuntime) {
+    private CompletionStage<Void> dispatchOfflineQueue(ServerThreadRewardDispatch owner,Reward.ReplayState capturedRuntime,boolean force) {
         if(!plugin.getOptions().isProcessRewards())return CompletableFuture.completedFuture(null);
         setCheckWorld(false);
         ArrayList<String> snapshot=getUserData().getStringListStrict(plugin.getUserManager().getOfflineRewardsPath());
@@ -1346,8 +1350,9 @@ public class AdvancedCoreUser {
                     mutateOfflineQueue(pending->{int index=pending.indexOf(stored);if(index<0)throw new IllegalStateException("Queued occurrence disappeared before admission");pending.set(index,admitted);return pending;});
                     current.set(admitted);
                     String[] parts=admitted.split("%placeholders%",2);QueuedReplay metadata=parseQueuedReplay(parts[0]);
-                    RewardOptions options=new RewardOptions().setOnline(false).setGiveOffline(false).forceOffline().setCheckTimed(false)
+                    RewardOptions options=new RewardOptions().setOnline(false).setCheckTimed(false)
                         .withPlaceHolder(ArrayUtils.fromString(parts.length>1?parts[1]:""));
+                    if(force)options.setGiveOffline(false).forceOffline();
                     options.setCompletedAsyncInjections(metadata.completedAsyncInjections);options.setAsyncReplayProgress(metadata.asyncReplayProgress);
                     options.setAsyncReplayRegistryFingerprints(metadata.asyncReplayRegistryFingerprints);options.setLegacyAsyncReplayCheckpoint(metadata.legacyAsyncReplayCheckpoint);
                     options.setAsyncReplayOccurrenceId(id);options.setAsyncReplayCheckpointConsumer(checkpoint->{
@@ -1426,7 +1431,11 @@ public class AdvancedCoreUser {
 		return this;
 	}
 
-    public void forceRunOfflineRewards() {checkOfflineRewards();}
+    public void forceRunOfflineRewards() {
+        checkOfflineRewardsAsync(true).whenComplete((ignored,failure)->{
+            if(failure!=null)plugin.getLogger().warning("Forced offline reward replay remains pending: "+failure.getMessage());
+        });
+    }
 
 	public UserDataCache getCache() {
 		return plugin.getUserManager().getDataManager().getCache(java.util.UUID.fromString(getUUID()));

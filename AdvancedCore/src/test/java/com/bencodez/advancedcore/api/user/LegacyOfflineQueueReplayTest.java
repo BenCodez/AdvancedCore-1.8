@@ -34,6 +34,29 @@ class LegacyOfflineQueueReplayTest {
         Fixture(LegacyDirectUserDataTest.Fixture f,RewardHandler rewards,AdvancedCoreConfigOptions options){this.f=f;this.rewards=rewards;this.options=options;}
         String pending(){return f.cache.getCachedValue("OfflineRewards").getString();}
     }
+    @Test void normalRecoveryDoesNotForceServerOrOnlineRequirements() {
+        fixture(Collections.singletonList("daily"),x->{
+            when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenAnswer(call->{
+                RewardOptions options=call.getArgument(2);
+                assertFalse(options.isForceOffline(),"Normal recovery must preserve retryable server/online requirements");
+                assertTrue(options.isGiveOffline());
+                assertFalse(options.isOnline());assertFalse(options.isCheckTimed());
+                return CompletableFuture.completedFuture(null);
+            });
+            x.f.user.checkOfflineRewardsAsync().toCompletableFuture().join();assertEquals("",x.pending());
+        });
+    }
+    @Test void explicitForceRecoveryKeepsItsCompatibilityOverride() {
+        fixture(Collections.singletonList("daily"),x->{
+            when(x.rewards.givePersistedQueueRewardAsync(any(),any(),any())).thenAnswer(call->{
+                RewardOptions options=call.getArgument(2);assertTrue(options.isForceOffline());assertFalse(options.isGiveOffline());
+                return CompletableFuture.completedFuture(null);
+            });
+            x.f.user.forceRunOfflineRewards();assertEquals("",x.pending());
+            verify(x.rewards,times(1)).givePersistedQueueRewardAsync(any(),any(),any());
+        });
+    }
+
     @Test void admissionIsDurableAndPendingUntilEffectsSettle() {
         fixture(Collections.singletonList("daily"),x->{
             CompletableFuture<Void> effect=new CompletableFuture<>();List<RewardOptions> options=new ArrayList<>();
