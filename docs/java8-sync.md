@@ -4236,3 +4236,6 @@ checkpoint does not establish full backport or PR readiness.
 The optional shared reward API and its Java 8 boundary are documented in
 [java8-shared-reward-orchestration.md](java8-shared-reward-orchestration.md).
 Native shared-runtime integration remains incomplete.
+
+Shared-user runtime foundation and remaining native integration:
+[java8-shared-user-runtime.md](java8-shared-user-runtime.md).

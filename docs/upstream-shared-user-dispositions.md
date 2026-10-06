@@ -4,11 +4,14 @@ Pinned main: `6390c1cab41bd4d7683c7df88dd36537c8c7861e`.
 
 The complete production patches of these four commits were inspected. They
 operate on main's shared SQL runtime, exclusive flush gates, staged change and
-notification queues, and captured notification generations. The fork has none
-of `SharedUserDataRuntime`, `BukkitUserCacheOwner`, `sharedExclusiveFlushGate`,
-`changesAfterExclusiveFlush`, or `dispatchSharedUserDataNotification` in its
-active production sources. Native per-user storage ownership is not evidence
-that this optional shared-runtime feature is already ported.
+notification queues, and captured notification generations. The fork now includes
+the platform-neutral `SharedUserDataRuntime` and `UserCacheOwner` contracts, with
+Java 8 adaptations and the pinned runtime tests. It still lacks
+`BukkitUserCacheOwner`, `sharedExclusiveFlushGate`, `changesAfterExclusiveFlush`,
+and `dispatchSharedUserDataNotification` in active production sources. The runtime
+foundation is not yet wired into the native cache manager. Native per-user storage
+ownership and headless runtime tests do not prove that integration. See
+[java8-shared-user-runtime.md](java8-shared-user-runtime.md).
 
 | Upstream commit | Native fork evidence | Remaining work |
 | --- | --- | --- |
