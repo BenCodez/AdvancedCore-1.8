@@ -2792,6 +2792,32 @@ public class RewardHandler {
 
 		injectedRewards.add(new RewardInjectConfigurationSection("AdvancedWorld") {
 
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean supportsAsyncSynchronization(){return false;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders) {
+                String lane="advanced-world:"+getPath();
+                return Reward.hasReplayNestedRewardSnapshot(placeholders,lane) && !Reward.hasCompletedNestedRewardSequence(placeholders,lane);
+            }
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,
+                    AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if(section==null && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                java.util.List<String> configured=section==null?java.util.Collections.emptyList():new ArrayList<>(section.getKeys(false));
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey(),occurrence=Reward.currentReplayOccurrenceId();
+                if(state!=null)state.captureRuntime(plugin);
+                ServerThreadRewardDispatch owner=state==null?plugin.getRewardDispatch():state.getActionDispatchOwner();
+                return Reward.replayNestedRewardSequence(plugin,placeholders,"advanced-world:"+getPath(),configured,state,key,(name,index)->
+                    owner.dispatch(()->{
+                        if(section==null || !section.contains(name))return failedQueueReward(new IllegalStateException("Pending advanced world reward definition is missing"));
+                        section.set(name+".Worlds",ArrayUtils.convert(new String[]{name}));
+                        RewardOptions child=Reward.withReplayState(new RewardOptions().withPlaceHolder(placeholders),state,key,name+":"+index,occurrence)
+                                .setPrefix(reward.getName()+"_AdvancedWorld");
+                        return giveRewardAsync(user,section,name,child);
+                    },java.util.concurrent.TimeUnit.SECONDS.toMillis(30))
+                ).thenApply(unused->(Object)null);
+            }
+
 			@Override
 			public String onRewardRequested(Reward reward1, AdvancedCoreUser user, ConfigurationSection section,
 					HashMap<String, String> placeholders) {

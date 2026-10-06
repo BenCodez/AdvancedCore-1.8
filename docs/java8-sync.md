@@ -3293,3 +3293,47 @@ Automatic login/timed startup recovery retains occurrence identity, native
 3 diamonds/7 experience and effect count 1, then removes the physical queue.
 SQLite integrity, clean shutdown and Java 8 linkage pass. This does not prove
 unacknowledged effects, power loss or arbitrary changed pending definitions.
+
+
+## AdvancedWorld awaited children and recovery
+
+The existing builtin now freezes its world-key sequence and awaits each child's
+completion and durable cursor. It captures the admitted runtime and uses its
+owner dispatcher to inject the legacy Worlds requirement before child creation.
+Parent-name AdvancedWorld prefixes, exact world names, registration priority,
+post-reward placement and the synchronous callback remain unchanged. Empty or
+absent fresh configuration remains a no-op. An unfinished missing definition
+fails explicitly; a completed cursor skips lookup. Async shared-injector locking
+is disabled to permit recursive AdvancedWorld rewards.
+
+Two actual-builtin tests exercise sequential pending child futures, failure,
+legacy inline names, owner-thread creation, Worlds injection and optional empty
+configuration. The focused suite passes 22 tests in the full build. A preceding
+source test fails; actual old-consumer case 49486d1ce6 also fails because its
+AdvancedWorld callback settles while the child remains pending. The exact new
+consumer passes inline and recursive Spigot 1.8.8 pending-queue/completion cases
+279b4d1eb5 and c7d0310724 (four checks total).
+
+With Temurin 8u504/Maven 3.9.9 and the explicit local Maven/temp paths already
+recorded above, AdvancedCore clean install passes 559 unit + 18 artifact = 577;
+VotingPlugin clean verify passes 45 unit + 1 artifact = 46 against the exact
+locally installed producer. No failures/errors/skips. Producer SHA-256:
+2d4f2ad0890217befe8c8bf71dde8e786d40f5580809e2e71e5426a5810f75e2.
+Consumer SHA-256:
+f3c14f26bc244b5a8d9c7db989d883c8d3acb15724fb2f534cbd6d651d00df10.
+All 1834/2451 base classes remain major <=52.
+
+Offline fd6fedf5d1 and timed 86dca25e34 actual SIGKILL cases pass 12 checks each.
+After the selected world's named child's physical checkpoint is acknowledged
+and player data saved, process kill -9 occurs while the parent remains pending.
+A new unmatched world/candidate is added before restart. Automatic login/timed
+recovery retains the frozen world list and occurrence, does not repeat native
+3 diamonds/7 experience (effect count remains 1), and completes queue removal.
+SQLite integrity, clean restart shutdown and Java 8 linkage pass. The selected
+world and its pending definition remain available; these cases do not prove
+arbitrary changed inline values, unacknowledged effects or power-loss atomicity.
+
+This is a partial adaptation of mixed upstream 167952a0feec97017a550477e54694a944648fac;
+remaining changes in that commit and the full upstream ledger still need audit.
+No public signature, schema, release metadata or proxy format was changed.
+No full-main alignment, final review or PR readiness is claimed. No push or PR.

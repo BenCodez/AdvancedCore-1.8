@@ -211,6 +211,27 @@ class LegacyNestedRewardSequenceTest {
             }
         });
     }
+    @Test void realAdvancedWorldBuiltinAwaitsChildrenAndPreservesWorldConstraintAndPrefix() {
+        fixture(f->{
+            YamlConfiguration config=new YamlConfiguration();config.set("AdvancedWorld.world.EXP",7);config.set("AdvancedWorld.nether.EXP",8);CompletableFuture<Void> first=new CompletableFuture<>(),last=new CompletableFuture<>();List<String> names=new ArrayList<>();
+            try(MockedConstruction<Reward> children=mockConstruction(Reward.class,(mock,context)->{
+                String name=(String)context.arguments().get(0);org.bukkit.configuration.ConfigurationSection section=(org.bukkit.configuration.ConfigurationSection)context.arguments().get(1);
+                assertTrue(Bukkit.isPrimaryThread());assertEquals(Arrays.asList(name.endsWith("_world")?"world":"nether"),section.getStringList("Worlds"));names.add(name);
+                when(mock.giveRewardAsync(eq(f.user),any())).thenReturn(name.endsWith("_world")?first:last);
+            })) {
+                Reward parent=mock(Reward.class);when(parent.getName()).thenReturn("parent");
+                CompletionStage<Object> result=f.builtin("AdvancedWorld").onRewardRequestAsync(parent,f.user,config,new HashMap<>());f.drain();assertEquals(Arrays.asList("parent_AdvancedWorld_world"),names);assertFalse(result.toCompletableFuture().isDone());
+                first.complete(null);f.drain();assertEquals(Arrays.asList("parent_AdvancedWorld_world","parent_AdvancedWorld_nether"),names);assertFalse(result.toCompletableFuture().isDone());
+                last.completeExceptionally(new IllegalStateException("world child failure"));f.drain();assertThrows(CompletionException.class,()->await(result));
+            }
+        });
+    }
+    @Test void absentOrEmptyAdvancedWorldRemainsANoOp() {
+        for(boolean empty:Arrays.asList(false,true))fixture(f->{
+            YamlConfiguration config=new YamlConfiguration();if(empty)config.createSection("AdvancedWorld");
+            CompletionStage<Object> result=f.builtin("AdvancedWorld").onRewardRequestAsync(mock(Reward.class),f.user,config,new HashMap<>());f.drain();await(result);verify(f.handler,never()).getReward(anyString());
+        });
+    }
     private Object await(CompletionStage<?> stage) {
         try{return stage.toCompletableFuture().get(2,TimeUnit.SECONDS);}
         catch(ExecutionException failure){throw new CompletionException(failure.getCause());}
