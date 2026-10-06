@@ -10,7 +10,6 @@ import com.bencodez.votingplugin.advancedcore.api.user.UserStorage;
 import com.bencodez.votingplugin.advancedcore.core.user.storage.SqlUserStorage;
 import com.bencodez.votingplugin.advancedcore.core.user.storage.SqlUserDataAccess;
 import com.bencodez.votingplugin.advancedcore.core.user.storage.sql.*;
-import com.bencodez.votingplugin.simpleapi.sql.DataType;
 import com.bencodez.votingplugin.simpleapi.sql.data.*;
 
 /** Manual acceptance fixture. Database work runs off the Bukkit owner thread. */
@@ -31,16 +30,19 @@ public final class SharedSqliteAcceptance extends JavaPlugin {
         getLogger().info("shared-sqlite-pass:" + name);
     }
 
+    private SqliteUserBackend openBackend(Path directory) {
+        return SqlUserBackendFactory.sqlite(directory, "Probe", "Users", Arrays.asList(
+                new com.bencodez.votingplugin.advancedcore.api.user.usercache.keys.UserDataKeyString("PlayerName"),
+                new com.bencodez.votingplugin.advancedcore.api.user.usercache.keys.UserDataKeyInt("Points"),
+                new com.bencodez.votingplugin.advancedcore.api.user.usercache.keys.UserDataKeyString("OfflineRewards")), SqlBackendLogger.NO_OP);
+    }
+
     private void probe() throws Exception {
         Path directory = getDataFolder().toPath();
         UserStorage storage = UserStorage.SQLITE;
-        SqlUserSchema schema = SqlUserSchema.builder()
-                .column("PlayerName", "TEXT", DataType.STRING)
-                .column("Points", "INTEGER", DataType.INTEGER)
-                .column("OfflineRewards", "TEXT", DataType.STRING).build();
         UUID uuid = UUID.fromString("c17d7784-00ce-421f-a38b-a30ed419e1a4");
         SqlUserStorage retained;
-        try (SqliteUserBackend backend = new SqliteUserBackend(directory, "Probe", "Users", schema, SqlBackendLogger.NO_OP)) {
+        try (SqliteUserBackend backend = openBackend(directory)) {
             try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + backend.databaseFile());
                     Statement statement = connection.createStatement()) {
                 try (ResultSet version = statement.executeQuery("SELECT sqlite_version()")) {
@@ -86,7 +88,7 @@ public final class SharedSqliteAcceptance extends JavaPlugin {
         boolean staleRejected = false;
         try { retained.readRow(storage); } catch (IllegalStateException expected) { staleRejected = true; }
         check(staleRejected, "closed-generation-rejects-retained-user");
-        try (SqliteUserBackend reopened = new SqliteUserBackend(directory, "Probe", "Users", schema, SqlBackendLogger.NO_OP)) {
+        try (SqliteUserBackend reopened = openBackend(directory)) {
             SqlUserDataAccess data = new SqlUserDataAccess(reopened.user(uuid));
             check(data.getInt(storage, "Points", 0) == 17 && "RewardA;;RewardB".equals(data.getString(storage, "OfflineRewards")), "reopen-preserves-values-and-format");
             check(reopened.enumerateUsers().equals(Collections.singletonList(uuid)), "reopen-enumeration");
