@@ -2959,3 +2959,68 @@ effect, finishes/removes the parent queue and preserves exactly 3 diamonds and
 shutdown and Java 8 linkage checks pass. This proves acknowledged named-selection
 recovery for these lanes, not arbitrary changed inline/advanced definitions or
 unacknowledged external effects.
+
+
+## Detached generated snapshot publication (2026-10-06)
+
+Connected the previously tested `RewardFileData.prepareGeneratedSnapshot` helper
+to `Reward.setRewardFile`. Before this integration, legacy `setData` wrote and
+reloaded individual keys on the registered predecessor, then changed its marker
+before the final checked save. A forced failure of that final save reproduced a
+changed predecessor; it was not an atomic acknowledged snapshot operation.
+The new path prepares an independent candidate, uses one checked publication,
+marks the candidate and updates the registry only after publication succeeds,
+and acknowledges the source after registry replacement. IOException remains an
+explicit failed snapshot operation. No API, configuration key/default, release
+version, database schema or proxy payload was changed.
+
+Three integration regressions cover failure with no legacy per-key writes,
+acknowledged detached replacement with existing merge/provenance/header behavior,
+and successful retry from an unchanged predecessor. The original mocked failed
+publication test now injects failure at the candidate's no-argument `saveStrict`
+call; its no-registration/no-created assertions are unchanged. The new integration
+test was red on the previous source and passed after the production integration.
+The focused run passed 29 tests with zero failures/errors/skips.
+
+Actual Java 8/Spigot 1.8.8 case `e3504e8408` passed four checks. The fixture loads
+and registers a real file-backed predecessor, replaces only its test target with
+malformed YAML, and invokes the actual snapshot path. Checked publication fails;
+malformed bytes and registered predecessor remain unchanged and the source is
+not acknowledged. After restoring a valid test target, retry publishes/registers
+a distinct candidate with expected header, generated provenance, values and
+retained unrelated configuration. SQLite integrity, Java 8 linkage and clean
+shutdown also pass. Fixture state stays under the isolated runtime directory.
+
+Exact commands with Temurin 8u504 first on PATH and Maven 3.9.9:
+
+```shell
+mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install
+mvn -B -f VotingPlugin/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean verify
+```
+
+AdvancedCore: 541 unit + 18 artifact checks = 559 passed. Exact producer:
+`09c93542775f1f1e2c76b0b14cf1b9f91311aacb84fdaea465bf3e778cf3bd53`. VotingPlugin: 45 unit + 1 artifact check = 46 passed against that
+exact installed workspace-local producer; consumer: `ffec6f2ee73a71af5d3f22140dd8e8cc206d9d4b5f8cb81fb98d18c91dd5fd61`. Zero failures,
+errors or skips. All 1,834 producer and 2,451 consumer base classes remain <=52.
+
+This integration protects registered predecessor state on failed snapshot
+publication. It does not by itself freeze every inline definition per occurrence
+across configuration changes or prove power-loss/cross-store atomicity. Public
+registry exclusion of generated snapshots, other nested injectors, lifecycle and
+clear/wipe races, full ledger/platform acceptance and independent final review
+remain in scope. No PR readiness, push, PR, release or deployment is claimed.
+
+
+On this exact consumer, all five actual Random/AdvancedRandomReward pending-child
+forms passed again. Both named-Random and frozen nested-list SIGKILL recoveries
+were rerun in offline and timed lanes: four cases, 12 checks each, all passed.
+Cases: 2649e77444, 92d5c20802, 2cd50318f8, 7cf7637de7. The Random tests change the candidate list to only the
+opposite named child; list tests replace the configured list with an unavailable
+reward. Acknowledged native effects remain once, unfinished list work completes,
+occurrence identity and physical queue cleanup survive, and SQLite/linkage/clean
+shutdown checks pass. These are acknowledged-checkpoint tests with explicitly
+saved player state, not unacknowledged-effect or arbitrary inline-mutation proof.

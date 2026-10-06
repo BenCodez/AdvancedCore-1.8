@@ -38,6 +38,57 @@ class LegacyGeneratedSnapshotCandidateTest {
             assertNull(read.getString("Nested.Old"));assertEquals(7,read.getInt("Nested.New"));assertEquals("retained",read.getString("Unrelated"));assertTrue(new String(Files.readAllBytes(target),StandardCharsets.UTF_8).contains("WRONG PLACE TO EDIT"));assertFalse(old.isForceOffline());
         });
     }
+    @Test void finalPublicationFailureDoesNotRunLegacyWritesOrMutateRegisteredPredecessor() throws Exception {
+        fixture((old,target)->{
+            AdvancedCorePlugin plugin=old.getConfig().plugin;RewardHandler handler=mock(RewardHandler.class);
+            when(plugin.getRewardHandler()).thenReturn(handler);when(handler.getRewardDirectlyDefined("snapshot")).thenReturn(old);
+            byte[] before=Files.readAllBytes(target);YamlConfiguration values=new YamlConfiguration();values.set("ForceOffline",true);values.set("Nested.New",7);
+            Reward source=new Reward("snapshot",values);
+            com.bencodez.advancedcore.api.misc.files.FilesManager writer=mock(com.bencodez.advancedcore.api.misc.files.FilesManager.class);
+            doAnswer(call->{Files.write(((java.io.File)call.getArgument(0)).toPath(),((org.bukkit.configuration.file.FileConfiguration)call.getArgument(1)).saveToString().getBytes(StandardCharsets.UTF_8));return null;}).when(writer).editFile(any(),any());
+            doThrow(new IOException("final snapshot publication failed")).when(writer).editFileStrict(any(),any());
+            try(MockedStatic<com.bencodez.advancedcore.api.misc.files.FilesManager> files=mockStatic(com.bencodez.advancedcore.api.misc.files.FilesManager.class)) {
+                files.when(com.bencodez.advancedcore.api.misc.files.FilesManager::getInstance).thenReturn(writer);
+                assertThrows(IllegalStateException.class,source::checkRewardFile);
+                assertFalse(old.isForceOffline());assertFalse(old.getConfig().isDirectlyDefinedReward());assertFalse(source.isGeneratedSnapshotCreated());
+                assertArrayEquals(before,Files.readAllBytes(target));verify(writer,never()).editFile(any(),any());verify(handler,never()).updateReward(any());
+            }
+        });
+    }
+    @Test void publicationRegistersOnlyDetachedAcknowledgedCandidateAndRetainsMergeBehavior() throws Exception {
+        fixture((old,target)->{
+            AdvancedCorePlugin plugin=old.getConfig().plugin;RewardHandler handler=mock(RewardHandler.class);
+            when(plugin.getRewardHandler()).thenReturn(handler);when(handler.getRewardDirectlyDefined("snapshot")).thenReturn(old);
+            java.util.concurrent.atomic.AtomicReference<Reward> registered=new java.util.concurrent.atomic.AtomicReference<>();
+            doAnswer(call->{Reward candidate=call.getArgument(0);assertNotSame(old,candidate);assertFalse(old.isForceOffline());
+                YamlConfiguration persisted=new YamlConfiguration();persisted.load(target.toFile());assertTrue(persisted.getBoolean("ForceOffline"));assertTrue(persisted.getBoolean("DirectlyDefinedReward"));
+                assertTrue(candidate.isGeneratedSnapshotCreated());registered.set(candidate);return null;}).when(handler).updateReward(any());
+            YamlConfiguration values=new YamlConfiguration();values.set("ForceOffline",true);values.set("Nested.New",7);Reward source=new Reward("snapshot",values);
+            com.bencodez.advancedcore.api.misc.files.FilesManager writer=mock(com.bencodez.advancedcore.api.misc.files.FilesManager.class,CALLS_REAL_METHODS);
+            doThrow(new AssertionError("Legacy per-key publication must not run")).when(writer).editFile(any(),any());
+            try(MockedStatic<com.bencodez.advancedcore.api.misc.files.FilesManager> files=mockStatic(com.bencodez.advancedcore.api.misc.files.FilesManager.class)) {
+                files.when(com.bencodez.advancedcore.api.misc.files.FilesManager::getInstance).thenReturn(writer);source.checkRewardFile();
+                assertTrue(source.isGeneratedSnapshotCreated());assertTrue(registered.get().isForceOffline());assertFalse(old.isForceOffline());assertFalse(old.getConfig().isDirectlyDefinedReward());
+                assertEquals("retained",registered.get().getConfig().getConfigData().getString("Unrelated"));assertNull(registered.get().getConfig().getConfigData().getString("Nested.Old"));assertEquals(7,registered.get().getConfig().getConfigData().getInt("Nested.New"));
+                verify(writer,times(1)).editFileStrict(any(),any());verify(writer,never()).editFile(any(),any());
+            }
+        });
+    }
+    @Test void failedPublicationCanRetryWithoutUsingAChangedPredecessor() throws Exception {
+        fixture((old,target)->{
+            AdvancedCorePlugin plugin=old.getConfig().plugin;RewardHandler handler=mock(RewardHandler.class);
+            when(plugin.getRewardHandler()).thenReturn(handler);when(handler.getRewardDirectlyDefined("snapshot")).thenReturn(old);
+            byte[] before=Files.readAllBytes(target);YamlConfiguration values=new YamlConfiguration();values.set("ForceOffline",true);Reward source=new Reward("snapshot",values);
+            com.bencodez.advancedcore.api.misc.files.FilesManager writer=mock(com.bencodez.advancedcore.api.misc.files.FilesManager.class,CALLS_REAL_METHODS);
+            doThrow(new IOException("first attempt unavailable")).doCallRealMethod().when(writer).editFileStrict(any(),any());
+            doThrow(new AssertionError("Legacy per-key publication must not run")).when(writer).editFile(any(),any());
+            try(MockedStatic<com.bencodez.advancedcore.api.misc.files.FilesManager> files=mockStatic(com.bencodez.advancedcore.api.misc.files.FilesManager.class)) {
+                files.when(com.bencodez.advancedcore.api.misc.files.FilesManager::getInstance).thenReturn(writer);
+                assertThrows(IllegalStateException.class,source::checkRewardFile);assertArrayEquals(before,Files.readAllBytes(target));assertFalse(old.isForceOffline());verify(handler,never()).updateReward(any());
+                source.checkRewardFile();assertTrue(source.isGeneratedSnapshotCreated());assertFalse(old.isForceOffline());verify(handler,times(1)).updateReward(any());verify(writer,times(2)).editFileStrict(any(),any());
+            }
+        });
+    }
     private void fixture(CheckedTest test) throws Exception {
         AdvancedCorePlugin plugin=mock(AdvancedCorePlugin.class);when(plugin.getDataFolder()).thenReturn(directory.toFile());
         try(MockedStatic<AdvancedCorePlugin> global=mockStatic(AdvancedCorePlugin.class)) {

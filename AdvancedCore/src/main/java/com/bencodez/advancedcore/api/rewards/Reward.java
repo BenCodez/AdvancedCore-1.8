@@ -1414,18 +1414,16 @@ public class Reward {
 		return this;
 	}
 
-	@SuppressWarnings("deprecation")
 	private void setRewardFile() {
-		Reward reward = plugin.getRewardHandler().getRewardDirectlyDefined(name);
-		ConfigurationSection section = getConfig().getConfigData();
-		reward.getConfig().setData(section);
-		reward.getConfig().getFileData().options()
-				.header("Directly defined reward file. WRONG PLACE TO EDIT THIS! DO NOT EDIT");
-		reward.getConfig().setDirectlyDefinedReward(true);
-        try {reward.getConfig().saveStrict(reward.getConfig().getFileData());}
-        catch(java.io.IOException failure){throw new IllegalStateException("Generated reward snapshot publication failed",failure);}
-        generatedSnapshotCreated=true;
-		plugin.getRewardHandler().updateReward(reward);
+        RewardHandler handler=plugin.getRewardHandler();
+        Reward predecessor=handler.getRewardDirectlyDefined(name);
+        try {
+            Reward candidate=predecessor.getConfig().prepareGeneratedSnapshot(getConfig().getConfigData());
+            candidate.getConfig().saveStrict();
+            candidate.generatedSnapshotCreated=true;
+            handler.updateReward(candidate);
+            generatedSnapshotCreated=true;
+        }catch(java.io.IOException failure){throw new IllegalStateException("Generated reward snapshot publication failed",failure);}
 	}
 
 	public void validate() {

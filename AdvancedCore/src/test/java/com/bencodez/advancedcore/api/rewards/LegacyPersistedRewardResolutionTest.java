@@ -109,7 +109,7 @@ class LegacyPersistedRewardResolutionTest {
         fixture(f->{
             Reward source=new Reward("direct",new org.bukkit.configuration.file.YamlConfiguration());Reward snapshot=mock(Reward.class);RewardFileData data=mock(RewardFileData.class);
             doReturn(snapshot).when(f.handler).getRewardDirectlyDefined("direct");when(f.plugin.getRewardHandler()).thenReturn(f.handler);when(snapshot.getConfig()).thenReturn(data);when(data.getFileData()).thenReturn(new org.bukkit.configuration.file.YamlConfiguration());
-            try {doThrow(new java.io.IOException("snapshot write failed")).when(data).saveStrict(any());}catch(java.io.IOException impossible){throw new AssertionError(impossible);}
+            try {when(data.prepareGeneratedSnapshot(any())).thenReturn(snapshot);doThrow(new java.io.IOException("snapshot write failed")).when(data).saveStrict();}catch(java.io.IOException impossible){throw new AssertionError(impossible);}
             assertThrows(IllegalStateException.class,source::checkRewardFile);assertFalse(source.isGeneratedSnapshotCreated());verify(f.handler,never()).updateReward(snapshot);
         });
     }
