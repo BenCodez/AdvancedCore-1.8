@@ -92,7 +92,7 @@ class LegacyOrderedRewardPipelineTest {
             f.injections.add(async("first",p->{assertEquals("original",p.get("token"));assertEquals("User",p.get("player"));return physical;}));
             HashMap<String,String> input=new HashMap<>();input.put("token","original");RewardOptions options=new RewardOptions();
             CompletionStage<Void> result=f.reward.giveRewardUserAsync(user,input,options);
-            input.put("token","changed");options.setCheckRepeat(false);f.dispatch.runNext();
+            input.put("token","changed");options.setCheckRepeat(false);f.dispatch.runUserPreparation();
             verify(repeat,never()).giveRepeat(any(),any());assertFalse(result.toCompletableFuture().isDone());
             physical.complete("done");f.dispatch.runNext();result.toCompletableFuture().join();
             verify(repeat).giveRepeat(f.dispatch.plugin,user);assertFalse(input.containsKey("player"));
@@ -102,7 +102,7 @@ class LegacyOrderedRewardPipelineTest {
         fixture(f -> {
             AdvancedCoreUser user=onlineUser();RepeatHandle repeat=repeat(f.reward);CompletableFuture<Object> physical=new CompletableFuture<>();
             f.injections.add(async("first",p->physical));CompletionStage<Void> result=f.reward.giveRewardUserAsync(user,null,new RewardOptions());
-            f.dispatch.runNext();physical.completeExceptionally(new IllegalStateException("not committed"));
+            f.dispatch.runUserPreparation();physical.completeExceptionally(new IllegalStateException("not committed"));
             assertThrows(CompletionException.class,()->result.toCompletableFuture().join());verify(repeat,never()).giveRepeat(any(),any());
         });
     }
@@ -110,7 +110,7 @@ class LegacyOrderedRewardPipelineTest {
         fixture(f -> {
             AdvancedCoreUser user=mock(AdvancedCoreUser.class);when(user.getPlayerName()).thenReturn("Offline");List<String> calls=new ArrayList<>();
             f.injections.add(async("first",p->{calls.add("first");return CompletableFuture.completedFuture(null);}));
-            CompletionStage<Void> result=f.reward.giveRewardUserAsync(user,null,new RewardOptions());f.dispatch.runNext();
+            CompletionStage<Void> result=f.reward.giveRewardUserAsync(user,null,new RewardOptions());f.dispatch.runUserPreparation();
             assertInstanceOf(IllegalStateException.class,assertThrows(CompletionException.class,()->result.toCompletableFuture().join()).getCause());assertTrue(calls.isEmpty());
         });
     }
@@ -118,7 +118,7 @@ class LegacyOrderedRewardPipelineTest {
         fixture(f -> {
             AdvancedCoreUser user=onlineUser();RepeatHandle repeat=repeat(f.reward);CompletableFuture<Object> physical=new CompletableFuture<>();
             f.injections.add(async("first",p->physical));f.reward.giveRewardUser(user,new HashMap<>(),new RewardOptions());
-            assertEquals(1,f.dispatch.queued.size());f.dispatch.runNext();verify(repeat,never()).giveRepeat(any(),any());
+            assertEquals(1,f.dispatch.queued.size());f.dispatch.runUserPreparation();verify(repeat,never()).giveRepeat(any(),any());
             physical.complete("done");f.dispatch.runNext();verify(repeat).giveRepeat(f.dispatch.plugin,user);
         });
     }
@@ -150,7 +150,24 @@ class LegacyOrderedRewardPipelineTest {
             f.reward.setForceOffline(true);repeat(f.reward);List<String> calls=new ArrayList<>();
             f.injections.add(async("first",p->{assertEquals("Offline",p.get("player"));calls.add("first");return CompletableFuture.completedFuture(null);}));
             CompletionStage<Void> result=f.reward.giveRewardUserAsync(user,null,new RewardOptions().setCheckRepeat(false));
-            f.dispatch.runNext();result.toCompletableFuture().join();assertEquals(Arrays.asList("first"),calls);
+            f.dispatch.runUserPreparation();result.toCompletableFuture().join();assertEquals(Arrays.asList("first"),calls);
+        });
+    }
+    @Test void userIdentityPreflightReadsOnceOffOwnerAndKeepsRegistrationSnapshot() {
+        fixture(f -> {
+            AdvancedCoreUser user=onlineUser();when(user.getPlayerName()).thenAnswer(ignored->{assertFalse(Bukkit.isPrimaryThread());return "User";});repeat(f.reward);
+            List<String> calls=new ArrayList<>();f.injections.add(async("first",p->{assertEquals("User",p.get("player"));calls.add("first");return CompletableFuture.completedFuture(null);}));
+            CompletionStage<Void> result=f.reward.giveRewardUserAsync(user,null,new RewardOptions().setCheckRepeat(false));
+            f.dispatch.runNext();f.injections.clear();f.dispatch.runAsyncNext();f.dispatch.runNext();
+            result.toCompletableFuture().join();assertEquals(Arrays.asList("first"),calls);verify(user,times(1)).getPlayerName();
+        });
+    }
+    @Test void identityPreflightFailureDoesNotStartInjectionsOrRepeats() {
+        fixture(f -> {
+            AdvancedCoreUser user=onlineUser();IllegalStateException failure=new IllegalStateException("identity storage unavailable");when(user.getPlayerName()).thenThrow(failure);
+            RepeatHandle repeat=repeat(f.reward);List<String> calls=new ArrayList<>();f.injections.add(async("first",p->{calls.add("first");return CompletableFuture.completedFuture(null);}));
+            CompletionStage<Void> result=f.reward.giveRewardUserAsync(user,null,new RewardOptions());f.dispatch.runNext();f.dispatch.runAsyncNext();
+            assertSame(failure,assertThrows(CompletionException.class,()->result.toCompletableFuture().join()).getCause());assertTrue(calls.isEmpty());verify(repeat,never()).giveRepeat(any(),any());
         });
     }
     private AdvancedCoreUser onlineUser() {

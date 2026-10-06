@@ -31,6 +31,16 @@ public final class ServerThreadRewardDispatch {
     }
 
     public <T> CompletionStage<T> dispatch(Supplier<CompletionStage<T>> action, long timeoutMillis) {
+        return dispatch(action, timeoutMillis, true);
+    }
+
+    /** Run event/storage preparation away from the Bukkit owner using the same admission generation. */
+    public <T> CompletionStage<T> dispatchOffPrimary(Supplier<CompletionStage<T>> action, long timeoutMillis) {
+        return dispatch(action, timeoutMillis, false);
+    }
+
+    private <T> CompletionStage<T> dispatch(Supplier<CompletionStage<T>> action, long timeoutMillis,
+            boolean primaryTarget) {
         java.util.Objects.requireNonNull(action, "action");
         if (timeoutMillis <= 0) throw new IllegalArgumentException("Dispatch timeout must be positive");
         Request<T> request = new Request<>(action, timeoutMillis);
@@ -41,7 +51,7 @@ public final class ServerThreadRewardDispatch {
         }
         if (rejected) { request.fail(new IllegalStateException("Reward dispatcher is disabled")); return request.result; }
         try {
-            if (Bukkit.isPrimaryThread()) request.run();
+            if (Bukkit.isPrimaryThread() == primaryTarget) request.run();
             else {
                 request.waitingForScheduler = true;
                 ScheduledFuture<?> deadline = plugin.getTimer().schedule(
@@ -49,7 +59,8 @@ public final class ServerThreadRewardDispatch {
                     timeoutMillis, TimeUnit.MILLISECONDS);
                 request.setDeadline(deadline);
                 // Scheduling is admission only. Request.run claims ownership before any side effect.
-                Bukkit.getScheduler().runTask(plugin, request::run);
+                if (primaryTarget) Bukkit.getScheduler().runTask(plugin, request::run);
+                else Bukkit.getScheduler().runTaskAsynchronously(plugin, request::run);
             }
         } catch (Throwable failure) { reject(request, failure); }
         return request.result;

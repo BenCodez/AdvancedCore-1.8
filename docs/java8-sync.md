@@ -625,3 +625,43 @@ pass; logs show no exception/linkage/checked-write failure markers. Evidence
 checked-cache-runtime-results-RewardUserSQL.json. Fixture-only jar removed,
 owned processes stopped. Not MySQL/FLAT/proxy/failed-shutdown/queued-replay
 acceptance. The full upstream commit remains partial.
+
+## Shared off-primary admission and identity preflight
+
+ServerThreadRewardDispatch now supports both Bukkit-owner and off-primary
+continuations with the same pending-admission set, timer, close generation,
+monotonic deadline and physical completion receipt. Off-primary setup runs
+inline when already away from the owner, or uses Bukkit's async scheduler
+when called on the main thread. Admission rejection/timeout/disable prevents
+late effects; claimed physical work is not misreported as unexecuted.
+Reward.continueOffServerThread exposes that existing owner for event/storage
+setup without introducing another executor or runtime owner.
+
+Awaited user delivery resolves the player name off-owner because temporary
+cache lookup can read storage. It snapshots registered injections on the
+Bukkit owner before that boundary, then reuses the resolved name for live
+preparation and success notification. A registry change while preflight
+waits cannot replace this delivery's captured sequence. Identity failure
+prevents injections and repeats. Legacy synchronous delivery remains inline.
+
+Three new dispatcher tests and two identity-preflight regressions pass;
+existing user/injection/admission coverage remains. ActualJava8 producer
+clean install174unit+12artifact and exactconsumer clean verify19unit+1artifact
+pass, all zero failures/errors/skips. Base major<=52; evidence
+reward-preflight-build-results.json and paired clean Maven logs.
+
+The strengthened fixture asserts the receipt remains pending after the first
+callback before allowing actual worker settlement, then checks placeholder/
+normal/post/final ownership. No assertion is relaxed to accept early
+completion. Root asynchronous event/decision/defer, checked snapshot/file
+publication and queue acknowledgement, native async action collection,
+occurrences/checkpoints/provenance/replay and global storage lifecycle remain
+incomplete. Full upstream923e741a90ad87d3ae1717301ded125f6749fc43 stays partial.
+No configuration/schema/data/wire/release version change is introduced.
+
+Exactconsumer78e83c3f... passes actualJava8/Spigot1.8.8 RewardPrepSQL
+packaged user-delivery/preflight/pending-receipt/owner checks plus real
+vote/reward,points10,total1,gracefulstop/restart. Logs have no exception,
+linkage or checked-write failure markers. Fixture-only plugin removed and
+owned processes stopped. Evidence checked-cache-runtime-results-RewardPrepSQL.json.
+This is not liveMySQL/FLAT/proxy/failed-shutdown or durable replay acceptance.

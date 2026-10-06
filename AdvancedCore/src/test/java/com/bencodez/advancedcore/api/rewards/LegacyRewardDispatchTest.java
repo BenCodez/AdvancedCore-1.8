@@ -90,6 +90,38 @@ class LegacyRewardDispatchTest {
             assertInstanceOf(TimeoutException.class,failure(result));assertEquals(0,effects.get());
         });
     }
+    @Test void offPrimaryDispatchQueuesFromMainAndWaitsForPhysicalStage() {
+        fixture(f -> {
+            f.primary.set(true);CompletableFuture<String> physical=new CompletableFuture<>();AtomicInteger calls=new AtomicInteger();
+            CompletionStage<String> result=f.owner.dispatchOffPrimary(()->{assertFalse(Bukkit.isPrimaryThread());calls.incrementAndGet();return physical;},30);
+            assertEquals(0,calls.get());assertEquals(1,f.asyncQueued.size());assertTrue(f.queued.isEmpty());
+            f.runAsyncNext();assertEquals(1,calls.get());f.deadlines.get(0).run();f.owner.close();assertFalse(result.toCompletableFuture().isDone());
+            physical.complete("committed");assertEquals("committed",result.toCompletableFuture().join());
+        });
+    }
+    @Test void offPrimaryDispatchRunsInlineWhenAlreadyAwayFromOwner() {
+        fixture(f -> {
+            CompletionStage<String> result=f.owner.dispatchOffPrimary(()->{assertFalse(Bukkit.isPrimaryThread());return CompletableFuture.completedFuture("ready");},30);
+            assertEquals("ready",result.toCompletableFuture().join());assertTrue(f.queued.isEmpty());assertTrue(f.asyncQueued.isEmpty());assertTrue(f.deadlines.isEmpty());
+        });
+    }
+    @Test void offPrimaryQueuedCallbacksRespectDeadlineCloseAndSchedulerRejection() {
+        fixture(f -> {
+            f.primary.set(true);AtomicInteger effects=new AtomicInteger();
+            CompletionStage<String> result=f.owner.dispatchOffPrimary(()->{effects.incrementAndGet();return CompletableFuture.completedFuture("bad");},30);
+            f.clock.set(TimeUnit.MILLISECONDS.toNanos(30));f.runAsyncNext();assertInstanceOf(TimeoutException.class,failure(result));assertEquals(0,effects.get());
+        });
+        fixture(f -> {
+            f.primary.set(true);AtomicInteger effects=new AtomicInteger();
+            CompletionStage<String> result=f.owner.dispatchOffPrimary(()->{effects.incrementAndGet();return CompletableFuture.completedFuture("bad");},30);
+            f.owner.close();f.runAsyncNext();assertInstanceOf(IllegalStateException.class,failure(result));assertEquals(0,effects.get());
+        });
+        fixture(f -> {
+            f.primary.set(true);RejectedExecutionException rejected=new RejectedExecutionException("async scheduler stopped");
+            doThrow(rejected).when(f.scheduler).runTaskAsynchronously(eq(f.plugin),any(Runnable.class));
+            assertSame(rejected,failure(f.owner.dispatchOffPrimary(()->CompletableFuture.completedFuture("bad"),30)));
+        });
+    }
     private Throwable failure(CompletionStage<?> result) {return assertThrows(CompletionException.class,()->result.toCompletableFuture().join()).getCause();}
     private void fixture(Consumer<Fixture> test) {
         try(MockedStatic<Bukkit> bukkit=mockStatic(Bukkit.class)) {
@@ -102,14 +134,17 @@ class LegacyRewardDispatchTest {
         final BukkitScheduler scheduler=mock(BukkitScheduler.class);
         final ScheduledExecutorService timer=mock(ScheduledExecutorService.class);
         final ScheduledFuture<?> deadline=mock(ScheduledFuture.class);
-        final List<Runnable> queued=new ArrayList<>(),deadlines=new ArrayList<>();final AtomicBoolean primary=new AtomicBoolean();
+        final List<Runnable> queued=new ArrayList<>(),asyncQueued=new ArrayList<>(),deadlines=new ArrayList<>();final AtomicBoolean primary=new AtomicBoolean();
         final java.util.concurrent.atomic.AtomicLong clock=new java.util.concurrent.atomic.AtomicLong();
         final ServerThreadRewardDispatch owner=new ServerThreadRewardDispatch(plugin,clock::get);
         Fixture() {
             when(plugin.isEnabled()).thenReturn(true);when(plugin.getTimer()).thenReturn(timer);
             when(timer.schedule(any(Runnable.class),anyLong(),eq(TimeUnit.MILLISECONDS))).thenAnswer(call->{deadlines.add(call.getArgument(0));return deadline;});
             when(scheduler.runTask(eq(plugin),any(Runnable.class))).thenAnswer(call->{queued.add(call.getArgument(1));return null;});
+            when(scheduler.runTaskAsynchronously(eq(plugin),any(Runnable.class))).thenAnswer(call->{asyncQueued.add(call.getArgument(1));return null;});
         }
         void runNext(){primary.set(true);try{queued.remove(0).run();}finally{primary.set(false);}}
+        void runAsyncNext(){primary.set(false);asyncQueued.remove(0).run();}
+        void runUserPreparation(){runNext();runAsyncNext();runNext();}
     }
 }
