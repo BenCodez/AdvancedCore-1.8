@@ -73,6 +73,7 @@ public class AdvancedCoreUser {
 		private final String snapshotKey;
 		private final AdvancedCorePlugin plugin;
 		private final ServerThreadRewardDispatch actionOwner;
+        private final com.bencodez.advancedcore.api.item.FullInventoryHandler inventoryOwner;
 		private boolean closed;
 		private CompletableFuture<Void> completion;
 
@@ -85,7 +86,11 @@ public class AdvancedCoreUser {
 			this.checkpointKey = Reward.legacyActionReplayKey(injectionKey);
 			this.snapshotKey = checkpointKey + ACTION_SNAPSHOT_SUFFIX;
 			this.plugin = plugin;
-			this.actionOwner = plugin == null ? null : plugin.getRewardDispatch();
+            if (replayState != null && plugin != null) replayState.captureRuntime(plugin);
+            this.actionOwner = plugin == null ? null : replayState == null
+                    ? plugin.getRewardDispatch() : replayState.getActionDispatchOwner();
+            this.inventoryOwner = plugin == null ? null : replayState == null
+                    ? plugin.getFullInventoryHandler() : replayState.getInventoryOwner();
 		}
 
 		private synchronized boolean add(Supplier<CompletionStage<Void>> action, String descriptor) {
@@ -384,9 +389,12 @@ public class AdvancedCoreUser {
 		for (ItemStack current : item) {
 			descriptor.append('\n').append(itemDescriptor(current));
 		}
-		if (collectAsyncAction(() -> player == null ? failedStage(
-				replayActionNotStarted("Player became unavailable before item reward delivery"))
-				: plugin.getFullInventoryHandler().giveItemAsync(player, item), descriptor.toString())) {
+        AsyncActionCollection collection = ASYNC_ACTION_COLLECTION.get();
+        com.bencodez.advancedcore.api.item.FullInventoryHandler inventory = collection != null && collection.belongsTo(this)
+                ? collection.inventoryOwner : null;
+		if (collectAsyncAction(() -> player == null || inventory == null ? failedStage(
+				replayActionNotStarted("Player or admitted inventory handler became unavailable before item reward delivery"))
+				: inventory.giveItemAsync(player, item), descriptor.toString())) {
 			return;
 		}
 		// Preserve ordinary fire-and-forget behavior without adding an ignored async

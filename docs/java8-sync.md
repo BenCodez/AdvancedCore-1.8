@@ -2245,3 +2245,45 @@ owner from the plugin getter at collection construction; deferred item suppliers
 still obtain FullInventoryHandler when run. Those sibling paths are not covered
 by the checkpoint generation fix. Full upstream ledger and fresh independent
 final review remain incomplete. No source push or PR opening is authorized.
+
+## Shared root/action runtime capture
+
+ReplayState now captures the root's ServerThreadRewardDispatch and
+FullInventoryHandler before its scheduler boundary. Each action collection uses
+that same captured pair; independent collections capture their pair at creation.
+Deferred item suppliers use the captured handler. A runtime replacement cannot
+redirect an older root or explicit action context into the new handler/dispatcher.
+Ordinary unscoped void delivery still uses the current runtime. An absent admitted
+handler fails the scoped item receipt before delivery instead of borrowing a
+newly initialized replacement. Physical retirement remains the existing handler's
+responsibility; this change adds no timers or cancellation shortcuts.
+
+Three new regressions cover root admission followed by getter replacement and an
+explicit asynchronous item continuation, independent scope deferred item delivery,
+and native experience against the root's admitted dispatcher after the plugin
+getter changes. The corrected baseline has three assertion failures and zero
+errors. An earlier Mockito wanted-invocation error while formatting ItemStack was
+replaced with numeric invocation assertions. Forty focused native/root tests pass.
+Exact Java8 clean install: 442 unit +18 artifact tests (460); exact VotingPlugin
+clean verify: 45 unit +1 artifact test (46). No failures/errors/skips. Base bytecode
+maximum52,1822/2439 classes. SHA256:
+
+- AdvancedCore: `fd9fdb6de6a1755350460e3dd2c37f2cfb38a9c283a5197151a093bfc8d835df`
+- VotingPlugin: `0194e5e3efa3df70acc77c530582ffeffd6ec57ed27ab642b7ad9545763ef1b9`
+
+Real Java8/Spigot1.8.8 root fixture `07af69d1ce` passes effects/checkpoint settlement,
+three-diamond overflow persistence/disable/restart/client recovery and SQLite
+integrity. Connected listener fixture `4158484096` passes native navigation,
+owner opt-in/default async callbacks, page-source mapping and graceful shutdown
+on the same exact artifact. Neither fixture proves production offline/timed queue
+recovery or crash exactly-once. Original/reference repositories remain unchanged.
+
+Next is the production queued recovery adapter: stable queued references and
+occurrences, shared per-user claims, checked progress publication and completion
+removal, pause/vanish/delay retention, bounded serial replay and shutdown/failure
+recovery. UserData's existing nonqueued typed write routes through checked storage
+and UserDataManager.writeDirect; its active cache flushes queued predecessors
+under batch ownership before publishing the acknowledged direct value. Reuse that
+contract rather than adding a new queue/cache owner or treating a queued write as
+completed. Full upstream classification, remaining features/runtime matrix and
+fresh independent final review are unfinished. No source push or PR authorized.

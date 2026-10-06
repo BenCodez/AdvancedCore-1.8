@@ -300,6 +300,49 @@ class LegacyOrderedRewardPipelineTest {
             assertEquals(2,occurrences.size());assertNotEquals(occurrences.get(0),occurrences.get(1));assertTrue(shared.getAsyncReplayProgress().isEmpty());assertNull(shared.getAsyncReplayState());
         });
     }
+    @Test void queuedRootAndDeferredItemActionsKeepTheirAdmittedInventoryHandler() {
+        fixture(f -> {
+            AdvancedCoreUser user=scopedUser(f);org.bukkit.entity.Player player=user.getPlayer();
+            com.bencodez.advancedcore.api.item.FullInventoryHandler original=mock(com.bencodez.advancedcore.api.item.FullInventoryHandler.class);
+            com.bencodez.advancedcore.api.item.FullInventoryHandler replacement=mock(com.bencodez.advancedcore.api.item.FullInventoryHandler.class);
+            when(f.dispatch.plugin.getFullInventoryHandler()).thenReturn(original);
+            org.bukkit.inventory.ItemStack item=new org.bukkit.inventory.ItemStack(org.bukkit.Material.DIAMOND,3);
+            when(original.giveItemAsync(player,item)).thenReturn(CompletableFuture.completedFuture(null));
+            when(replacement.giveItemAsync(player,item)).thenReturn(CompletableFuture.completedFuture(null));
+            CompletableFuture<Object> gate=new CompletableFuture<>();
+            f.injections.add(async("deferred-item",p->{AdvancedCoreUser.AsyncActionContext context=user.captureAsyncActionContext();return gate.thenApply(context.wrap(value->{user.giveItems(item);return value;}));}));
+            CompletionStage<Void> result=f.reward.giveInjectedRewardsAsync(user,new HashMap<>());
+            when(f.dispatch.plugin.getFullInventoryHandler()).thenReturn(replacement);
+            f.dispatch.runNext();gate.complete("ready");drain(f);result.toCompletableFuture().join();
+            assertEquals(1,mockingDetails(original).getInvocations().size());assertEquals(0,mockingDetails(replacement).getInvocations().size());
+        });
+    }
+    @Test void independentActionScopeKeepsHandlerAcrossItsDeferredExecution() {
+        fixture(f -> {
+            AdvancedCoreUser user=scopedUser(f);org.bukkit.entity.Player player=user.getPlayer();
+            com.bencodez.advancedcore.api.item.FullInventoryHandler original=mock(com.bencodez.advancedcore.api.item.FullInventoryHandler.class);
+            com.bencodez.advancedcore.api.item.FullInventoryHandler replacement=mock(com.bencodez.advancedcore.api.item.FullInventoryHandler.class);
+            when(f.dispatch.plugin.getFullInventoryHandler()).thenReturn(original);
+            org.bukkit.inventory.ItemStack item=new org.bukkit.inventory.ItemStack(org.bukkit.Material.DIAMOND,3);
+            when(original.giveItemAsync(player,item)).thenReturn(CompletableFuture.completedFuture(null));
+            when(replacement.giveItemAsync(player,item)).thenReturn(CompletableFuture.completedFuture(null));
+            AdvancedCoreUser.AsyncActionCollection scope=user.beginAsyncActionCollection();user.giveItem(item);
+            when(f.dispatch.plugin.getFullInventoryHandler()).thenReturn(replacement);
+            user.endAsyncActionCollection(scope).toCompletableFuture().join();assertEquals(1,mockingDetails(original).getInvocations().size());assertEquals(0,mockingDetails(replacement).getInvocations().size());
+        });
+    }
+
+    @Test void rootNativeActionUsesAdmittedDispatcherWhenPluginGetterHasChanged() {
+        fixture(f -> {
+            AdvancedCoreUser user=scopedUser(f);org.bukkit.entity.Player player=user.getPlayer();java.util.UUID identity=java.util.UUID.randomUUID();
+            doReturn(identity.toString()).when(user).getUUID();when(player.getUniqueId()).thenReturn(identity);when(player.isOnline()).thenReturn(true);when(Bukkit.getPlayer(identity)).thenReturn(player);
+            f.injections.add(new RewardInject("exp") {@Override public Object onRewardRequest(Reward reward,AdvancedCoreUser target,ConfigurationSection config,HashMap<String,String> placeholders){target.giveExp(7);return null;}});
+            CompletionStage<Void> result=f.reward.giveInjectedRewardsAsync(user,new HashMap<>());
+            ServerThreadRewardDispatch replacement=new ServerThreadRewardDispatch(f.dispatch.plugin);replacement.close();when(f.dispatch.plugin.getRewardDispatch()).thenReturn(replacement);
+            drain(f);assertDoesNotThrow(()->result.toCompletableFuture().join());verify(player).giveExp(7);
+        });
+    }
+
     private void drain(Fixture f) {
         int iterations=0;
         while(!f.dispatch.queued.isEmpty() || !f.dispatch.asyncQueued.isEmpty()) {

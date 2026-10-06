@@ -111,10 +111,25 @@ public class Reward {
 		private boolean livePlayerVanished;
 		private Consumer<ReplayCheckpoint> checkpointConsumer;
         private ServerThreadRewardDispatch checkpointOwner;
-        private synchronized void bindOwner(ServerThreadRewardDispatch owner) {
+        private com.bencodez.advancedcore.api.item.FullInventoryHandler inventoryOwner;
+        private boolean runtimeCaptured;
+
+        /** Internal action scopes share the root's admitted runtime, including deferred continuations. */
+        public synchronized void captureRuntime(AdvancedCorePlugin plugin) {
+            if (!runtimeCaptured) bindOwner(plugin.getRewardDispatch(), plugin.getFullInventoryHandler());
+        }
+
+        public synchronized ServerThreadRewardDispatch getActionDispatchOwner() { return checkpointOwner; }
+        public synchronized com.bencodez.advancedcore.api.item.FullInventoryHandler getInventoryOwner() { return inventoryOwner; }
+        private synchronized void bindOwner(ServerThreadRewardDispatch owner,
+                com.bencodez.advancedcore.api.item.FullInventoryHandler inventory) {
             if (checkpointOwner != null && checkpointOwner != owner)
                 throw new IllegalStateException("Reward replay belongs to a retired dispatcher generation");
-            checkpointOwner = owner;
+            if (!runtimeCaptured) {
+                checkpointOwner = owner;
+                inventoryOwner = inventory;
+                runtimeCaptured = true;
+            }
         }
 		private ReplayState(Map<String, Integer> initial) { this(initial, null, false); }
 		private ReplayState(Map<String, Integer> initial, Map<String, String> initialFingerprints,
@@ -200,7 +215,7 @@ public class Reward {
             synchronized(this) {
                 consumer=checkpointConsumer;
                 if(consumer==null)return CompletableFuture.completedFuture(null);
-                if(checkpointOwner==null)checkpointOwner=plugin.getRewardDispatch();
+                if(!runtimeCaptured)captureRuntime(plugin);
                 owner=checkpointOwner;
             }
             if(consumer==null)return CompletableFuture.completedFuture(null);
@@ -447,7 +462,7 @@ public class Reward {
     /** Ordered effect and checkpoint completion on one admitted dispatcher generation. */
     public CompletionStage<Void> giveInjectedRewardsAsync(AdvancedCoreUser user, HashMap<String,String> placeholders) {
         ServerThreadRewardDispatch owner=plugin.getRewardDispatch();
-        ReplayState state=new ReplayState(null);state.bindOwner(owner);
+        ReplayState state=new ReplayState(null);state.bindOwner(owner,plugin.getFullInventoryHandler());
         return owner.dispatch(()->giveInjectedRewardsAsyncOwned(user,placeholders,owner,
             new ArrayList<>(plugin.getRewardHandler().getInjectedRewards()),state,0,getRewardName(),UUID.randomUUID().toString()),getServerThreadDispatchTimeoutMillis());
     }
@@ -816,7 +831,7 @@ public class Reward {
             if(occurrence==null && options.getAsyncReplayCheckpointConsumer()==null)occurrence=UUID.randomUUID().toString();
         }
         final String occurrenceId=occurrence;
-        try {replayState.bindOwner(owner);}catch(Throwable failure){return failedStage(failure);}
+        try {replayState.bindOwner(owner,plugin.getFullInventoryHandler());}catch(Throwable failure){return failedStage(failure);}
 		return owner.dispatch(() -> {
 			// Freeze registration on its owner before identity preflight crosses a storage boundary.
 			ArrayList<RewardInject> injections = new ArrayList<>(plugin.getRewardHandler().getInjectedRewards());
