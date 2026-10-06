@@ -648,7 +648,10 @@ public class RewardHandler {
             RewardOptions options) {
         if(reward==null)return failedQueueReward(new IllegalStateException("Reward was not resolved"));
         if(!plugin.isEnabled())return failedQueueReward(new IllegalStateException("Plugin disabled before asynchronous reward dispatch"));
-        return reward.giveRewardAsync(user,options);
+        RewardOptions captured=options==null?new RewardOptions():options.copyForDispatch();
+        Reward.ReplayState state=Reward.replayStateFor(captured);state.captureRuntime(plugin);captured.setAsyncReplayState(state);
+        return state.getActionDispatchOwner().dispatchOffPrimary(()->reward.giveRewardAsync(user,captured),
+                java.util.concurrent.TimeUnit.SECONDS.toMillis(30));
     }
 
     /** Persisted queue provenance permits a bounded generated snapshot fallback, never a command. */
@@ -1508,7 +1511,7 @@ public class RewardHandler {
 			@Override
 			public String onRewardRequest(Reward reward, AdvancedCoreUser user, int num,
 					HashMap<String, String> placeholders) {
-				user.giveExp(num);
+				if(num!=0)user.giveExp(num);
 				return null;
 			}
 		}.asPlaceholder("EXP").priority(100).addEditButton(
@@ -1542,7 +1545,7 @@ public class RewardHandler {
 			@Override
 			public String onRewardRequest(Reward reward, AdvancedCoreUser user, int num,
 					HashMap<String, String> placeholders) {
-				user.giveExpLevels(num);
+				if(num!=0)user.giveExpLevels(num);
 				return null;
 			}
 		}.asPlaceholder("EXP").priority(100).addEditButton(

@@ -181,3 +181,51 @@ completed-prefix queue round-trip, explicit-force and linkage/shutdown checks
 against this exact consumer. Evidence: `claimed-trimming-runtime.log`.
 The new capacity-pressure behavior is exercised deterministically, not presented
 as a live-server capacity or crash test.
+
+## Registered child setup admission
+
+`fdfc48a9f4d4e2f8942bbc182f0cb5386417d014`:
+`PORT_WITH_JAVA8_ADAPTATION`.
+The complete production, build and test patch was reviewed. The retained facade
+now hands a registered child's setup to its captured off-primary dispatcher,
+including custom reward implementations. A queued callback claims the admission
+receipt before invoking child code; expiry, closure or rejection fences late
+setup. Once admitted, the receipt awaits the child's physical completion rather
+than timing out that accepted effect. Null stages and thrown setup errors remain
+exceptional receipts. Dispatch options are copied and explicit inherited replay
+state is retained. The fork uses its existing Java 8 deadline dispatcher instead
+of Java 9 `orTimeout`; it does not add a second executor or arbitrary delay.
+
+The shade minimizer was already disabled in the fork. Scalar EXP and EXPLevels
+now skip zero-value player callbacks, matching the upstream safeguard without
+changing nonzero payloads, configuration keys, placeholders or public signatures.
+Three added tests exercise the actual facade's expired queued setup, an accepted
+child with pending physical completion beyond the admission deadline, and both
+zero scalar built-ins. They fail before the adaptation. Focused nested/pipeline/
+dispatch tests: 102 PASS.
+
+`9a29a43b17d2d9ffd26edbfaea7fad5aad256bd4`:
+`PARTIAL_PORT_WITH_JAVA8_ADAPTATION`.
+The complete patch was reviewed. Root setup already uses the same bounded native
+owner dispatcher; existing tests prove deadline callbacks and clock expiry fence
+late work. The timed duplicate-occurrence reconciliation from this patch is not
+implemented: the fork currently rejects duplicate timed occurrences before any
+reward dispatch. This is a remaining compatibility/recovery obligation, not an
+accepted omission or a claim that strict rejection implements reconciliation.
+
+Java 8 `clean install`: 731 unit + 78 artifact = 809 PASS; exact consumer
+`clean verify`: 45 unit + one artifact = 46 PASS, zero failures/errors/skips.
+Producer SHA-256: `b586e2e569f372b070856eb177243888fc2cc8254e71f117e2a4d57591a4a760`.
+Consumer SHA-256: `a9f387c3c5a5e9e3cb43aa099d8ca529b0845f8f816bab77abe322f13098d94e`.
+Base classes remain major 52 (1867 producer, 2484 consumer). Evidence:
+`async-child-handoff-red.log`, `async-child-handoff-focused.log`,
+`async-child-handoff-clean-install.log`,
+`async-child-handoff-consumer-clean-verify.log`,
+`async-child-handoff-build-results.json`.
+
+The exact consumer also passes all five existing actual Java 8/Spigot 1.8.8
+offline recovery, completed-prefix round-trip, explicit-force and clean linkage/
+shutdown checks (`async-child-handoff-runtime.log`). These are live integration
+regressions; deadline expiry and zero callbacks are covered by deterministic
+tests, not mislabeled as live process-crash tests. All 167 original checkouts
+and both immutable references remain unchanged.

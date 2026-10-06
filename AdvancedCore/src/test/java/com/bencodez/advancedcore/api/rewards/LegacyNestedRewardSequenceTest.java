@@ -15,6 +15,39 @@ import com.bencodez.advancedcore.AdvancedCorePlugin;
 import com.bencodez.advancedcore.api.user.AdvancedCoreUser;
 
 class LegacyNestedRewardSequenceTest {
+    @Test void registeredChildSetupIsFencedAfterOwnerHandoffExpiry() {
+        fixture(f->{
+            Reward child=f.reward("child");when(child.giveRewardAsync(any(),any())).thenReturn(CompletableFuture.completedFuture(null));
+            f.dispatch.primary.set(true);
+            CompletionStage<Void> result=f.handler.giveRewardAsync(f.user,child,new RewardOptions());
+            verify(child,never()).giveRewardAsync(any(),any());
+            assertFalse(result.toCompletableFuture().isDone());
+            f.dispatch.clock.set(TimeUnit.SECONDS.toNanos(31));f.dispatch.runAsyncNext();
+            assertInstanceOf(TimeoutException.class,assertThrows(CompletionException.class,()->result.toCompletableFuture().join()).getCause());
+            verify(child,never()).giveRewardAsync(any(),any());
+        });
+    }
+    @Test void registeredChildReceiptWaitsForPhysicalCompletionAfterAdmission() {
+        fixture(f->{
+            Reward child=f.reward("child");CompletableFuture<Void> physical=new CompletableFuture<>();
+            when(child.giveRewardAsync(any(),any())).thenAnswer(call->{assertFalse(Bukkit.isPrimaryThread());return physical;});
+            f.dispatch.primary.set(true);CompletionStage<Void> result=f.handler.giveRewardAsync(f.user,child,new RewardOptions());
+            assertFalse(result.toCompletableFuture().isDone());f.dispatch.runAsyncNext();
+            f.dispatch.clock.set(TimeUnit.SECONDS.toNanos(31));f.dispatch.deadlines.forEach(Runnable::run);
+            assertFalse(result.toCompletableFuture().isDone());physical.complete(null);result.toCompletableFuture().join();
+            verify(child,times(1)).giveRewardAsync(any(),any());
+        });
+    }
+    @Test void zeroScalarExperienceDoesNotCreateNativePlayerActions() {
+        fixture(f->{
+            for(String path:Arrays.asList("EXP","EXPLevels")) {
+                com.bencodez.advancedcore.api.rewards.injected.RewardInjectInt inject=(com.bencodez.advancedcore.api.rewards.injected.RewardInjectInt)f.builtin(path);
+                inject.onRewardRequest(null,f.user,0,new HashMap<>());
+            }
+            verify(f.user,never()).giveExp(anyInt());verify(f.user,never()).giveExpLevels(anyInt());
+        });
+    }
+
     @Test void listSharesFrozenMetadataThroughStateWithoutExposingItToFreshChildPlaceholders() {
         for(boolean durable:Arrays.asList(false,true))fixture(f->{
             Reward first=f.reward("first"),second=f.reward("second");
