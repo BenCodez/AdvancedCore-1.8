@@ -1249,7 +1249,7 @@ public class AdvancedCoreUser {
                     String[] parts=key.split("%placeholders%",2);QueuedReplay metadata=parseQueuedReplay(stripTimedExecutionMarker(parts[0]));
                     RewardOptions options=new RewardOptions().setCheckTimed(false).withPlaceHolder(ArrayUtils.fromString(parts.length>1?parts[1]:""));
                     options.addPlaceholder("date",new SimpleDateFormat("EEE, d MMM yyyy HH:mm").format(new Date(entry.time)));
-                    options.setCompletedAsyncInjections(metadata.completedAsyncInjections);options.setAsyncReplayProgress(metadata.asyncReplayProgress);options.setAsyncReplayRegistryFingerprints(metadata.asyncReplayRegistryFingerprints);options.setLegacyAsyncReplayCheckpoint(metadata.legacyAsyncReplayCheckpoint);options.setAsyncReplayOccurrenceId(id);
+                    options.setCompletedAsyncInjections(metadata.completedAsyncInjections);options.setAsyncReplayProgress(metadata.asyncReplayProgress);options.setAsyncReplayRegistryFingerprints(metadata.asyncReplayRegistryFingerprints);options.setLegacyAsyncReplayCheckpoint(metadata.legacyAsyncReplayCheckpoint);options.setAsyncReplayOccurrenceId(id);options.setTimedQueueReplay(true);
                     options.setAsyncReplayCheckpointConsumer(checkpoint->{String before=current.get();TimedQueueEntry pendingEntry=decodeTimedEntry(before);String updated=encodeTimedEntry(withAsyncReplayProgress(stripTimedExecutionMarker(pendingEntry.key),checkpoint),pendingEntry.time);
                         mutateTimedQueue(pending->{int index=pending.indexOf(before);if(index<0)throw new IllegalStateException("Timed occurrence disappeared before checkpoint");pending.set(index,updated);return pending;});current.set(updated);
                     });

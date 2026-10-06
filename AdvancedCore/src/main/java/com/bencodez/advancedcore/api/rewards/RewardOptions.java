@@ -61,6 +61,11 @@ public class RewardOptions {
 	@Getter
 	private long orginalTrigger = -1;
 
+	/** Deferral must retain this occurrence in its original timed queue. */
+	@Getter
+	@Setter
+	private boolean timedQueueReplay;
+
 	public RewardOptions() {
 	}
 
@@ -89,6 +94,7 @@ public class RewardOptions {
         copy.asyncReplayKey=asyncReplayKey;
         copy.asyncReplayOccurrenceId=asyncReplayOccurrenceId;
         copy.asyncReplayCheckpointConsumer=asyncReplayCheckpointConsumer;
+        copy.timedQueueReplay=timedQueueReplay;
 		copy.livePlayerStateSet=livePlayerStateSet;
 		copy.livePlayerVanished=livePlayerVanished;
 		return copy;

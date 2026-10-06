@@ -105,6 +105,25 @@ class LegacyNestedRewardSequenceTest {
             }
         });
     }
+    @Test void inheritedDurableStateFailsOnMissingSelectedChildWithoutCreatingRewardFile() {
+        fixture(f->{
+            RewardOptions parent=f.options(),child=new RewardOptions();child.setAsyncReplayState(Reward.replayStateFor(parent));
+            assertNull(child.getAsyncReplayCheckpointConsumer());assertTrue(Reward.isDurableReplay(child));
+            CompletionStage<Void> result=f.handler.giveRewardAsync(f.user,"missing-child",child);f.drain();
+            assertThrows(CompletionException.class,()->await(result));
+            verify(f.handler,never()).getReward("missing-child");assertTrue(f.rewards.isEmpty());
+        });
+    }
+    @Test void absentFreshConfigurationIsNoOpButInheritedDurableConfigurationFails() {
+        fixture(f->{
+            YamlConfiguration config=new YamlConfiguration();
+            CompletionStage<Void> fresh=f.handler.giveRewardAsync(f.user,config,"Missing",new RewardOptions());f.drain();await(fresh);
+            RewardOptions child=new RewardOptions();child.setAsyncReplayState(Reward.replayStateFor(f.options()));
+            CompletionStage<Void> retained=f.handler.giveRewardAsync(f.user,config,"Missing",child);f.drain();
+            assertThrows(CompletionException.class,()->await(retained));assertTrue(f.rewards.isEmpty());
+        });
+    }
+
     @Test void optionalBlankAndEmptyFallbacksRemainNoOps() {
         for(Object value:Arrays.asList("",Collections.emptyList()))fixture(f->{
             YamlConfiguration config=new YamlConfiguration();config.set("Random.Chance",-1);config.set("Random.FallBack",value);

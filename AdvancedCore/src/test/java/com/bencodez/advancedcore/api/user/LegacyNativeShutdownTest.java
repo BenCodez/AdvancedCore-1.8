@@ -46,6 +46,22 @@ class LegacyNativeShutdownTest {
         try {assertThrows(IllegalStateException.class,f.plugin::onDisable);assertTrue(Thread.currentThread().isInterrupted());verify(f.mysql,never()).close();}
         finally {Thread.interrupted();}
     }
+    @Test void liveSharedCheckpointExecutorPreventsProviderRetirementWithoutForcedCancellation() throws Exception {
+        LegacyDirectUserDataTest.Fixture f=fixture();ScheduledExecutorService shared=f.plugin.getTimer();
+        when(shared.awaitTermination(anyLong(),any())).thenReturn(false);
+        IllegalStateException failure=assertThrows(IllegalStateException.class,f.plugin::onDisable);
+        assertTrue(failure.getMessage().contains("shared storage"));
+        verify(shared).shutdown();verify(shared,never()).shutdownNow();
+        verify(f.mysql,never()).close();verify(f.plugin,never()).onUnLoad();
+    }
+    @Test void liveProducerKeepsSharedStorageAvailableUntilItsAcceptedWorkSettles() throws Exception {
+        LegacyDirectUserDataTest.Fixture f=fixture();ScheduledExecutorService login=mock(ScheduledExecutorService.class);
+        set(f.plugin,"loginTimer",login);when(login.awaitTermination(anyLong(),any())).thenReturn(false);
+        IllegalStateException failure=assertThrows(IllegalStateException.class,f.plugin::onDisable);
+        assertTrue(failure.getMessage().contains("login"));verify(login).shutdown();verify(login,never()).shutdownNow();
+        verify(f.plugin.getTimer(),never()).shutdown();verify(f.mysql,never()).close();
+    }
+
     @Test void unloadCanAddSynchronousPendingDataForTheFinalFlushWithoutSchedulingStoppedTimer() throws Exception {
         LegacyDirectUserDataTest.Fixture f=fixture(); ScheduledExecutorService cache=f.manager.getTimer();clearInvocations(cache);
         doAnswer(call->{f.cache.addChange(new UserDataChangeInt("Points",9),true);return null;}).when(f.plugin).onUnLoad();

@@ -1221,6 +1221,7 @@ public class Reward {
             RewardOptions options,ServerThreadRewardDispatch owner) {
         // Durable replay keeps its admitted occurrence in the original queue. The queue
         // adapter recognizes this signal and releases the claim without deleting it.
+        if(options.isTimedQueueReplay())return failedStage(new IllegalStateException("Timed reward replay remains deferred in its original queue"));
         if(isDurableReplay(options))return failedStage(new OfflineReplayDeferredException());
         return owner.dispatchOffPrimary(()->{
             checkRewardFile();user.addOfflineRewards(this,options.getPlaceholders(),options);

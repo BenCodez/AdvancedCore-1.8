@@ -516,6 +516,26 @@ class LegacyOrderedRewardPipelineTest {
         });
     }
 
+    @Test void explicitTimedReplayDefersWithoutMovingToOfflineQueueOrAcknowledgingSuccess() {
+        for(boolean inheritedCheckpoint:new boolean[]{false,true})fixture(f -> {
+            fullSetup(f);when(f.dispatch.plugin.getOptions().isPauseRewards()).thenReturn(true);
+            AdvancedCoreUser user=onlineUser();when(user.isOnline()).thenReturn(true);
+            RewardOptions timed=new RewardOptions();timed.setTimedQueueReplay(true);
+            if(inheritedCheckpoint) {
+                RewardOptions parent=new RewardOptions();parent.setAsyncReplayCheckpointConsumer(checkpoint->fail("deferred timed checkpoint"));
+                timed.setAsyncReplayState(Reward.replayStateFor(parent));
+            }
+            assertTrue(timed.copyForDispatch().isTimedQueueReplay());
+            assertTrue(timed.copyForNestedDispatch("child").isTimedQueueReplay());
+            assertTrue(Reward.snapshotReplayOptionsForQueue(timed).isTimedQueueReplay());
+            CompletionStage<Void> result=f.reward.giveRewardAsync(user,timed);drain(f);
+            Throwable failure=assertThrows(CompletionException.class,()->result.toCompletableFuture().join());
+            assertFalse(Reward.isOfflineReplayDeferred(failure),"Timed deferral must use its timed retry path");
+            assertTrue(failure.getCause().getMessage().contains("original queue"));
+            verify(user,never()).addOfflineRewards(any(),any());verify(user,never()).addOfflineRewards(any(),any(),any());
+        });
+    }
+
     @Test void pausedDurableReplayRemainsDeferredWithoutAnotherQueueInsertion() {
         fixture(f -> {
             fullSetup(f);when(f.dispatch.plugin.getOptions().isPauseRewards()).thenReturn(true);AdvancedCoreUser user=onlineUser();when(user.isOnline()).thenReturn(true);

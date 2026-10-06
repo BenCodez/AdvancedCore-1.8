@@ -4219,3 +4219,16 @@ Workspace evidence: `deferred-options-focused-entrypoints-final.log`,
 All 167 recorded original checkouts and both pinned references remain unchanged
 (`deferred-options-isolation-after.json`). Full shared-runtime/root-recovery
 coverage, upstream classifications and final independent review remain pending.
+
+### Timed deferral and inherited durable child audit
+
+The focused disposition record is
+[upstream-replay-dispositions.md](upstream-replay-dispositions.md).
+It records the complete audit of durable missing-child commit
+`9d35eaf326442b1368c63f20f1b38779a0b6c8ef` and the partial timed/lifecycle port of
+`091a339479f48648aa185e134e88b843ad5827d0`. Timed provenance is now preserved
+through public options and nested dispatch, without a queue format change.
+Final actual Java 8 producer: 799 tests PASS; exact consumer: 46 tests PASS.
+Actual Spigot 1.8.8 timed checkpoint/timer retry/restart fixture: 12 checks PASS.
+The modern shared runtime cleanup/extraction obligations remain pending; this
+checkpoint does not establish full backport or PR readiness.
