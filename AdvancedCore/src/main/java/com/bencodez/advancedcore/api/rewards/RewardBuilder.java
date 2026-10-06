@@ -88,6 +88,14 @@ public class RewardBuilder {
 		}
 	}
 
+    /** Await the builder's selected definition without changing legacy send admission. */
+    public java.util.concurrent.CompletionStage<Void> sendAsync(AdvancedCoreUser user) {
+        RewardHandler handler=user.getPlugin().getRewardHandler();
+        if(reward!=null)return handler.giveRewardAsync(user,reward,rewardOptions);
+        return data==null?java.util.concurrent.CompletableFuture.completedFuture(null)
+                :handler.giveRewardAsync(user,data,path,rewardOptions);
+    }
+
 	public void send(AdvancedCoreUser... users) {
 		for (AdvancedCoreUser user : users) {
 			send(user);

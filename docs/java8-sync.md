@@ -2809,3 +2809,81 @@ RewardBuilder integration and their restart/failure cases still need audit and
 backport work. Existing v3 queue decoding remains; the inactive legacy source
 tree is retained. No push, PR, release, deployment, or independent final approval
 is claimed by this cohort.
+
+## Awaited Rewards lists and RewardBuilder configuration dispatch
+
+A real Java 8/Spigot 1.8.8 regression on the previous exact consumer proved
+that `Rewards: [child]` could remove its offline parent while the child was still
+pending. The legacy builder/void dispatch detached the child. The same unchanged
+parent-retention acceptance is now PASS (`aa693b5e37`) on the new consumer.
+
+`RewardBuilder.sendAsync(user)` and the configuration-path async overload now
+propagate completion for list, scalar, and inline section forms. Existing `send`
+and void overloads retain their admission behavior. The async `Rewards` injector
+uses that lane and explicitly captures its parent replay state, path and occurrence.
+List admission persists an ordered snapshot before effects; each child has an
+index-specific path and completion cursor. Repeated names remain distinct valid
+rewards. A retry skips completed children before lookup, recovers the frozen list
+even if configuration was removed/changed, and shares only reserved replay metadata
+between otherwise copied child placeholders. Missing durable configuration and
+invalid cursor bounds fail rather than acknowledging undispatched work. Inline
+prefix/suffix and direct/sub-definition lookup follow the existing 1.8 rules;
+materializing a required generated snapshot runs off the captured Bukkit owner.
+
+This adapts the list/child behavior in pinned-main reward code, including parts
+of `b2a7e976138b00218156e24f09f04294e15aa1f6`,
+`3465fd4c611e872d9afb1d7834342b46f36ac2b3`, and
+`6da6565c87b0bdb11122d69a87668033db1e88f5`. Java 8 uses explicit empty-list and
+exceptional-future construction. There is no modern prepared-catalog transplant,
+new production dependency, schema change, release/version change, or proxy wire
+change. Reserved list markers use the existing bounded queue/checkpoint envelope;
+existing queue decoders and the inactive compatibility source tree remain.
+These mixed upstream commits are still partial dispositions, not wholly complete.
+
+Five new production-entry tests cover sequential duplicate names/awaiting both,
+failed-last-child retry with the completed first child missing and original
+configuration removed, cursor bounds before dispatch, inline builder naming and
+off-owner snapshot preparation, and valid empty versus missing durable config.
+Their final waits are bounded at two seconds; unchanged assertions pass.
+
+Actual Java 8 builds used these commands from the corresponding isolated forks:
+
+```sh
+mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install
+mvn -B -f VotingPlugin/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean verify
+```
+
+Temurin 8u504 `JAVA_HOME` and its `bin` were first on PATH; Maven is 3.9.9.
+AdvancedCore: 533 unit + 18 artifact checks = 551 passed. VotingPlugin:
+45 unit + 1 artifact check = 46 passed. Zero failures, errors or skips. The focused
+run passed 60 tests; after bounding the five new tests they passed again without
+production changes. Exact producer SHA-256:
+`c45ffec245a3453e0182a7546e5afc148289c45138bbe9b788af72fca8e8424c`;
+consumer SHA-256:
+`18b69d21a50191910fe6737ff52260d7e02f0597af0efadffd1ed0fabb5f8a1b`.
+All 1,834 producer and 2,451 consumer base classes remain major <=52.
+
+Real SIGKILL cases offline `ac0a2b3e4f` and timed `204413c29f` passed 12 checks
+each on that consumer. The first child performs/saves 3 diamonds and 7 experience,
+then holds after its checked physical child checkpoint, before the list cursor can
+acknowledge completion. The owned Java process exits -9 without plugin disable.
+The fixture replaces the configured list with an unavailable reward before
+restart. Automatic login/timed replay still recovers the original two-child list,
+skips the first completed child's effect and finishes the second once. Final
+native totals are 6 diamonds and 14 experience, durable fixture count is exactly
+2, occurrence identity survives, parent queue removal and SQLite integrity pass,
+and shutdown/linkage checks are clean. The first offline fixture attempt retained
+its earlier single-child three-diamond assertion; client evidence already showed
+six. The fixture was corrected to require the proper aggregate six/14 for two
+children and rerun; production code and per-child once assertions were unchanged.
+
+Remaining scope includes random inline/fallback selection, other nested injectors,
+prepared definition freezing for inline configuration changes, clear/wipe races,
+lifecycle cases, the full upstream ledger and broader platform acceptance. This
+cohort does not prove unacknowledged effects, power loss, cross-store atomicity,
+or arbitrary command/plugin effects. No independent final approval, PR readiness,
+push, PR, release or deployment is claimed.

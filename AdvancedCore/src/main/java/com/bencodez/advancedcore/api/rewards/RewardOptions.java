@@ -231,4 +231,16 @@ public class RewardOptions {
 		return this;
 	}
 
+	RewardOptions copyForNestedDispatch(String replayKey) {
+		RewardOptions copy = copyForDispatch();
+		copy.setCompletedAsyncInjections(0);
+		copy.setAsyncReplayProgress(new HashMap<>());
+		// The checkpoint consumer belongs to the queued parent occurrence. Nested
+		// children share its ReplayState but must never replace or complete that
+		// queue entry independently.
+		copy.setAsyncReplayCheckpointConsumer(null);
+		copy.setAsyncReplayKey(replayKey);
+		return copy;
+	}
+
 }
