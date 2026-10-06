@@ -188,6 +188,22 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		}
 	}
 
+	/** Checked primary-key deletion; the shared connection remains owner-managed. */
+	public void deleteStrict(Column primary) throws SQLException {
+		if (!primary.getName().equalsIgnoreCase(primaryKey.getName())) throw new IllegalArgumentException("The configured primary identity must be used");
+		java.util.Objects.requireNonNull(primary.getValue(), "value");
+		synchronized (object) {
+			if (sqLite == null) throw new SQLException("SQLite user storage is unavailable");
+			Connection connection = sqLite.getSQLConnection();
+			if (connection == null) throw new SQLException("SQLite connection is unavailable");
+			if (!connection.getAutoCommit()) throw new SQLException("Checked user removal requires auto-commit");
+			try (PreparedStatement statement = connection.prepareStatement("DELETE FROM " + getName() + " WHERE `" + primaryKey.getName() + "`=?")) {
+				bindStrictValue(statement, 1, primary);
+				statement.executeUpdate();
+			}
+		}
+	}
+
 	public void executeQuery(String str) {
 		try {
 			try (PreparedStatement s = sqLite.getSQLConnection()

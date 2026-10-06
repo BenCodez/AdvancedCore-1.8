@@ -110,6 +110,24 @@ class LegacySQLiteCheckedWriteTest {
             assertThrows(IllegalArgumentException.class,()->table.getExactStrict(new Column("Message",new DataValueString("one"))));
         }
     }
+    @Test void checkedDeleteRemovesOnlySelectedIdentityAndLeavesSharedConnectionOpen() throws Exception {
+        try (Connection connection = database()) {
+            UserTable table = fixture(connection); table.updateStrict(primary("O'Brien"), Collections.singletonList(new Column("Message", new DataValueString("delete"))));
+            table.updateStrict(primary("keep"), Collections.singletonList(new Column("Message", new DataValueString("preserved"))));
+            table.deleteStrict(primary("O'Brien")); table.deleteStrict(primary("missing"));
+            assertTrue(table.getExactStrict(primary("O'Brien")).isEmpty()); assertEquals("preserved", value(table.getExactStrict(primary("keep")), "Message").getString());
+            assertFalse(connection.isClosed());
+        }
+    }
+    @Test void checkedDeleteRejectsUnknownFilterAndOuterTransactionWithoutDeleting() throws Exception {
+        try (Connection connection = database()) {
+            UserTable table = fixture(connection); table.updateStrict(primary("one"), Collections.singletonList(new Column("Message", new DataValueString("old"))));
+            assertThrows(IllegalArgumentException.class, () -> table.deleteStrict(new Column("Message", new DataValueString("old"))));
+            connection.setAutoCommit(false); assertThrows(SQLException.class, () -> table.deleteStrict(primary("one")));
+            connection.rollback(); connection.setAutoCommit(true); assertFalse(table.getExactStrict(primary("one")).isEmpty());
+        }
+        assertThrows(SQLException.class, () -> fixture(null).deleteStrict(primary("one")));
+    }
     private DataValue value(List<Column> values,String key) {
         return values.stream().filter(c->c.getName().equals(key)).findFirst().get().getValue();
     }

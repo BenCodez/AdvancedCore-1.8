@@ -167,6 +167,35 @@ public class UserDataManager {
 		if (current != null) current.writeDirectBatch(values, storageWrite);
 	}
 
+	/** Flush and delete one identity before retiring its active cache generation. */
+	public void removeFromStorage(com.bencodez.advancedcore.api.user.AdvancedCoreUser user, Runnable storageDelete) {
+		java.util.Objects.requireNonNull(storageDelete, "storageDelete");
+		UUID identity = UUID.fromString(user.getUUID());
+		UserStorageOwnership.Slot owner = getPlugin().getUserStorageOwnership().owner(identity);
+		Runnable[] notification = new Runnable[1];
+		Throwable failure = null;
+		boolean committed = false;
+		owner.getLock().lock();
+		try {
+			if (owner.isWriting()) throw new IllegalStateException("Recursive user removal");
+			UserDataCache current = getUserDataCache().get(identity);
+			if (current != null && !current.isRetired()) {
+				current.deleteForManager(storageDelete, notification);
+				getUserDataCache().remove(identity, current);
+			} else storageDelete.run();
+			committed = true;
+		} catch (RuntimeException | Error rejected) { failure = rejected; throw rejected; }
+		finally {
+			owner.getLock().unlock();
+			if (notification[0] != null) try { notification[0].run(); }
+			catch (RuntimeException | Error rejected) {
+				if (failure != null) { if (failure != rejected) failure.addSuppressed(rejected); }
+				else if (committed) throw new CommittedUserDataRemovalException(rejected);
+				else throw rejected;
+			}
+		}
+	}
+
 	public void clearCacheBasic() {
 		if (plugin.getStorageType().equals(UserStorage.MYSQL)) {
 			plugin.getMysql().clearCacheBasic();

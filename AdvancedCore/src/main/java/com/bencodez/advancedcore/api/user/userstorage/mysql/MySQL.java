@@ -235,7 +235,20 @@ public class MySQL {
 
 	/** Delete a user without acknowledging a failed storage operation. */
 	public void deletePlayerStrict(String uuid) {
-		deletePlayer(uuid, true);
+		java.util.UUID.fromString(uuid);
+		synchronized (object2) {
+			try (Connection connection = mysql.getConnectionManager().getConnection()) {
+				if (connection == null) throw new SQLException("MySQL connection is unavailable");
+				if (!connection.getAutoCommit()) throw new SQLException("Checked user removal requires auto-commit");
+				try (PreparedStatement statement = connection.prepareStatement("DELETE FROM " + getName() + " WHERE uuid=?;")) {
+					statement.setString(1, uuid);
+					statement.executeUpdate();
+				}
+			} catch (SQLException failure) { throw new IllegalStateException("Failed to delete SQL user", failure); }
+			uuids.remove(uuid);
+			// Invalidate name observations without resolving users/calling extensions under storage ownership.
+			names.clear();
+		}
 	}
 
 	private void deletePlayer(String uuid, boolean strict) {

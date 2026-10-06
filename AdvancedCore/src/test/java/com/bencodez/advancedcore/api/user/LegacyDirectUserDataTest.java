@@ -124,6 +124,7 @@ class LegacyDirectUserDataTest {
             when(manager.getUserDataCache()).thenReturn(registry);when(users.getDataManager()).thenReturn(manager);
             doCallRealMethod().when(manager).writeDirect(any(),anyString(),any(),any());
             doCallRealMethod().when(manager).writeBatch(any(),anyMap(),any(),anyBoolean());
+            doCallRealMethod().when(manager).removeFromStorage(any(),any());
             String identity=cache.getUuid().toString();when(user.getPlugin()).thenReturn(plugin);when(user.getUUID()).thenReturn(identity);
             when(user.getUserData()).thenReturn(data);when(plugin.getStorageType()).thenReturn(UserStorage.MYSQL);
             when(plugin.getMysql()).thenReturn(mysql);when(plugin.getUserManager()).thenReturn(users);

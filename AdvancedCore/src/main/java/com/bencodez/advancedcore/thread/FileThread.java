@@ -276,6 +276,18 @@ public class FileThread {
 		}
 	}
 
+	/** Checked identity-file deletion, preserving legacy symlink deletion semantics. */
+	public void deletePlayerFileStrict(String uuid) throws IOException {
+		UUID.fromString(uuid);
+		synchronized (FileThread.getInstance()) {
+			if (plugin == null) throw new IOException("User file owner is not initialized");
+			Path target = new File(new File(plugin.getDataFolder(), "Data"), uuid + ".yml").toPath();
+			if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+					&& !Files.isRegularFile(target) && !Files.isSymbolicLink(target)) throw new IOException("User data is not a regular file");
+			Files.deleteIfExists(target);
+		}
+	}
+
 	/** Read-only checked snapshot under the same file owner as checked writes. */
 	public HashMap<String, DataValue> getValuesStrict(String uuid) throws IOException {
 		UUID.fromString(uuid);

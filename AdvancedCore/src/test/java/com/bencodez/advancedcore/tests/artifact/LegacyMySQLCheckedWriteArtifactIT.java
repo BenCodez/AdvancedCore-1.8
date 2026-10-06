@@ -85,6 +85,38 @@ class LegacyMySQLCheckedWriteArtifactIT {
             assertTrue(transaction.getCause() instanceof SQLException);verify(f.connection).close();verifyNoInteractions(f.statement);
         }
     }
+    @Test void committedDeleteEvictsBothIdentityCaches() throws Exception {
+        try (Fixture f = new Fixture()) {
+            f.uuids.add(f.uuid); f.names.add("old"); f.storeType.getMethod("deletePlayerStrict", String.class).invoke(f.store, f.uuid);
+            verify(f.connection).prepareStatement("DELETE FROM users WHERE uuid=?;"); verify(f.statement).setString(1, f.uuid);
+            verify(f.statement).executeUpdate(); verify(f.statement).close(); verify(f.connection).close();
+            assertTrue(f.uuids.isEmpty()); assertTrue(f.names.isEmpty());
+        }
+    }
+    @Test void strictDeletePropagatesFailureAndRetainsIdentityCaches() throws Exception {
+        try (Fixture f = new Fixture()) {
+            f.uuids.add(f.uuid); f.names.add("old"); SQLException failure = new SQLException("delete rejected"); when(f.statement.executeUpdate()).thenThrow(failure);
+            InvocationTargetException result = assertThrows(InvocationTargetException.class, () -> f.storeType.getMethod("deletePlayerStrict", String.class).invoke(f.store, f.uuid));
+            assertSame(failure, result.getCause().getCause()); assertTrue(f.uuids.contains(f.uuid)); assertTrue(f.names.contains("old"));
+            verify(f.statement).close(); verify(f.connection).close();
+        }
+    }
+    @Test void checkedDeleteRejectsOuterTransactionAndMissingConnection() throws Exception {
+        try (Fixture f = new Fixture()) {
+            when(f.connection.getAutoCommit()).thenReturn(false);
+            InvocationTargetException result = assertThrows(InvocationTargetException.class, () -> f.storeType.getMethod("deletePlayerStrict", String.class).invoke(f.store, f.uuid));
+            assertTrue(result.getCause().getCause() instanceof SQLException); verify(f.connection).close(); verifyNoInteractions(f.statement);
+            f.borrowed.set(null); assertThrows(InvocationTargetException.class, () -> f.storeType.getMethod("deletePlayerStrict", String.class).invoke(f.store, f.uuid));
+        }
+    }
+    @Test void postDeleteConnectionCloseFailureIsVisibleAndCannotPublishAcknowledgedRemoval() throws Exception {
+        try (Fixture f = new Fixture()) {
+            f.uuids.add(f.uuid); f.names.add("old"); SQLException uncertain = new SQLException("connection cleanup failed"); doThrow(uncertain).when(f.connection).close();
+            InvocationTargetException result = assertThrows(InvocationTargetException.class, () -> f.storeType.getMethod("deletePlayerStrict", String.class).invoke(f.store, f.uuid));
+            assertSame(uncertain, result.getCause().getCause()); verify(f.statement).executeUpdate(); verify(f.statement).close();
+            assertTrue(f.uuids.contains(f.uuid)); assertTrue(f.names.contains("old"));
+        }
+    }
     private static class Fixture implements AutoCloseable {
         final String uuid="00000000-0000-0000-0000-000000000002";
         final Connection connection=mock(Connection.class);

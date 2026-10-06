@@ -167,6 +167,28 @@ public class UserDataCache {
 		return notification;
 	}
 
+	/** Manager holds canonical ownership; return older-prefix notification through its holder. */
+	void deleteForManager(Runnable storageDelete, Runnable[] notification) {
+		if (!batchOwner.isHeldByCurrentThread()) throw new IllegalStateException("User removal is not owned");
+		synchronized (this) {
+			if (uuid == null || cache == null || removing || inFlight) throw new IllegalStateException("User cache cannot accept removal");
+			removing = true;
+		}
+		try {
+			notification[0] = flushClaimedChanges();
+			storageDelete.run();
+			synchronized (this) {
+				cache = null;
+				cachedChanges = null;
+				uuid = null;
+				scheduled = false;
+				changedAt.clear();
+				inFlightValues.clear();
+				replacementVersion = ++snapshotVersion;
+			}
+		} finally { synchronized (this) { removing = false; } }
+	}
+
 	// Registry removal must happen before callbacks can populate a new generation.
 	Runnable retireForManager() {
 		return finishCache(true);

@@ -429,16 +429,27 @@ public class UserData {
 		return false;
 	}
 
-	@SuppressWarnings("deprecation")
 	public void remove() {
-		if (user.getPlugin().getStorageType().equals(UserStorage.MYSQL)) {
-			user.getPlugin().getMysql().deletePlayer(user.getUUID());
-		} else if (user.getPlugin().getStorageType().equals(UserStorage.SQLITE)) {
-			user.getPlugin().getSQLiteUserTable().delete(new Column("uuid", new DataValueString(user.getUUID())));
-		} else if (user.getPlugin().getStorageType().equals(UserStorage.FLAT)) {
-			FileThread.getInstance().getThread().deletePlayerFile(user.getUUID());
-		}
-		user.clearCache();
+		user.getPlugin().getUserManager().getDataManager().removeFromStorage(user, () -> {
+			com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot owner = storageOwner();
+			owner.getLock().lock();
+			try {
+				owner.beginWrite();
+				try {
+					UserStorage storage = user.getPlugin().getStorageType();
+					if (storage == UserStorage.MYSQL) {
+						if (user.getPlugin().getMysql() == null) throw new SQLException("MySQL user storage is unavailable");
+						user.getPlugin().getMysql().deletePlayerStrict(user.getUUID());
+					} else if (storage == UserStorage.SQLITE) {
+						if (user.getPlugin().getSQLiteUserTable() == null) throw new SQLException("SQLite user storage is unavailable");
+						user.getPlugin().getSQLiteUserTable().deleteStrict(new Column("uuid", new DataValueString(user.getUUID())));
+					} else if (storage == UserStorage.FLAT) FileThread.getInstance().deletePlayerFileStrict(user.getUUID());
+					else throw new IllegalStateException("User storage is not initialized");
+				} finally { owner.endWrite(); }
+			} catch (SQLException | IOException failure) {
+				throw new IllegalStateException("User removal was not acknowledged", failure);
+			} finally { owner.getLock().unlock(); }
+		});
 	}
 
 	public void setBoolean(String key, boolean value) {

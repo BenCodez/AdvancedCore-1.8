@@ -377,10 +377,9 @@ public class UserManager {
 	}
 
 	public void removeUUID(UUID key) {
-		if (plugin.getStorageType().equals(UserStorage.SQLITE)) {
-			plugin.getSQLiteUserTable().delete(new Column("uuid", new DataValueString(key.toString())));
-		} else if (plugin.getStorageType().equals(UserStorage.MYSQL)) {
-			plugin.getMysql().deletePlayer(key.toString());
+		// Preserve this API's historical SQL-only scope.
+		if (plugin.getStorageType() == UserStorage.SQLITE || plugin.getStorageType() == UserStorage.MYSQL) {
+			getUser(key, false).getUserData().remove();
 		}
 	}
 

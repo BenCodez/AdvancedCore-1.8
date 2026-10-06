@@ -883,3 +883,76 @@ restart persistence. No observed linkage/checked-write errors. Evidence:
 `checked-cache-runtime-results-BulkFinalSQL.json`, `bulk-write-final-live.log`.
 The controlled test is SQLite-only; deterministic real-file FLAT tests do not
 constitute full live FLAT startup/reward acceptance.
+
+### Checked per-user removal
+
+The removal portion of pinned upstream
+`1b3d0fa66fe61f5252b1665bd9d77ab648e87399` is adapted to the legacy fork's
+native APIs and existing plugin-local UUID owner. `UserData.remove()` and the
+historically SQL-only `UserManager.removeUUID()` now flush the older finite
+cache prefix, perform a checked deletion, then retire/remove that cache
+generation after acknowledgement. Marking the generation as removing rejects
+new queued changes during this sequence; subsequent writers acquire the same
+UUID owner and resolve current registry state. A failed older flush prevents
+deletion and retains pending work. A failed deletion keeps the generation live;
+an already acknowledged older prefix is not replayed. This closes the old
+row-resurrection path where deletion preceded cache clearing/flush.
+
+Older-prefix notifications run outside ownership and after registry removal on
+success. `CommittedUserDataRemovalException` distinguishes successful removal
+from a failed post-commit notification, so callers must not retry that effect.
+A primary storage failure retains precedence, with notification failure
+suppressed. An uncertain post-delete resource-close exception remains visible;
+it is not converted into acknowledged success or silently retried.
+
+MySQL strict removal now uses a bound DELETE with the checked borrowed-connection
+path, auto-commit verification and resource closure. It invalidates identity/name
+observations after acknowledgement without user resolution or full-query reload
+under ownership. SQLite adds `deleteStrict` under its existing table owner,
+requires auto-commit and leaves its shared connection open. FLAT adds a checked
+UUID-file delete under FileThread without starting its deprecated poller; a
+missing file is a no-op, directories are rejected, and a symlink is deleted
+rather than its target, preserving legacy deletion semantics. Existing public
+legacy lower-level delete methods remain available. No new dependency, schema,
+configuration key, proxy format or release version is introduced.
+
+Tests cover older-prefix ordering, failed flush/deletion retention, committed
+notification failures, callbacks waiting for another writer, actual concurrent
+writer serialization, recursion, SQL-only removeUUID compatibility, real SQLite
+selected-row deletion, outer-transaction rejection, real FLAT deletion/symlink
+behavior, and packaged MySQL binding/resource/uncertain-cleanup behavior. Two
+existing strict-delete assertions moved into the established packaged-artifact
+fixture: the compile-time SimpleAPI embeds a Java 11 Hikari class, while the
+production shaded artifact substitutes the Java 8-compatible pool. Their
+failure propagation and identity-retention/eviction assertions remain; the
+legacy logging-delete unit assertion remains separate.
+
+Actual Temurin 1.8.0_504 / Maven 3.9.9 commands, with workspace-local Maven repo,
+workspace-local temp directory and wagon transport:
+`mvn -B -f AdvancedCore/pom.xml -Dtest=LegacyCheckedUserRemovalTest,LegacySQLiteCheckedWriteTest,LegacyCheckedFileWriteTest test`
+passed 34 focused tests; final producer `mvn -B -f AdvancedCore/pom.xml clean install`
+passed 225 unit + 16 packaged-artifact tests; exact consumer
+`mvn -B -f VotingPlugin/pom.xml clean verify` passed 19 unit + 1 artifact test.
+All final tests have zero failures, errors or skips. Base classes 1821 / 2441
+have maximum major 52. Initial full test failures and the fixture correction
+are retained in evidence; they are not reported as passing runs.
+
+Final consumer SHA256
+`9d0cb595c952f7df462816c04a9d65ea32d5e7c1e59f29a33fa08117736e6d74`
+passed real Java 8 / Spigot 1.8.8 `RemoveNativeSQL` acceptance. A separate newly
+created fixture identity had an older queued value, then public removal and
+checked empty readback; processing its retired queue did not recreate the row.
+The main fixture also passed bulk/cache mutation, retirement/repopulation,
+detached snapshot, pending async receipt, vote/reward, points10,total1, graceful
+stop, SQLite integrity and restart persistence. No observed linkage/checked-write
+errors. Evidence: `checked-removal-build-results.json`,
+`checked-removal-packaged-clean-install.log`,
+`checked-removal-consumer-clean-verify.log`, `checked-removal-live.log`,
+`checked-cache-runtime-results-RemoveNativeSQL.json` in the isolated workspace.
+
+This remains a partial upstream disposition. Global wipes/migrations/provider
+rebind/lifecycle admission and shutdown drain, all direct legacy backend callers,
+strict reward queue provenance/checkpoint/replay/root deferral and the full
+upstream ledger are incomplete. The current live acceptance is SQLite-only;
+full live MySQL/FLAT/proxy and failed-shutdown acceptance remain to be completed.
+The entire backport and final independent review are not yet ready for PRs.

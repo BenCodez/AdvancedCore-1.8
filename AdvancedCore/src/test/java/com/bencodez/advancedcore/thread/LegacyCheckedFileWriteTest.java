@@ -86,6 +86,18 @@ class LegacyCheckedFileWriteTest {
         Files.delete(file());Files.createDirectories(file());assertThrows(IOException.class,()->owner.getValuesStrict(UUID));
         assertThrows(IllegalArgumentException.class,()->owner.getValuesStrict("../escape"));
     }
+    @Test void checkedDeleteRemovesIdentityFileWithoutStartingPollerAndMissingIsNoOp() throws Exception {
+        FileThread owner = owner(); owner.setValuesStrict(UUID, Collections.singletonMap("Points", new DataValueInt(7)));
+        owner.deletePlayerFileStrict(UUID); assertFalse(Files.exists(file())); owner.deletePlayerFileStrict(UUID);
+        verify(owner, never()).getThread(); assertThrows(IllegalArgumentException.class, () -> owner.deletePlayerFileStrict("../escape"));
+    }
+    @Test void checkedDeleteRejectsDirectoryAndDeletesSymlinkRatherThanItsTarget() throws Exception {
+        FileThread owner = owner(); Files.createDirectories(file()); assertThrows(IOException.class, () -> owner.deletePlayerFileStrict(UUID));
+        assertTrue(Files.isDirectory(file())); Files.delete(file()); Path actual = directory.resolve("actual.yml");
+        byte[] original = "Points: 7\n".getBytes(StandardCharsets.UTF_8); Files.write(actual, original); Files.createSymbolicLink(file(), actual);
+        owner.deletePlayerFileStrict(UUID); assertFalse(Files.exists(file(), LinkOption.NOFOLLOW_LINKS)); assertArrayEquals(original, Files.readAllBytes(actual));
+        verify(owner, never()).getThread();
+    }
     private FileThread owner() throws Exception {
         FileThread owner=mock(FileThread.class,CALLS_REAL_METHODS);AdvancedCorePlugin plugin=mock(AdvancedCorePlugin.class);
         when(plugin.getDataFolder()).thenReturn(directory.toFile());Field field=FileThread.class.getDeclaredField("plugin");
