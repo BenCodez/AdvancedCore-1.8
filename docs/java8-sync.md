@@ -510,3 +510,27 @@ Generated DirectlyDefined snapshots retain current lookup behavior: legacy
 replay clears pending entries before void asynchronous dispatch, so hiding
 snapshots before completion-aware replay could lose pending rewards. No
 quarantine or durable replay claim is made by this API-only cohort.
+
+## Typed integer completion adapter
+
+RewardInjectInt now adapts its ConfigurationSection callback to the typed
+CompletionStage<String> hook without changing the existing synchronous
+callback. Missing integer data remains skipped unless the legacy force flags
+apply; configured/default integers and null-result placeholder fallback are
+unchanged. The typed stage is awaited rather than treated as an immediate
+result. Null stages and callback/storage failures settle exceptionally.
+Java9 failedFuture calls from main are replaced with Java8 CompletableFuture
+completion. Runtime async dispatch is still a separate integration step.
+
+Five focused regressions pass. ActualJava8 clean install148unit+12artifact
+and exactconsumer clean verify19unit+1artifact all pass with no failures,
+errors or skips; base classes major<=52. Producer3b3947b8195f4e6a700fb5cc815ff7266849cc6a856462f60e1263f2bf891bdc;
+consumer01d76c2fdcfcd58ca8ff8c46a6adc0f3a0c40534c210d4a0d035b83ecc349f60.
+Evidence async-integer-build-results.json. No config/data/wire version changes.
+
+Exact consumer01d76c2f... also passes controlled actualJava8/Spigot1.8.8
+SQLite AsyncInjectSQL vote/reward, points10,total1, graceful shutdown and
+restart persistence. Logs show no exception/linkage/write-failure markers;
+owned fixture processes stopped. This proves legacy runtime compatibility
+with the candidate API additions, not completion-aware queued replay.
+Evidence checked-cache-runtime-results-AsyncInjectSQL.json and paired logs.
