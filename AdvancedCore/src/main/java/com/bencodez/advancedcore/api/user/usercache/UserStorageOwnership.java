@@ -28,6 +28,51 @@ public final class UserStorageOwnership {
     private boolean finalRetirement;
     private Thread retiringThread;
 
+    private boolean binding;
+
+    /**
+     * Seal new native admissions while a shared cache route is attached. This
+     * transition never waits for provider work and changes nothing when busy.
+     * It may compose the current provider replacement publication, but not an
+     * arbitrary admitted mutation or final retirement.
+     */
+    public Binding beginSharedBinding() {
+        synchronized (admission) {
+            if (binding || closed || finalRetirement || accepted != 0
+                    || (retiring && !replacementPublication.get())) {
+                throw new IllegalStateException("Cannot bind shared storage while native ownership is busy or retiring");
+            }
+            Binding scope = new Binding(Thread.currentThread(), retiring, retiringThread);
+            binding = true;
+            retiring = true;
+            retiringThread = Thread.currentThread();
+            return scope;
+        }
+    }
+
+    public final class Binding implements AutoCloseable {
+        private final Thread thread;
+        private final boolean previousRetiring;
+        private final Thread previousRetiringThread;
+        private boolean released;
+        private Binding(Thread thread, boolean previousRetiring, Thread previousRetiringThread) {
+            this.thread = thread;
+            this.previousRetiring = previousRetiring;
+            this.previousRetiringThread = previousRetiringThread;
+        }
+        @Override public void close() {
+            if (Thread.currentThread() != thread) throw new IllegalStateException("Shared binding belongs to another thread");
+            synchronized (admission) {
+                if (released) return;
+                retiring = previousRetiring;
+                retiringThread = previousRetiringThread;
+                binding = false;
+                released = true;
+                admission.notifyAll();
+            }
+        }
+    }
+
     /** Count the whole accepted synchronous operation, including time waiting for its UUID owner. */
     public Scope admit() {
         synchronized (admission) {
@@ -39,7 +84,7 @@ public final class UserStorageOwnership {
     }
 
     private void requireAdmission() {
-        if (closed || (retiring && depth.get() == 0 && !finalFlush.get() && !maintenance.get())) {
+        if (binding || closed || (retiring && depth.get() == 0 && !finalFlush.get() && !maintenance.get())) {
             throw new IllegalStateException("User storage is retiring or closed");
         }
     }

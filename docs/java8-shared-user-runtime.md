@@ -27,13 +27,14 @@ and proves the actual close remains pending until its owned task executes.
 These tests use controlled cache/backend adapters. They do not prove native Bukkit
 cache integration or real database behavior.
 
-The native `BukkitUserCacheOwner`, manager generation capture/staged mutation
-queues, and shared-runtime routing are still required. Existing fork entry points
-continue using their native lifecycle and storage implementation. Adding this enum
-does not by itself port the newer native fetch-mode overloads. The four shared-user
-checkpoint commits in `upstream-shared-user-dispositions.md` remain partial until
-those paths are integrated and tested. This is a foundation milestone, not a
-claim that the complete upstream backport is ready.
+The subsequent native cache and Bukkit owner milestones are documented in
+`java8-native-shared-cache.md` and `java8-bukkit-cache-owner.md`. The production
+Bukkit adapter now exists, with explicit worker-side manager binding and selected
+native routing. Automatic startup/reload/shutdown integration, provider bridges,
+primary-thread deferred population and the remaining native overloads are still
+required. Adding the fetch-mode enum does not port those overloads. The four
+shared-user checkpoint commits remain partial; these milestones do not establish
+full backport readiness.
 
 Validation for this foundation milestone (actual Temurin 8u504):
 

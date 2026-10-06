@@ -62,7 +62,15 @@ public class UserDataCache {
 		cache = new HashMap<>();
 	}
 
+	boolean hasSharedStorageBinding() { return sharedFlushGate != null || sharedStorageWriter != null; }
+
+	private void initializeSharedStorage() {
+		synchronized (this) { if (sharedFlushGate != null || uuid == null || cachedChanges == null) return; }
+		manager.initializeSharedCache(this);
+	}
+
 	public void addChange(UserDataChange change, boolean queue) {
+		initializeSharedStorage();
 		java.util.function.Consumer<Runnable> gate = sharedFlushGate;
 		if (gate != null) gate.accept(() -> addChangeInternal(change, queue));
 		else {
@@ -222,6 +230,15 @@ public class UserDataCache {
 	}
 
 	public UserDataCache cache() {
+		initializeSharedStorage();
+		java.util.function.Consumer<Runnable> gate = sharedFlushGate;
+		if (gate == null) return cacheNative();
+		java.util.concurrent.atomic.AtomicReference<UserDataCache> result = new java.util.concurrent.atomic.AtomicReference<>();
+		gate.accept(() -> result.set(cacheNative()));
+		return result.get();
+	}
+
+	private UserDataCache cacheNative() {
 		try (UserStorageOwnership.Scope admission = manager.getPlugin().getUserStorageOwnership().admit()) {
 		final UUID currentUuid;
 		final long expectedVersion;
@@ -290,11 +307,20 @@ public class UserDataCache {
 	public void clearCache() {
 		try (UserStorageOwnership.Scope admission = manager.getPlugin().getUserStorageOwnership().admit()) {
 			Runnable notification = finishCache(false);
-			if (notification != null) notification.run();
+			if (notification != null) deliverNotification(notification);
 		}
 	}
 
 	private Runnable finishCache(boolean retire) {
+		initializeSharedStorage();
+		java.util.function.Consumer<Runnable> gate = sharedExclusiveFlushGate;
+		if (gate == null) return finishCacheNative(retire);
+		java.util.concurrent.atomic.AtomicReference<Runnable> result = new java.util.concurrent.atomic.AtomicReference<>();
+		gate.accept(() -> result.set(finishCacheNative(retire)));
+		return result.get();
+	}
+
+	private Runnable finishCacheNative(boolean retire) {
 		try (UserStorageOwnership.Scope admission = manager.getPlugin().getUserStorageOwnership().admit()) {
 		Runnable notification = null;
 		boolean markedRemoval = false;
@@ -388,7 +414,7 @@ public class UserDataCache {
 	public void dump() {
 		try (UserStorageOwnership.Scope admission = manager.getPlugin().getUserStorageOwnership().admit()) {
 			Runnable notification = finishCache(true);
-			if (notification != null) notification.run();
+			if (notification != null) deliverNotification(notification);
 		}
 	}
 
@@ -427,6 +453,7 @@ public class UserDataCache {
 
 	/** Persist one batch and return its notification after releasing both owners. */
 	public Runnable processChangesForSharedRuntime() {
+		initializeSharedStorage();
 		java.util.function.Consumer<Runnable> gate = sharedFlushGate;
 		java.util.concurrent.atomic.AtomicReference<Runnable> notification = new java.util.concurrent.atomic.AtomicReference<>();
 		ArrayList<Runnable> stagedNotifications = new ArrayList<>();
@@ -487,6 +514,16 @@ public class UserDataCache {
 
 	private DataValue mutateDirectInternal(String key, java.util.function.Function<DataValue, DataValue> transform,
 			java.util.function.Consumer<DataValue> storageWrite, boolean requireValue) {
+		initializeSharedStorage();
+		java.util.function.Consumer<Runnable> gate = sharedExclusiveFlushGate;
+		if (gate == null) return mutateDirectNative(key, transform, storageWrite, requireValue);
+		java.util.concurrent.atomic.AtomicReference<DataValue> result = new java.util.concurrent.atomic.AtomicReference<>();
+		gate.accept(() -> result.set(mutateDirectNative(key, transform, storageWrite, requireValue)));
+		return result.get();
+	}
+
+	private DataValue mutateDirectNative(String key, java.util.function.Function<DataValue, DataValue> transform,
+			java.util.function.Consumer<DataValue> storageWrite, boolean requireValue) {
 		try (UserStorageOwnership.Scope admission = manager.getPlugin().getUserStorageOwnership().admit()) {
 		DataValue committedValue = null;
 		Runnable pendingNotification = null;
@@ -526,7 +563,7 @@ public class UserDataCache {
 			// Notify every committed write, even when another callback or later write fails.
 			Throwable notificationFailure = null;
 			for (Runnable notification : new Runnable[] {pendingNotification, directNotification}) {
-				if (notification != null) try { notification.run(); }
+				if (notification != null) try { deliverNotification(notification); }
 				catch (RuntimeException | Error rejected) {
 					if (notificationFailure == null) notificationFailure = rejected;
 					else if (notificationFailure != rejected) notificationFailure.addSuppressed(rejected);
@@ -547,6 +584,13 @@ public class UserDataCache {
 
 	/** Publish a checked bulk replacement without adding legacy bulk change callbacks. */
 	public void writeDirectBatch(java.util.Map<String, DataValue> values, Runnable storageWrite) {
+		initializeSharedStorage();
+		java.util.function.Consumer<Runnable> gate = sharedExclusiveFlushGate;
+		if (gate == null) writeDirectBatchNative(values, storageWrite);
+		else gate.accept(() -> writeDirectBatchNative(values, storageWrite));
+	}
+
+	private void writeDirectBatchNative(java.util.Map<String, DataValue> values, Runnable storageWrite) {
 		try (UserStorageOwnership.Scope admission = manager.getPlugin().getUserStorageOwnership().admit()) {
 		HashMap<String, DataValue> candidate = new HashMap<>(values);
 		if (candidate.isEmpty()) return;
@@ -586,7 +630,7 @@ public class UserDataCache {
 		} catch (RuntimeException | Error rejected) { failure = rejected; throw rejected; }
 		finally {
 			batchOwner.unlock();
-			if (pendingNotification != null) try { pendingNotification.run(); }
+			if (pendingNotification != null) try { deliverNotification(pendingNotification); }
 			catch (RuntimeException | Error rejected) {
 				if (failure != null) { if (failure != rejected) failure.addSuppressed(rejected); }
 				else if (committed) throw new CommittedUserDataBatchException(candidate, rejected);

@@ -234,10 +234,14 @@ public class UserData {
 	}
 
 	public List<Column> getMySqlRow() {
+		com.bencodez.advancedcore.api.user.usercache.UserDataManager manager = sharedDataManager();
+		if (manager != null && manager.hasSharedSqlBackend()) return sharedRow(manager, UserStorage.MYSQL);
 		return user.getPlugin().getMysql().getExact(user.getUUID());
 	}
 
 	public List<Column> getSQLiteRow() {
+		com.bencodez.advancedcore.api.user.usercache.UserDataManager manager = sharedDataManager();
+		if (manager != null && manager.hasSharedSqlBackend()) return sharedRow(manager, UserStorage.SQLITE);
 		return user.getPlugin().getSQLiteUserTable().getExact(new Column("uuid", new DataValueString(user.getUUID())));
 	}
 
@@ -354,6 +358,14 @@ public class UserData {
 
 	/** One checked storage snapshot; absent identities are empty, failures propagate. */
 	public HashMap<String, DataValue> getValuesStrict() throws SQLException, IOException {
+		com.bencodez.advancedcore.api.user.usercache.UserDataManager manager = sharedDataManager();
+		if (manager != null && manager.hasSharedSqlBackend()) {
+			try { return convert(sharedRow(manager, manager.effectiveStorageType(user.getPlugin().getStorageType()))); }
+			catch (IllegalStateException failure) {
+				if (failure.getCause() instanceof SQLException) throw (SQLException) failure.getCause();
+				throw failure;
+			}
+		}
 		try (com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Scope admission = user.getPlugin().getUserStorageOwnership().admit()) {
 		com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot owner = storageOwner();
 		owner.getLock().lock();
@@ -363,6 +375,21 @@ public class UserData {
 		}
 		finally { owner.getLock().unlock(); }
 			}
+	}
+
+	private com.bencodez.advancedcore.api.user.usercache.UserDataManager sharedDataManager() {
+		UserManager users = user.getPlugin().getUserManager();
+		return users == null ? null : users.getDataManager();
+	}
+
+	private List<Column> sharedRow(com.bencodez.advancedcore.api.user.usercache.UserDataManager manager,
+			UserStorage requested) {
+		return manager.withSharedSqlBackend(java.util.UUID.fromString(user.getUUID()), (actual, storage) -> {
+			if (actual != requested) throw new IllegalStateException("Requested user store differs from the active shared owner");
+			List<Column> row = storage.readRow(actual);
+			if (row == null) throw new IllegalStateException("Shared user storage omitted its checked snapshot");
+			return row;
+		});
 	}
 
 	private com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot storageOwner() {
@@ -413,6 +440,11 @@ public class UserData {
 
 	@SuppressWarnings("deprecation")
 	public boolean hasData() {
+        com.bencodez.advancedcore.api.user.usercache.UserDataManager manager = sharedDataManager();
+        if (manager != null && manager.hasSharedSqlBackend()) {
+            return manager.withSharedSqlBackend(java.util.UUID.fromString(user.getUUID()),
+                    (type, storage) -> storage.contains(type));
+        }
 		if (user.getPlugin().getStorageType().equals(UserStorage.MYSQL)) {
 			return user.getPlugin().getMysql().containsKey(user.getUUID());
 		}
@@ -425,7 +457,14 @@ public class UserData {
 	}
 
 	public void remove() {
-		user.getPlugin().getUserManager().getDataManager().removeFromStorage(user, () -> {
+        com.bencodez.advancedcore.api.user.usercache.UserDataManager manager = user.getPlugin().getUserManager().getDataManager();
+        manager.removeFromStorage(user, () -> {
+            if (manager.hasSharedSqlBackend()) {
+                manager.withSharedSqlBackend(java.util.UUID.fromString(user.getUUID()), (type, storage) -> {
+                    storage.delete(type); return null;
+                });
+                return;
+            }
 			com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot owner = storageOwner();
 			owner.getLock().lock();
 			try {
@@ -568,6 +607,20 @@ public class UserData {
     public ArrayList<String> getStringListStrict(String key) {
         java.util.Objects.requireNonNull(key,"key");
         if(key.isEmpty() || key.contains(" "))throw new IllegalArgumentException("Invalid queue key");
+        com.bencodez.advancedcore.api.user.usercache.UserDataManager manager = sharedDataManager();
+        if (manager != null && manager.hasSharedSqlBackend()) {
+            java.util.UUID identity = java.util.UUID.fromString(user.getUUID());
+            return manager.withSharedSqlBackend(identity, (type, storage) -> {
+                UserDataCache cache = manager.getUserDataCache().get(identity);
+                DataValue value = cache == null || cache.getUuid() == null ? null : cache.getCachedValue(key);
+                if (value == null) {
+                    List<Column> row = storage.readRow(type);
+                    if (row == null) throw new IllegalStateException("Shared user storage omitted its checked snapshot");
+                    value = convert(row).get(key);
+                }
+                return value == null ? new ArrayList<>() : decodeStringList(value);
+            });
+        }
         try(com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Scope admission=user.getPlugin().getUserStorageOwnership().admit()) {
             com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot owner=storageOwner();
             owner.getLock().lock();
@@ -640,6 +693,26 @@ public class UserData {
 	/** Checked explicit-storage overload for compatibility setters and converters. */
 	public void setValuesStrict(UserStorage storage, Map<String, DataValue> values) throws SQLException, IOException {
 		if (values.isEmpty()) return;
+		com.bencodez.advancedcore.api.user.usercache.UserDataManager manager = sharedDataManager();
+		if (manager != null && manager.hasSharedSqlBackend()) {
+			HashMap<String, DataValue> selected = new HashMap<>(values);
+			selected.remove("uuid");
+			if (selected.isEmpty()) return;
+			for (Entry<String, DataValue> entry : selected.entrySet()) {
+				if (entry.getKey() == null || entry.getValue() == null) throw new IllegalArgumentException("Invalid user-data batch value");
+			}
+			try {
+				manager.withSharedSqlBackend(java.util.UUID.fromString(user.getUUID()), (actual, target) -> {
+					if (actual != storage) throw new IllegalStateException("Requested user store differs from the active shared owner");
+					target.writeValues(actual, selected);
+					return null;
+				});
+			} catch (IllegalStateException failure) {
+				if (failure.getCause() instanceof SQLException) throw (SQLException) failure.getCause();
+				throw failure;
+			}
+			return;
+		}
 		try (com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Scope admission = user.getPlugin().getUserStorageOwnership().admit()) {
 		com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot owner = storageOwner();
 		owner.getLock().lock();

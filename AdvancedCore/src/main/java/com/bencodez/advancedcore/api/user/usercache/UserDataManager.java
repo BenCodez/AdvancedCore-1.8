@@ -53,6 +53,177 @@ public class UserDataManager {
     }
     private Object onlineSessionLock(UUID uuid){return onlineSessionLocks[(uuid.hashCode() & Integer.MAX_VALUE)%onlineSessionLocks.length];}
 
+	private volatile java.util.function.Consumer<UserDataCache> sharedCacheInitializer;
+	private volatile java.util.function.Consumer<UUID> sharedCacheRemovalListener;
+	private final java.util.concurrent.locks.ReentrantReadWriteLock cacheMapLifecycle =
+			new java.util.concurrent.locks.ReentrantReadWriteLock(true);
+	private Thread sharedBindingThread;
+	private UserStorageOwnership.Binding sharedNativeBinding;
+	private volatile SharedSqlRoute sharedSqlRoute;
+
+	private static final class SharedSqlRoute {
+		final com.bencodez.advancedcore.core.user.storage.sql.SqlUserBackend backend;
+		final java.util.function.Consumer<Runnable> lifecycle;
+		final java.util.function.BiConsumer<UUID, Runnable> read, exclusive;
+		SharedSqlRoute(com.bencodez.advancedcore.core.user.storage.sql.SqlUserBackend backend,
+				java.util.function.Consumer<Runnable> lifecycle,
+				java.util.function.BiConsumer<UUID, Runnable> read,
+				java.util.function.BiConsumer<UUID, Runnable> exclusive) {
+			this.backend = java.util.Objects.requireNonNull(backend, "backend");
+			this.lifecycle = java.util.Objects.requireNonNull(lifecycle, "lifecycle");
+			this.read = java.util.Objects.requireNonNull(read, "read");
+			this.exclusive = java.util.Objects.requireNonNull(exclusive, "exclusive");
+		}
+	}
+
+	public final <T> T withCacheMapReadAdmission(java.util.function.Supplier<T> operation) {
+		java.util.Objects.requireNonNull(operation, "operation");
+		cacheMapLifecycle.readLock().lock();
+		try { return operation.get(); }
+		finally { cacheMapLifecycle.readLock().unlock(); }
+	}
+
+	public final synchronized void beginSharedBindingTransition() {
+		if (sharedBindingThread != null || sharedSqlRoute != null || sharedCacheInitializer != null) {
+			throw new IllegalStateException("Shared cache owner is already bound or binding");
+		}
+		UserStorageOwnership.Binding nativeBinding = plugin.getUserStorageOwnership().beginSharedBinding();
+		boolean mapLocked = false;
+		try {
+			mapLocked = cacheMapLifecycle.writeLock().tryLock();
+			if (!mapLocked) throw new IllegalStateException("Cannot bind shared storage during cache-map publication");
+			for (UserDataCache cache : userDataCache.values()) {
+				cache.ensureNoLegacyBatchForSharedBinding();
+				if (cache.hasSharedStorageBinding() || cache.isRetired()) {
+					throw new IllegalStateException("Existing cache cannot accept this shared owner");
+				}
+			}
+			sharedBindingThread = Thread.currentThread();
+			sharedNativeBinding = nativeBinding;
+		} catch (RuntimeException | Error failure) {
+			if (mapLocked) cacheMapLifecycle.writeLock().unlock();
+			nativeBinding.close();
+			throw failure;
+		}
+	}
+
+	public final synchronized void endSharedBindingTransition() {
+		if (sharedBindingThread != Thread.currentThread()) throw new IllegalStateException("Shared binding is not owned");
+		UserStorageOwnership.Binding scope = sharedNativeBinding;
+		sharedNativeBinding = null;
+		sharedBindingThread = null;
+		try { cacheMapLifecycle.writeLock().unlock(); }
+		finally { scope.close(); }
+	}
+
+	public final synchronized void bindSharedCacheInitializer(java.util.function.Consumer<UserDataCache> initializer) {
+		java.util.Objects.requireNonNull(initializer, "initializer");
+		if (sharedCacheInitializer != null && sharedCacheInitializer != initializer) throw new IllegalStateException("Another cache owner is bound");
+		sharedCacheInitializer = initializer;
+	}
+
+	public final synchronized void bindSharedCacheRemovalListener(java.util.function.Consumer<UUID> listener) {
+		java.util.Objects.requireNonNull(listener, "listener");
+		if (sharedCacheRemovalListener != null && sharedCacheRemovalListener != listener) throw new IllegalStateException("Another cache owner is bound");
+		sharedCacheRemovalListener = listener;
+	}
+
+	void initializeSharedCache(UserDataCache cache) {
+		java.util.function.Consumer<UserDataCache> initializer = sharedCacheInitializer;
+		if (initializer == null) return;
+		if (Thread.holdsLock(cache)) throw new IllegalStateException("Cannot bind shared storage while holding the cache monitor");
+		initializer.accept(cache);
+	}
+
+	public final synchronized void bindSharedSqlBackend(
+			com.bencodez.advancedcore.core.user.storage.sql.SqlUserBackend backend,
+			java.util.function.Consumer<Runnable> lifecycle,
+			java.util.function.BiConsumer<UUID, Runnable> read,
+			java.util.function.BiConsumer<UUID, Runnable> exclusive) {
+		SharedSqlRoute replacement = new SharedSqlRoute(backend, lifecycle, read, exclusive);
+		SharedSqlRoute current = sharedSqlRoute;
+		if (current == null && sharedBindingThread != Thread.currentThread()) throw new IllegalStateException("Initial shared binding requires native admission");
+		if (current != null && (current.lifecycle != lifecycle || current.read != read || current.exclusive != exclusive)) {
+			throw new IllegalStateException("Shared SQL owner changed outside replacement admission");
+		}
+		bindSharedUserDataNotificationLifecycle(backend, lifecycle);
+		sharedSqlRoute = replacement;
+	}
+
+	public final synchronized void bindSharedSqlBackend(
+			com.bencodez.advancedcore.core.user.storage.sql.SqlUserBackend backend,
+			java.util.function.Consumer<Runnable> lifecycle) {
+		SharedSqlRoute current = sharedSqlRoute;
+		java.util.function.BiConsumer<UUID, Runnable> read = current == null
+				? (uuid, operation) -> lifecycle.accept(operation) : current.read;
+		java.util.function.BiConsumer<UUID, Runnable> exclusive = current == null ? read : current.exclusive;
+		bindSharedSqlBackend(backend, lifecycle, read, exclusive);
+	}
+
+	public final boolean hasSharedSqlBackend() { return sharedSqlRoute != null; }
+
+	public final UserStorage effectiveStorageType(UserStorage configured) {
+		SharedSqlRoute route = sharedSqlRoute;
+		return route == null ? java.util.Objects.requireNonNull(configured, "configured") : route.backend.storageType();
+	}
+
+	public final <T> T withSharedSqlBackend(UUID uuid,
+			java.util.function.BiFunction<UserStorage, com.bencodez.advancedcore.core.user.storage.SqlUserStorage, T> operation) {
+		java.util.Objects.requireNonNull(uuid, "uuid");
+		java.util.Objects.requireNonNull(operation, "operation");
+		if (isPlatformOwnedThread()) throw new IllegalStateException("Shared user storage must run on a worker thread");
+		SharedSqlRoute admission = sharedSqlRoute;
+		if (admission == null) throw new IllegalStateException("Shared SQL backend is not bound");
+		java.util.concurrent.atomic.AtomicReference<T> result = new java.util.concurrent.atomic.AtomicReference<>();
+		admission.read.accept(uuid, () -> {
+			SharedSqlRoute current = sharedSqlRoute;
+			if (current == null || current.read != admission.read) throw new IllegalStateException("Shared SQL owner changed during admission");
+			if (!current.backend.isOpen()) throw new IllegalStateException("Shared SQL backend is unavailable");
+			result.set(operation.apply(current.backend.storageType(), current.backend.user(uuid)));
+		});
+		return result.get();
+	}
+
+	private <T> T withSharedExclusiveAdmission(java.util.function.Supplier<UUID> identity,
+			java.util.function.Supplier<T> operation) {
+		if (sharedSqlRoute == null) return operation.get();
+		return withSharedExclusiveAdmission(identity.get(), operation);
+	}
+
+	private <T> T withSharedExclusiveAdmission(UUID uuid, java.util.function.Supplier<T> operation) {
+		SharedSqlRoute admission = sharedSqlRoute;
+		if (admission == null) return operation.get();
+		if (isPlatformOwnedThread()) throw new IllegalStateException("Shared user storage must run on a worker thread");
+		java.util.concurrent.atomic.AtomicReference<T> result = new java.util.concurrent.atomic.AtomicReference<>();
+		admission.exclusive.accept(uuid, () -> {
+			SharedSqlRoute current = sharedSqlRoute;
+			if (current == null || current.exclusive != admission.exclusive) throw new IllegalStateException("Shared SQL owner changed during exclusive admission");
+			result.set(operation.get());
+		});
+		return result.get();
+	}
+
+	private void notifyUserDataChange(com.bencodez.advancedcore.api.user.AdvancedCoreUser user, String key) {
+		Runnable notification = () -> getPlugin().getUserManager().onChange(user, key);
+		if (hasSharedSqlBackend()) dispatchSharedUserDataNotification(captureSharedUserDataNotification(notification));
+		else notification.run();
+	}
+
+	public final boolean retireSharedCache(UUID uuid, UserDataCache expected) {
+		return withCacheMapReadAdmission(() -> {
+			if (userDataCache.get(uuid) != expected) return false;
+			if (expected != null && !userDataCache.remove(uuid, expected)) return false;
+			java.util.function.Consumer<UUID> listener = sharedCacheRemovalListener;
+			if (listener != null) listener.accept(uuid);
+			return true;
+		});
+	}
+
+	/** Bukkit 1.8 owner-thread check; modern Folia/Paper lanes are outside this artifact. */
+	public boolean isPlatformOwnedThread() {
+		return Bukkit.getServer() != null && Bukkit.isPrimaryThread();
+	}
+
 	private volatile SharedSqlNotificationRoute sharedSqlNotificationRoute;
 	private final java.util.concurrent.atomic.AtomicLong sharedNotificationGeneration = new java.util.concurrent.atomic.AtomicLong();
 	private volatile boolean sharedNotificationsClosed;
@@ -183,6 +354,20 @@ public class UserDataManager {
 	}
 
 	private UserDataCache getOrPopulate(UUID uuid) {
+		if (hasSharedSqlBackend()) return withSharedSqlBackend(uuid, (type, storage) -> {
+			UserDataCache current = withCacheMapReadAdmission(() -> userDataCache.computeIfAbsent(uuid,
+					ignored -> new UserDataCache(this, uuid)));
+			initializeSharedCache(current);
+			if (current.hasCache()) return current;
+			long version = current.getSharedSnapshotVersion();
+			java.util.List<com.bencodez.simpleapi.sql.Column> row = storage.readRow(type);
+			if (row == null) throw new IllegalStateException("Shared user storage omitted its checked snapshot");
+			java.util.HashMap<String, com.bencodez.simpleapi.sql.data.DataValue> values =
+					com.bencodez.advancedcore.core.user.storage.SqlUserDataAccess.convert(row);
+			for (UserDataKey key : getRegisteredKeysSnapshot()) values.putIfAbsent(key.getKey(), key.getDefault());
+			current.updateSharedSnapshot(values, version);
+			return current;
+		});
 		try (UserStorageOwnership.Scope admission = getPlugin().getUserStorageOwnership().admit()) {
 		UserDataCache current = userDataCache.get(uuid);
 		if (current != null && !current.isRetired()) return current;
@@ -234,6 +419,10 @@ public class UserDataManager {
     }
 
     private boolean retire(UUID uuid,UserDataCache cache,boolean notify,boolean onlyOffline) {
+        return withSharedExclusiveAdmission(uuid, () -> retireNative(uuid, cache, notify, onlyOffline));
+    }
+
+    private boolean retireNative(UUID uuid,UserDataCache cache,boolean notify,boolean onlyOffline) {
         final long expectedVersion=onlyOffline ? cache.cleanupSnapshotVersion() : 0L;
         try(UserStorageOwnership.Scope admission=getPlugin().getUserStorageOwnership().admit()) {
             UserStorageOwnership.Slot owner=plugin.getUserStorageOwnership().owner(uuid);
@@ -244,16 +433,27 @@ public class UserDataManager {
                 // Join markers must not wait for physical storage. Once flush starts,
                 // retire that flushed generation even if a concurrent join arrives.
                 notification=cache.retireForManager();
-                userDataCache.remove(uuid,cache);
+                if(hasSharedSqlBackend())retireSharedCache(uuid,cache);
+                else userDataCache.remove(uuid,cache);
                 countRetirement=!onlyOffline || !isUserOnline(uuid);
             }finally {owner.getLock().unlock();}
-            if(notify && notification!=null)notification.run();
+            if(notify && notification!=null) {
+                if(hasSharedSqlBackend())dispatchSharedUserDataNotification(notification);
+                else notification.run();
+            }
             return countRetirement;
         }
     }
 
 	/** Resolve cached/uncached ownership at execution, not asynchronous admission. */
 	public void writeDirect(com.bencodez.advancedcore.api.user.AdvancedCoreUser user, String key,
+			com.bencodez.simpleapi.sql.data.DataValue value, Runnable storageWrite) {
+		withSharedExclusiveAdmission(() -> UUID.fromString(user.getUUID()), () -> {
+			writeDirectNative(user, key, value, storageWrite); return null;
+		});
+	}
+
+	private void writeDirectNative(com.bencodez.advancedcore.api.user.AdvancedCoreUser user, String key,
 			com.bencodez.simpleapi.sql.data.DataValue value, Runnable storageWrite) {
 		try (UserStorageOwnership.Scope admission = getPlugin().getUserStorageOwnership().admit()) {
 		UUID identity = UUID.fromString(user.getUUID());
@@ -265,7 +465,7 @@ public class UserDataManager {
 			if (current != null && current.isRetired()) current = null;
 			if (current == null) storageWrite.run();
 		} finally { owner.getLock().unlock(); }
-		if (current == null) getPlugin().getUserManager().onChange(user, key);
+		if (current == null) notifyUserDataChange(user, key);
 		// Releasing before this call keeps notifications outside ownership.
 		// If retirement wins this gap, the retired handle rejects visibly.
 		else current.writeDirect(key, value, storageWrite);
@@ -274,6 +474,15 @@ public class UserDataManager {
 
 	/** Checked read/modify/write using the current cache generation or the shared uncached owner. */
 	public com.bencodez.simpleapi.sql.data.DataValue mutateDirect(
+			com.bencodez.advancedcore.api.user.AdvancedCoreUser user, String key,
+			java.util.function.Supplier<com.bencodez.simpleapi.sql.data.DataValue> storageRead,
+			java.util.function.Function<com.bencodez.simpleapi.sql.data.DataValue, com.bencodez.simpleapi.sql.data.DataValue> transform,
+			java.util.function.Consumer<com.bencodez.simpleapi.sql.data.DataValue> storageWrite) {
+		return withSharedExclusiveAdmission(() -> UUID.fromString(user.getUUID()),
+				() -> mutateDirectNative(user, key, storageRead, transform, storageWrite));
+	}
+
+	private com.bencodez.simpleapi.sql.data.DataValue mutateDirectNative(
 			com.bencodez.advancedcore.api.user.AdvancedCoreUser user, String key,
 			java.util.function.Supplier<com.bencodez.simpleapi.sql.data.DataValue> storageRead,
 			java.util.function.Function<com.bencodez.simpleapi.sql.data.DataValue, com.bencodez.simpleapi.sql.data.DataValue> transform,
@@ -301,7 +510,7 @@ public class UserDataManager {
 				// switching to a successor after an earlier read.
 				return current.mutateDirect(key, value -> transform.apply(value == null ? storageRead.get() : value), storageWrite);
 			}
-			try { getPlugin().getUserManager().onChange(user, key); }
+			try { notifyUserDataChange(user, key); }
 			catch (RuntimeException | Error failure) { throw new CommittedUserDataMutationException(committed, failure); }
 			return committed;
 		}
@@ -309,6 +518,14 @@ public class UserDataManager {
 
 	/** Bulk writes preserve the legacy absence of their own change notification. */
 	public void writeBatch(com.bencodez.advancedcore.api.user.AdvancedCoreUser user,
+			java.util.Map<String, com.bencodez.simpleapi.sql.data.DataValue> values,
+			Runnable storageWrite, boolean publishActiveCache) {
+		withSharedExclusiveAdmission(() -> UUID.fromString(user.getUUID()), () -> {
+			writeBatchNative(user, values, storageWrite, publishActiveCache); return null;
+		});
+	}
+
+	private void writeBatchNative(com.bencodez.advancedcore.api.user.AdvancedCoreUser user,
 			java.util.Map<String, com.bencodez.simpleapi.sql.data.DataValue> values,
 			Runnable storageWrite, boolean publishActiveCache) {
 		try (UserStorageOwnership.Scope admission = getPlugin().getUserStorageOwnership().admit()) {
@@ -329,6 +546,12 @@ public class UserDataManager {
 
 	/** Flush and delete one identity before retiring its active cache generation. */
 	public void removeFromStorage(com.bencodez.advancedcore.api.user.AdvancedCoreUser user, Runnable storageDelete) {
+		withSharedExclusiveAdmission(() -> UUID.fromString(user.getUUID()), () -> {
+			removeFromStorageNative(user, storageDelete); return null;
+		});
+	}
+
+	private void removeFromStorageNative(com.bencodez.advancedcore.api.user.AdvancedCoreUser user, Runnable storageDelete) {
 		try (UserStorageOwnership.Scope admission = getPlugin().getUserStorageOwnership().admit()) {
 		java.util.Objects.requireNonNull(storageDelete, "storageDelete");
 		UUID identity = UUID.fromString(user.getUUID());
@@ -342,13 +565,17 @@ public class UserDataManager {
 			UserDataCache current = getUserDataCache().get(identity);
 			if (current != null && !current.isRetired()) {
 				current.deleteForManager(storageDelete, notification);
-				getUserDataCache().remove(identity, current);
+				if (hasSharedSqlBackend()) retireSharedCache(identity, current);
+				else getUserDataCache().remove(identity, current);
 			} else storageDelete.run();
 			committed = true;
 		} catch (RuntimeException | Error rejected) { failure = rejected; throw rejected; }
 		finally {
 			owner.getLock().unlock();
-			if (notification[0] != null) try { notification[0].run(); }
+			if (notification[0] != null) try {
+				if (hasSharedSqlBackend()) dispatchSharedUserDataNotification(notification[0]);
+				else notification[0].run();
+			}
 			catch (RuntimeException | Error rejected) {
 				if (failure != null) { if (failure != rejected) failure.addSuppressed(rejected); }
 				else if (committed) throw new CommittedUserDataRemovalException(rejected);

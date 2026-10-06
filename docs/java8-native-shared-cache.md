@@ -30,7 +30,9 @@ including physical persistence/reopen, pre-transaction flush, rollback, retry,
 stale snapshots, staged checkpoint mutation, notification/flush order and failed
 checkpoint recovery. Manager tests use its actual worker and verify queued
 retirement, started-callback lifetime, backend rebinding and retained failure.
-Controlled adapter tests do not prove the missing native Bukkit manager adapter.
+The tests in this milestone use a controlled adapter. Subsequent production
+Bukkit adapter evidence and remaining integration gaps are recorded separately
+in `java8-bukkit-cache-owner.md`.
 
 During diff inspection, a refactored public flush was found to release native
 admission before its synchronous callback. The new shutdown-race regression
@@ -38,13 +40,13 @@ failed before correction and passes with the original admission boundary restore
 No existing assertion was removed or weakened. This is a regression introduced
 and corrected within this local implementation milestone, not an upstream claim.
 
-Still required before the full backport can be declared ready: production
-`BukkitUserCacheOwner`, native UserData/provider routing, manager population/map
-transitions, startup/reload/shutdown binding and real-server acceptance of those
-new routes. Native direct/bulk write and refresh entry points must join those
-routes before shared ownership is automatically enabled. The four upstream
-checkpoint dispositions remain partial. No feature flag, configuration default,
-physical schema, proxy payload, release version or dependency was changed here.
+The later Bukkit adapter milestone supplies the production `BukkitUserCacheOwner`
+and selected worker-side UserData/manager routing. Full provider bridges,
+startup/reload/shutdown binding, primary-thread population and real-server
+acceptance of the new routes remain required before automatic shared ownership.
+The four upstream checkpoint dispositions remain partial. No feature flag,
+configuration default, physical schema, proxy payload, release version or
+production dependency was changed here.
 
 Validation (actual Temurin 8u504, workspace-local Maven repository/temp directory):
 
@@ -72,6 +74,6 @@ payload and notification survive until their explicit flush retry succeeds.
 The exact packaged consumer passes all 12 existing real Java 8/Spigot 1.8.8
 root/timed checkpoint, publication retry, claim fencing and overflow
 park/disable/restart checks (`shared-native-cache-runtime.log`). This protects
-existing native behavior; it does not activate or validate the still-missing
-production shared manager/adapter route. All 167 original checkouts and both
+existing native behavior. Automatic startup of the new shared manager/adapter
+route remains unimplemented. All 167 original checkouts and both
 pinned references remain unchanged. Full-scope independent review remains pending.
