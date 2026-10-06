@@ -310,3 +310,39 @@ checks against the exact consumer (`timed-checkpoint-order-runtime.log`).
 Checkpoint comparison/conflict coverage is deterministic; no process-crash or
 shared-generation proof is inferred from this run. All 167 original checkouts
 and both references remain unchanged.
+
+## Monotonic successful checkpoint acknowledgement
+
+The successful checkpoint serializer lacked the non-empty v3 progress/fingerprint
+ordering already applied to failure restoration. A late acknowledgement could
+replace cursor two and its placeholder snapshot with cursor one, and a changed
+registry could replace the acknowledged record. New regressions invoke each
+production offline/timed queue dispatcher, publish through its captured checkpoint
+consumer and inspect the actual native cache/checked persistence path. Before the
+fix, two of three test methods fail: stale progress replaces the newer record and
+registry conflicts are accepted. The forward-progress countertest passes.
+
+The serializer now retains a strictly dominating persisted checkpoint and rejects
+incomparable non-empty v3 maps or registry conflicts before queue mutation. Valid
+forward progress continues to publish. Equal maps retain the existing metadata
+behavior. This is an additional fork correctness fix discovered during the audit;
+it does not establish complete ordering for nested command/child metadata,
+empty-progress snapshots, legacy checkpoints or cross-process replay ownership.
+Those remain explicit outstanding obligations. No schema, proxy format, public API,
+configuration default or release version changes.
+
+Actual Java 8 validation of the combined current worktree:
+
+- Offline/timed/order focused run: 51 tests PASS.
+- AdvancedCore clean install: 817 unit + 78 artifact = 895 PASS.
+- Exact-dependency VotingPlugin clean verify: 45 unit + one artifact = 46 PASS.
+- All passing runs have zero failures/errors/skips. Installed producer is
+  byte-identical to its target jar; base classes remain maximum major 52.
+- Existing actual Java 8/Spigot 1.8.8 checkpoint/publication retry, claim fencing,
+  native actions and overflow park/disable/restart acceptance: 12 checks PASS.
+  This is not a process-crash or shared-runtime automatic-startup acceptance claim.
+
+Workspace evidence is `evidence/checkpoint-acknowledgement-order-*`, including the
+red-before-fix run, commands/build logs, exact hashes and unchanged-original audit.
+All 167 originals and both pinned references remain unchanged. Full scope and the
+independent final review remain incomplete.

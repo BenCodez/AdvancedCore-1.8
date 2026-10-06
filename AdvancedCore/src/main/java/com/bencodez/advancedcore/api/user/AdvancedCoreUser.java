@@ -979,6 +979,16 @@ public class AdvancedCoreUser {
 		int marker = rewardEntry.indexOf("%placeholders%");
 		String reference = marker < 0 ? rewardEntry : rewardEntry.substring(0, marker);
 		QueuedReplay queuedReplay = parseQueuedReplay(stripAsyncRetryMarker(reference));
+        if (!queuedReplay.asyncReplayProgress.isEmpty() && !checkpoint.getReplayProgress().isEmpty()) {
+            boolean storedCovers = checkpointCovers(queuedReplay.asyncReplayProgress,
+                    queuedReplay.asyncReplayRegistryFingerprints, checkpoint.getReplayProgress(),
+                    checkpoint.getReplayRegistryFingerprints());
+            boolean proposedCovers = checkpointCovers(checkpoint.getReplayProgress(),
+                    checkpoint.getReplayRegistryFingerprints(), queuedReplay.asyncReplayProgress,
+                    queuedReplay.asyncReplayRegistryFingerprints);
+            if (storedCovers && !proposedCovers) return rewardEntry;
+            if (!proposedCovers) throw new IllegalStateException("Persisted and proposed replay checkpoints cannot be safely ordered");
+        }
 		String serialized = encodeAsyncReplayProgress(checkpoint.getReplayProgress(), checkpoint.getReplayRegistryFingerprints());
 		return queuedReference(queuedReplay) + (serialized.isEmpty() ? "" : ASYNC_PROGRESS_DELIMITER + serialized)
 				+ "%placeholders%" + ArrayUtils.makeString(checkpoint.getPlaceholders());
