@@ -4232,3 +4232,7 @@ Final actual Java 8 producer: 799 tests PASS; exact consumer: 46 tests PASS.
 Actual Spigot 1.8.8 timed checkpoint/timer retry/restart fixture: 12 checks PASS.
 The modern shared runtime cleanup/extraction obligations remain pending; this
 checkpoint does not establish full backport or PR readiness.
+
+The optional shared reward API and its Java 8 boundary are documented in
+[java8-shared-reward-orchestration.md](java8-shared-reward-orchestration.md).
+Native shared-runtime integration remains incomplete.
