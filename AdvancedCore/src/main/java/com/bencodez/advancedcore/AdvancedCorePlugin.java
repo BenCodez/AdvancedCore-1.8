@@ -152,7 +152,7 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	@Setter
 	private boolean loadUserData = true;
 	@Getter
-	private MySQL mysql;
+	private volatile MySQL mysql;
 	@Getter
 	private AdvancedCoreConfigOptions options = new AdvancedCoreConfigOptions();
 
@@ -1061,11 +1061,17 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	 * @param mysql the mysql to set
 	 */
 	public void setMysql(MySQL mysql) {
-		if (this.mysql != null) {
-			this.mysql.close();
-			this.mysql = null;
-		}
-		this.mysql = mysql;
+		if (this.mysql == mysql) return;
+		getUserStorageOwnership().replace(5, TimeUnit.SECONDS, () -> {
+			// Flush pending old-provider batches before publishing another pool.
+			// Do not create a user manager merely to replace an unused provider.
+			if (userManager != null && userManager.getDataManager() != null) {
+				userManager.getDataManager().clearCacheForShutdown();
+			}
+		}, () -> {
+			if (this.mysql != null) this.mysql.close();
+			this.mysql = mysql;
+		});
 	}
 
 	public void unRegisterValueRequest() {

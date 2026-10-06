@@ -23,6 +23,7 @@ public final class UserStorageOwnership {
     private int accepted;
     private boolean retiring;
     private boolean closed;
+    private boolean finalRetirement;
     private Thread retiringThread;
 
     /** Count the whole accepted synchronous operation, including time waiting for its UUID owner. */
@@ -88,14 +89,28 @@ public final class UserStorageOwnership {
 
     /** Seal admission and close only after accepted work and the synchronous final flush acknowledge. */
     public void retire(long timeout, java.util.concurrent.TimeUnit unit, Runnable flush, Runnable close) {
+        transition(timeout, unit, flush, close, true);
+    }
+
+    /** Replace a provider only after accepted work and old-provider flushing settle.
+     * A failed transition stays sealed; only an explicit successful replacement
+     * reopens admission. Final retirement can never be undone by replacement.
+     */
+    public void replace(long timeout, java.util.concurrent.TimeUnit unit, Runnable flush, Runnable publish) {
+        transition(timeout, unit, flush, publish, false);
+    }
+
+    private void transition(long timeout, java.util.concurrent.TimeUnit unit, Runnable flush, Runnable close, boolean permanent) {
         Objects.requireNonNull(unit, "unit"); Objects.requireNonNull(flush, "flush"); Objects.requireNonNull(close, "close");
         if (timeout < 0) throw new IllegalArgumentException("timeout");
         if (depth.get() != 0 || finalFlush.get()) throw new IllegalStateException("Cannot retire from admitted storage work");
         long remaining = unit.toNanos(timeout);
         long started = System.nanoTime();
         synchronized (admission) {
+            if (!permanent && finalRetirement) throw new IllegalStateException("Final storage retirement cannot be reopened");
             if (closed) return;
             if (retiringThread != null) throw new IllegalStateException("Storage retirement is already in progress");
+            if (permanent) finalRetirement = true;
             retiring = true;
             retiringThread = Thread.currentThread();
         }
@@ -118,7 +133,7 @@ public final class UserStorageOwnership {
                 if (accepted != 0) throw new IllegalStateException("Final storage flush has not settled; provider remains open");
             }
             close.run();
-            synchronized (admission) { closed = true; }
+            synchronized (admission) { closed = permanent; retiring = permanent; }
         } finally { synchronized (admission) { retiringThread = null; } }
     }
 

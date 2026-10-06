@@ -1102,3 +1102,59 @@ captured-online VoteReminder/VoteShop changes from 4a137fd still need their own
 behavior-aware backports. Full ledger/source parity and final independent review
 remain incomplete. The earlier global-reload/pool-ownership TODO is superseded
 only for the tested native global provider paths described here.
+
+### Native MySQL setter drain and reusable ownership transition
+
+The public setMysql setter now seals new native checked/cache admission, drains
+accepted synchronous/queued bodies, acknowledges pending old-pool cache batches,
+then closes the predecessor and publishes the candidate. Same-instance assignment
+is a no-op, retaining both the live pool and pending batch. Flush uses the existing
+final-flush scope so storage callbacks cannot submit more asynchronous work while
+provider ownership changes. Change notifications are suppressed for these retired
+cache generations; ordinary cache retirement behavior is unchanged. Candidate
+ownership stays with the caller if replacement fails before publication.
+
+UserStorageOwnership.replace extends the existing authoritative owner; the fixed
+UUID slots/revisions and accepted scopes are never reset. Only a successful
+replacement reopens admission. Flush/close failures and interrupted/expired drains
+remain visible and sealed for explicit retry. A final retirement request is
+permanent even if its drain fails; replacement cannot undo shutdown. Callback work
+runs outside the admission monitor. No new executor, queue or production dependency.
+
+Two recorded native regressions failed before the fix (2 tests, 2 assertions,
+0 errors/skips), then passed. Extended focused tests pass 27/27. Coordinated
+Temurin1.8.0_504/Maven3.9.9 clean install/verify passes AdvancedCore 262 unit +16
+packaged tests, VotingPlugin 45 unit +1 packaged test, all zero failures/errors/skips.
+Packaged base classes are1822/2439, maximum major52. Producer SHA256
+8744b0faae4c29f76c29051bf1c13780c9d7eb5ea7dd9e826f6623f42780cb98;
+consumer SHA256 d245b3294414e523b58519687a73b72c8eff6777c221889ad22be459a45911ee.
+Exact commands (with JAVA_HOME/PATH set to workspace JDK8):
+`mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install`
+and the same flags with `-f VotingPlugin/pom.xml clean verify` in the consumer.
+Evidence main-provider-rebind-clean-install.log,
+main-provider-rebind-consumer-clean-verify.log,
+main-provider-rebind-coordinated-build-results.json.
+
+Real packaged Java8/Spigot1.8.8/MariaDB11.8.6 acceptance at that consumer hash passes
+same-instance main assignment retaining pool/pending batch, native replacement
+flushing pending points17, global borrowed/independent ownership, clean disable
+flushing points19 and restart persistence. ConnectorJ5.1.14 remains an explicit test
+server classpath fixture, not a new production dependency. Evidence
+main-provider-rebind-mysql-live.log/global-provider-mysql-runtime-results.json.
+
+This is not full configuration-driven reload acceptance. loadConfig currently
+mutates Options before selecting a new provider; its full old-config/type cache
+ordering still requires fenced integration. Public loadUserAPI SQLite replacement,
+FLAT transitions, convertDataStorage, raw low-level provider callers and same-instance
+plugin re-enable remain unfinished. Do not infer those guarantees from direct
+setMysql tests with unchanged storage configuration. Full upstream ledger,
+durable reward root processing and final independent review also remain incomplete.
+
+Exact consumer also passes MainRebindSQL2 SQLite async pipeline/snapshot/mutation/
+bulk/removal/vote/reward/points10,total1/clean disable/integrity/restart. The first
+MainRebindSQL fixture attempt lacked its temporary command helper and timed out
+before acceptance markers; the harness now owns install/cleanup and uses a fresh
+identity. This fixture-only failure remains recorded, not treated as product
+evidence. Four final MySQL/SQLite server logs have no lifecycle/linkage/failure
+markers or fixture credentials. Evidence main-provider-rebind-sqlite-fixed-live.log
+and checked-cache-runtime-results-MainRebindSQL2.json.
