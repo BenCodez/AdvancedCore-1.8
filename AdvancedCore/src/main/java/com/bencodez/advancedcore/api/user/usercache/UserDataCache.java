@@ -6,6 +6,7 @@ import java.util.Map.Entry;
 import java.util.Queue;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import com.bencodez.advancedcore.api.user.AdvancedCoreUser;
@@ -180,22 +181,37 @@ public class UserDataCache {
 		}
 	}
 
-	private void scheduleChanges() {
+	private synchronized void scheduleChanges() {
+		if (scheduled || cachedChanges == null || cachedChanges.isEmpty()) {
+			return;
+		}
 		manager.getPlugin().debug("Schedule changes");
 		scheduled = true;
-
-		manager.getTimer().schedule(new Runnable() {
-
-			@Override
-			public void run() {
-				try {
-					processChanges();
-					scheduled = false;
-				} catch (Exception e) {
-					manager.getPlugin().debug(e);
+		try {
+			manager.getTimer().schedule(new Runnable() {
+				@Override
+				public void run() {
+					try {
+						processChanges();
+					} catch (Exception e) {
+						manager.getPlugin().debug(e);
+					} finally {
+						onScheduledFlushComplete();
+					}
 				}
-			}
-		}, 3, TimeUnit.SECONDS);
+			}, 3, TimeUnit.SECONDS);
+		} catch (RejectedExecutionException e) {
+			scheduled = false;
+			// Preserve the legacy visible scheduling failure, allowing a later retry.
+			throw e;
+		}
+	}
+
+	private synchronized void onScheduledFlushComplete() {
+		scheduled = false;
+		if (cachedChanges != null && !cachedChanges.isEmpty()) {
+			scheduleChanges();
+		}
 	}
 
 	public void updateCache(HashMap<String, DataValue> tempCache) {

@@ -171,3 +171,22 @@ and two packaged read regressions cover apostrophes, SQL-looking names, boolean
 format and empty updates. The read regressions execute JDBC queries through the
 actual shaded Java8 dependency layout, with SQLite used for SELECT-compatible
 fixtures; that is not a claim of exercising MySQL-specific write SQL on SQLite.
+
+## Continued cache scheduler backport
+
+The scheduling portion of upstream `fd1676d24aafbaaccc6fdfe4a04bba3bd5a32462`
+now resets its ownership flag in `finally`, schedules changes queued during a
+write, and resets the flag after rejected scheduling. The legacy three-second
+coalescing interval is unchanged. Scheduling rejection still propagates to the
+caller rather than becoming a silent success.
+
+Three regressions failed against the unchanged scheduler, then passed after the
+fix. Two valid-input checks cover coalescing and an already scheduled task
+finishing after cache dump. Actual Java8 `clean install` passes 59 unit tests and
+three packaged-artifact tests, with no failures, errors, or skips.
+
+This is a partial port of that upstream commit. It does not claim serialized
+concurrent flushes, retirement fencing, or durable failure acknowledgement from
+legacy void storage adapters. SQL/file write failure propagation and queue
+retention remain a separate coordinated storage/cache backport under audit;
+scheduling completion alone is not proof of a committed vote or point write.
