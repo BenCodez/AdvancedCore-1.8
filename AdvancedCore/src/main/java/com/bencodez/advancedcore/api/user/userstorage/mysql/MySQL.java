@@ -239,10 +239,11 @@ public class MySQL {
 	}
 
 	private void deletePlayer(String uuid, boolean strict) {
-		String q = "DELETE FROM " + getName() + " WHERE uuid='" + uuid + "';";
+		String q = "DELETE FROM " + getName() + " WHERE uuid=?;";
 		plugin.devDebug("MYSQL QUERY: " + q);
 		try {
 			Query query = new Query(mysql, q);
+			query.setParameter(1, uuid);
 			query.executeUpdate();
 		} catch (SQLException e) {
 			if (strict) {
@@ -373,13 +374,13 @@ public class MySQL {
 
 	public ArrayList<Column> getExactQuery(Column column) {
 		ArrayList<Column> result = new ArrayList<>();
-		String query = "SELECT * FROM " + getName() + " WHERE `" + column.getName() + "`='"
-				+ column.getValue().getString() + "';";
+		String query = "SELECT * FROM " + getName() + " WHERE `" + column.getName() + "`=?;";
 		plugin.devDebug("MYSQL QUERY: " + query);
 
 		try (Connection conn = mysql.getConnectionManager().getConnection();
 				PreparedStatement sql = conn.prepareStatement(query)) {
-			ResultSet rs = sql.executeQuery();
+			sql.setObject(1, toSqlValue(column.getValue()));
+			try (ResultSet rs = sql.executeQuery()) {
 
 			if (rs.next()) {
 				for (int i = 1; i <= rs.getMetaData().getColumnCount(); i++) {
@@ -412,8 +413,8 @@ public class MySQL {
 					result.add(rCol);
 				}
 			}
-			rs.close();
 			return result;
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		} catch (ArrayIndexOutOfBoundsException e) {
@@ -550,22 +551,17 @@ public class MySQL {
 	}
 
 	public String getUUID(String playerName) {
-		String query = "SELECT uuid FROM " + getName() + " WHERE " + "PlayerName" + "='" + playerName + "';";
+		String query = "SELECT uuid FROM " + getName() + " WHERE PlayerName=?;";
 		plugin.devDebug("MYSQL QUERY: " + query);
 		try (Connection conn = mysql.getConnectionManager().getConnection();
 				PreparedStatement sql = conn.prepareStatement(query)) {
-			ResultSet rs = sql.executeQuery();
-			/*
-			 * Query sql = new Query(mysql, query); ResultSet rs = sql.executeQuery();
-			 */
-			if (rs.next()) {
-				String uuid = rs.getString("uuid");
-				if (uuid != null && !uuid.isEmpty()) {
-					rs.close();
-					return uuid;
+			sql.setString(1, playerName);
+			try (ResultSet rs = sql.executeQuery()) {
+				if (rs.next()) {
+					String uuid = rs.getString("uuid");
+					if (uuid != null && !uuid.isEmpty()) return uuid;
 				}
 			}
-			rs.close();
 		} catch (SQLException e) {
 			e.printStackTrace();
 		} catch (ArrayIndexOutOfBoundsException e) {
@@ -605,35 +601,19 @@ public class MySQL {
 	}
 
 	public void insertQuery(String index, List<Column> cols) {
-		String query = "INSERT IGNORE " + getName() + " ";
-
-		query += "set uuid='" + index + "', ";
-
-		for (int i = 0; i < cols.size(); i++) {
-			Column col = cols.get(i);
-			if (i == cols.size() - 1) {
-				if (col.getValue().isString()) {
-					query += "`" + col.getName() + "`='" + col.getValue().getString() + "';";
-				} else if (col.getValue().isBoolean()) {
-					query += "`" + col.getName() + "`='" + col.getValue().getBoolean() + "';";
-				} else if (col.getValue().isInt()) {
-					query += "`" + col.getName() + "`='" + col.getValue().getInt() + "';";
-				}
-			} else {
-				if (col.getValue().isString()) {
-					query += "`" + col.getName() + "`='" + col.getValue().getString() + "', ";
-				} else if (col.getValue().isBoolean()) {
-					query += "`" + col.getName() + "`='" + col.getValue().getBoolean() + "', ";
-				} else if (col.getValue().isInt()) {
-					query += "`" + col.getName() + "`='" + col.getValue().getInt() + "', ";
-				}
-			}
-		}
+		StringBuilder query = new StringBuilder("INSERT IGNORE INTO ").append(getName()).append(" (`uuid`");
+		for (Column col : cols) query.append(", `").append(col.getName()).append("`");
+		query.append(") VALUES (?");
+		for (int i = 0; i < cols.size(); i++) query.append(", ?");
+		query.append(");");
 
 		plugin.devDebug("MYSQL QUERY: " + query);
 
 		try {
-			new Query(mysql, query).executeUpdate();
+			Query prepared = new Query(mysql, query.toString());
+			prepared.setParameter(1, index);
+			for (int i = 0; i < cols.size(); i++) prepared.setParameter(i + 2, toSqlValue(cols.get(i).getValue()));
+			prepared.executeUpdate();
 			String playerName = "";
 			for (Column col : cols) {
 				if (col.getName().equalsIgnoreCase("playername")) {
@@ -670,46 +650,23 @@ public class MySQL {
 	}
 
 	public void update(String index, List<Column> cols, boolean runAsync) {
-		for (Column col : cols) {
-			checkColumn(col.getName(), col.getDataType());
-		}
+		for (Column col : cols) checkColumn(col.getName(), col.getDataType());
+		if (cols.isEmpty()) return;
 		synchronized (object2) {
 			if (getUuids().contains(index) || containsKeyQuery(index)) {
-
-				String query = "UPDATE " + getName() + " SET ";
-
+				StringBuilder query = new StringBuilder("UPDATE ").append(getName()).append(" SET ");
 				for (int i = 0; i < cols.size(); i++) {
-					Column col = cols.get(i);
-					if (i == cols.size() - 1) {
-						if (col.getValue().isString()) {
-							query += "`" + col.getName() + "`='" + col.getValue().getString() + "'";
-						} else if (col.getValue().isBoolean()) {
-							query += "`" + col.getName() + "`='" + col.getValue().getBoolean() + "'";
-						} else if (col.getValue().isInt()) {
-							query += "`" + col.getName() + "`='" + col.getValue().getInt() + "'";
-						}
-					} else {
-						if (col.getValue().isString()) {
-							query += "`" + col.getName() + "`='" + col.getValue().getString() + "', ";
-						} else if (col.getValue().isBoolean()) {
-							query += "`" + col.getName() + "`='" + col.getValue().getBoolean() + "', ";
-						} else if (col.getValue().isInt()) {
-							query += "`" + col.getName() + "`='" + col.getValue().getInt() + "', ";
-						}
-					}
+					query.append("`").append(cols.get(i).getName()).append("`=?");
+					if (i != cols.size() - 1) query.append(", ");
 				}
-				query += " WHERE uuid=";
-				query += "'" + index + "';";
-
-				plugin.devDebug("MYSQL QUERY: " + query);
-
+				query.append(" WHERE uuid=?;");
+				plugin.devDebug("MYSQL QUERY: " + query.toString());
 				try {
-					Query q = new Query(mysql, query);
-					if (runAsync) {
-						q.executeUpdateAsync();
-					} else {
-						q.executeUpdate();
-					}
+					Query prepared = new Query(mysql, query.toString());
+					for (int i = 0; i < cols.size(); i++) prepared.setParameter(i + 1, toSqlValue(cols.get(i).getValue()));
+					prepared.setParameter(cols.size() + 1, index);
+					if (runAsync) prepared.executeUpdateAsync();
+					else prepared.executeUpdate();
 				} catch (SQLException e) {
 					e.printStackTrace();
 				}
@@ -727,31 +684,29 @@ public class MySQL {
 		checkColumn(column, value.getType());
 		synchronized (object2) {
 			if (getUuids().contains(index) || containsKeyQuery(index)) {
-				String query = "UPDATE " + getName() + " SET ";
-
-				if (value.isString()) {
-					query += column + "='" + value.getString() + "'";
-				} else if (value.isBoolean()) {
-					query += column + "='" + value.getBoolean() + "'";
-				} else if (value.isInt()) {
-					query += column + "='" + value.getInt() + "'";
-				}
-				query += " WHERE uuid=";
-				query += "'" + index + "';";
-
+				String query = "UPDATE " + getName() + " SET `" + column + "`=? WHERE uuid=?;";
 				plugin.devDebug("MYSQL QUERY: " + query);
 				try {
-					Query q = new Query(mysql, query);
-					q.executeUpdate();
+					Query prepared = new Query(mysql, query);
+					prepared.setParameter(1, toSqlValue(value));
+					prepared.setParameter(2, index);
+					prepared.executeUpdate();
 				} catch (SQLException e) {
 					e.printStackTrace();
 				}
-
 			} else {
 				insert(index, column, value);
 			}
 		}
+	}
 
+	private Object toSqlValue(DataValue value) {
+		if (value == null) return null;
+		if (value.isString()) return value.getString();
+		// Legacy columns are TEXT and readers use Boolean.valueOf(String).
+		if (value.isBoolean()) return Boolean.toString(value.getBoolean());
+		if (value.isInt()) return value.getInt();
+		return value.toString();
 	}
 
 	public void wipeColumnData(String columnName, DataType dataType) {
