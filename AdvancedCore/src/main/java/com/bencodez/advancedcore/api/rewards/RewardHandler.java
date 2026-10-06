@@ -1901,6 +1901,34 @@ public class RewardHandler {
 
 		injectedRewards.add(new RewardInjectConfigurationSection("Javascript") {
 
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean supportsAsyncSynchronization(){return false;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplaySelection(placeholders);}
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,
+                    AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if((section==null || !section.getBoolean("Enabled")) && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                String path=Reward.replaySelection(placeholders,()->{
+                    String expression=PlaceholderUtils.replacePlaceHolders(user.getOfflinePlayer(),section.getString("Expression"));
+                    boolean selected=new JavascriptEngine().addPlayer(user.getOfflinePlayer())
+                            .getBooleanValue(PlaceholderUtils.replacePlaceHolder(expression,placeholders));
+                    String branch=selected?"TrueRewards":"FalseRewards";
+                    return hasConfiguredNestedReward(section,branch)?branch:"none";
+                });
+                if(path==null || path.equals("none"))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                if(!path.equals("TrueRewards") && !path.equals("FalseRewards"))return failedQueueReward(new IllegalStateException("Unknown Javascript reward replay branch"));
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey(),occurrence=Reward.currentReplayOccurrenceId();
+                String prefix=reward.getName()+".Javascript";
+                return Reward.persistReplayMetadataAsync(plugin,placeholders).thenCompose(unused->
+                        Reward.replaySingleNestedReward(plugin,placeholders,"selected",state,key,()->{
+                            if(section==null)return failedQueueReward(new IllegalStateException("Selected Javascript reward definition is missing"));
+                            RewardBuilder builder=new RewardBuilder(section,path).withPrefix(prefix).withPlaceHolder(placeholders);
+                            Reward.withReplayState(builder.getRewardOptions(),state,key,"path:"+path,occurrence);
+                            return builder.sendAsync(user);
+                        })).thenApply(unused->(Object)null);
+            }
+
 			@Override
 			public String onRewardRequested(Reward reward, AdvancedCoreUser user, ConfigurationSection section,
 					HashMap<String, String> placeholders) {

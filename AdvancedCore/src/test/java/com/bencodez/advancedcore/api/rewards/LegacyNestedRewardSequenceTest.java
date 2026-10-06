@@ -131,6 +131,43 @@ class LegacyNestedRewardSequenceTest {
             }
         });
     }
+    @Test void realJavascriptBuiltinAwaitsSelectedChildAndPreservesExpressionSubstitution() {
+        for(boolean outcome:Arrays.asList(true,false))fixture(f->{
+            Reward child=f.reward("child");CompletableFuture<Void> effect=new CompletableFuture<>();when(child.giveRewardAsync(eq(f.user),any())).thenReturn(effect);
+            YamlConfiguration config=new YamlConfiguration();config.set("Javascript.Enabled",true);config.set("Javascript.Expression","%decision%");config.set("Javascript."+(outcome?"TrueRewards":"FalseRewards"),"child");
+            HashMap<String,String> placeholders=new HashMap<>();placeholders.put("decision","true");Reward parent=mock(Reward.class);when(parent.getName()).thenReturn("parent");
+            try(MockedConstruction<com.bencodez.advancedcore.api.javascript.JavascriptEngine> engines=mockConstruction(com.bencodez.advancedcore.api.javascript.JavascriptEngine.class,(mock,context)->{when(mock.addPlayer(any(org.bukkit.OfflinePlayer.class))).thenReturn(mock);when(mock.addPlayer((org.bukkit.OfflinePlayer)isNull())).thenReturn(mock);when(mock.getBooleanValue("true")).thenReturn(outcome);})) {
+                CompletionStage<Object> result=f.builtin("Javascript").onRewardRequestAsync(parent,f.user,config,placeholders);f.drain();assertFalse(result.toCompletableFuture().isDone());
+                verify(engines.constructed().get(0)).getBooleanValue("true");effect.complete(null);f.drain();await(result);
+            }
+        });
+    }
+    @Test void disabledJavascriptDoesNotEvaluateOrDispatchChildren() {
+        fixture(f->{
+            YamlConfiguration config=new YamlConfiguration();config.set("Javascript.Enabled",false);config.set("Javascript.TrueRewards","child");
+            try(MockedConstruction<com.bencodez.advancedcore.api.javascript.JavascriptEngine> engines=mockConstruction(com.bencodez.advancedcore.api.javascript.JavascriptEngine.class)) {
+                CompletionStage<Object> result=f.builtin("Javascript").onRewardRequestAsync(mock(Reward.class),f.user,config,new HashMap<>());f.drain();await(result);assertTrue(engines.constructed().isEmpty());
+            }
+        });
+    }
+    @Test void optionalEmptyJavascriptBranchIsAValidNoOp() {
+        for(Object value:Arrays.asList(null,"",Collections.emptyList()))fixture(f->{
+            YamlConfiguration config=new YamlConfiguration();config.set("Javascript.Enabled",true);config.set("Javascript.Expression","true");config.set("Javascript.TrueRewards",value);
+            try(MockedConstruction<com.bencodez.advancedcore.api.javascript.JavascriptEngine> engines=mockConstruction(com.bencodez.advancedcore.api.javascript.JavascriptEngine.class,(mock,context)->{when(mock.addPlayer((org.bukkit.OfflinePlayer)isNull())).thenReturn(mock);when(mock.getBooleanValue("true")).thenReturn(true);})) {
+                CompletionStage<Object> result=f.builtin("Javascript").onRewardRequestAsync(mock(Reward.class),f.user,config,new HashMap<>());f.drain();await(result);verify(f.handler,never()).getReward(anyString());
+            }
+        });
+    }
+    @Test void inlineJavascriptKeepsLegacyPrefixAndPropagatesChildFailure() {
+        fixture(f->{
+            YamlConfiguration config=new YamlConfiguration();config.set("Javascript.Enabled",true);config.set("Javascript.Expression","true");config.set("Javascript.TrueRewards.EXP",7);CompletableFuture<Void> effect=new CompletableFuture<>();
+            try(MockedConstruction<com.bencodez.advancedcore.api.javascript.JavascriptEngine> engines=mockConstruction(com.bencodez.advancedcore.api.javascript.JavascriptEngine.class,(mock,context)->{when(mock.addPlayer((org.bukkit.OfflinePlayer)isNull())).thenReturn(mock);when(mock.getBooleanValue("true")).thenReturn(true);});
+                MockedConstruction<Reward> children=mockConstruction(Reward.class,(mock,context)->{assertEquals("parent.Javascript_TrueRewards",context.arguments().get(0));when(mock.giveRewardAsync(eq(f.user),any())).thenReturn(effect);})) {
+                Reward parent=mock(Reward.class);when(parent.getName()).thenReturn("parent");CompletionStage<Object> result=f.builtin("Javascript").onRewardRequestAsync(parent,f.user,config,new HashMap<>());f.drain();assertEquals(1,children.constructed().size());assertFalse(result.toCompletableFuture().isDone());
+                effect.completeExceptionally(new IllegalStateException("child failed"));f.drain();assertThrows(CompletionException.class,()->await(result));
+            }
+        });
+    }
     private Object await(CompletionStage<?> stage) {
         try{return stage.toCompletableFuture().get(2,TimeUnit.SECONDS);}
         catch(ExecutionException failure){throw new CompletionException(failure.getCause());}

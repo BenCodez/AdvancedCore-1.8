@@ -3176,3 +3176,76 @@ log, and count 2 before/after restart. Both lanes were rerun; production code an
 native once assertions were unchanged. This is acknowledged named-branch/cursor
 recovery, not arbitrary pending inline mutation, unacknowledged effects or power
 loss.
+
+
+## Javascript conditional branch awaited replay (2026-10-06)
+
+Adapted the pinned conditional Javascript async selection behavior into the
+existing anonymous legacy injector. The selected TrueRewards/FalseRewards branch
+is checkpointed before child dispatch, shares the parent's state and occurrence,
+and is awaited through the existing builder/configuration dispatch and durable
+single-child marker. Replay uses the stored decision rather than evaluating the
+expression again, even when Javascript.Enabled was disabled after admission.
+Missing unfinished definitions and unknown stored branch values fail explicitly;
+the durable single-child marker skips its child before definition resolution.
+
+Preserved the existing external-player placeholder then local-placeholder
+substitution order and Java 8 JavascriptEngine call. No modern addPlaceholders
+API or Java 9+ method was copied. The legacy synchronous callback, standalone
+Javascripts list handler, expression/engine failure semantics and configuration
+keys are unchanged. The awaited path carries parent placeholders to its child.
+Missing, blank or empty-list optional selected branches are valid initial no-ops;
+disabled fresh Javascript does not construct an engine or dispatch a child.
+Inline generated names retain the `parent.Javascript_TrueRewards` prefix shape.
+
+Four new actual-builtin regressions cover true/false child retention and expression
+substitution, disabled execution, optional empty branches, and actual inline
+constructor name/failure propagation. The first selected-child regression failed
+against the preceding source; the focused nested suite now passes 16 tests with
+zero failures/errors/skips. Old exact consumer case `6d3eea0fad` also fails the
+real Java 8/Spigot callback-settlement assertion, proving the gap beyond mocks.
+
+Actual true, false, inline and recursive Java 8 Nashorn forms pass four checks
+each on the exact consumer below: physical parent queue remains until selected
+child completion, callback settlement follows child release, queue removal occurs
+only afterward, and linkage/shutdown stay clean. This uses the real builtin
+expression engine; no mocked boolean decision is used by live acceptance.
+
+Temurin 8u504 was first on PATH; Maven 3.9.9 commands:
+
+```shell
+mvn -B -f AdvancedCore/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean install
+mvn -B -f VotingPlugin/pom.xml -Dmaven.resolver.transport=wagon \
+  -Dmaven.repo.local=/workspace/votingplugin-1.8-port-workspace/.m2/repository \
+  -Djava.io.tmpdir=/workspace/votingplugin-1.8-port-workspace/runtime/tmp clean verify
+```
+
+AdvancedCore: 553 unit + 18 artifact checks = 571 passed; producer SHA-256
+`9f62c265f429461eb908c613128b00e48c80689c367380ea7e36d58019de96c1`. VotingPlugin: 45 unit + 1 artifact check = 46 passed against that
+exact installed workspace-local producer; consumer SHA-256 `2d6aabf7cc684bfb6df4ee28389ae55105e245a53991079342ef98ec163ba6d6`.
+Zero failures/errors/skips. All 1,834 producer and 2,451 consumer base classes
+remain major <=52. No dependency, API signature, release metadata, database schema
+or proxy/queue format changed.
+
+Lucky, AdvancedWorld, arbitrary prepared inline-definition freezing,
+clear/wipe/lifecycle races, the full remaining upstream ledger/platform matrix
+and independent final review remain in scope. This selection backport does not
+freeze arbitrary mutable inline values or prove external-effect/power-loss
+atomicity. No full-main alignment, final approval or PR readiness is claimed.
+No push, PR, release or deployment was performed.
+
+
+Javascript SIGKILL acceptance passed 12 checks in each lane on that exact
+consumer: 474e521c16, ab75755fe2. The true branch child's physical checkpoint is
+acknowledged and native player data saved before SIGKILL (-9 without plugin
+disable), while its parent remains pending. The fixture changes the expression
+to false and sets Javascript.Enabled false before restart, retaining both branch
+definitions. Automatic offline-login/timed-startup replay uses the persisted true
+branch, does not run its completed native effect again, acknowledges the remaining
+child/parent state and removes the physical queue. Durable effect count remains
+exactly 1; native totals remain 3 diamonds and 7 experience. Occurrence identity,
+SQLite integrity, linkage and shutdown pass. These are acknowledged selected-child
+checks with retained definitions and explicitly saved player state, not arbitrary
+mutated pending inline values, unacknowledged effects or power loss.
