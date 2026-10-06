@@ -100,6 +100,16 @@ class LegacyDirectUserDataTest {
         verify(f.mysql).updateStrict(anyString(), anyList());
     }
 
+    @Test void queuedValueArrivingDuringOlderFlushIsNotOverwrittenByDirectPublication() throws Exception {
+        Fixture f = new Fixture(); List<Integer> writes = new ArrayList<>();
+        doAnswer(call -> { List<Column> columns = call.getArgument(1); int value = columns.get(0).getValue().getInt(); writes.add(value);
+            if (value == 2) f.cache.addChange(new UserDataChangeInt("Points", 9), true); return null; })
+            .when(f.mysql).updateStrict(anyString(), anyList());
+        f.cache.addChange(new UserDataChangeInt("Points", 2), true); f.data.setInt("Points", 7, false);
+        assertEquals(Arrays.asList(2, 7), writes); assertEquals(9, f.cache.getCachedValue("Points").getInt());
+        assertTrue(f.cache.hasChangesToProcess()); f.cache.processChanges(); assertEquals(Arrays.asList(2, 7, 9), writes);
+    }
+
     static class Fixture {
         final AdvancedCorePlugin plugin=mock(AdvancedCorePlugin.class);
         final UserManager users=mock(UserManager.class);
@@ -113,6 +123,7 @@ class LegacyDirectUserDataTest {
             java.util.concurrent.ConcurrentHashMap<UUID,UserDataCache> registry=new java.util.concurrent.ConcurrentHashMap<>();registry.put(cache.getUuid(),cache);
             when(manager.getUserDataCache()).thenReturn(registry);when(users.getDataManager()).thenReturn(manager);
             doCallRealMethod().when(manager).writeDirect(any(),anyString(),any(),any());
+            doCallRealMethod().when(manager).writeBatch(any(),anyMap(),any(),anyBoolean());
             String identity=cache.getUuid().toString();when(user.getPlugin()).thenReturn(plugin);when(user.getUUID()).thenReturn(identity);
             when(user.getUserData()).thenReturn(data);when(plugin.getStorageType()).thenReturn(UserStorage.MYSQL);
             when(plugin.getMysql()).thenReturn(mysql);when(plugin.getUserManager()).thenReturn(users);

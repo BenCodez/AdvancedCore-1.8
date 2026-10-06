@@ -149,6 +149,24 @@ public class UserDataManager {
 		else current.writeDirect(key, value, storageWrite);
 	}
 
+	/** Bulk writes preserve the legacy absence of their own change notification. */
+	public void writeBatch(com.bencodez.advancedcore.api.user.AdvancedCoreUser user,
+			java.util.Map<String, com.bencodez.simpleapi.sql.data.DataValue> values,
+			Runnable storageWrite, boolean publishActiveCache) {
+		if (values.isEmpty()) return;
+		java.util.Objects.requireNonNull(storageWrite, "storageWrite");
+		UUID identity = UUID.fromString(user.getUUID());
+		UserStorageOwnership.Slot owner = getPlugin().getUserStorageOwnership().owner(identity);
+		UserDataCache current;
+		owner.getLock().lock();
+		try {
+			current = publishActiveCache ? getUserDataCache().get(identity) : null;
+			if (current != null && current.isRetired()) current = null;
+			if (current == null) storageWrite.run();
+		} finally { owner.getLock().unlock(); }
+		if (current != null) current.writeDirectBatch(values, storageWrite);
+	}
+
 	public void clearCacheBasic() {
 		if (plugin.getStorageType().equals(UserStorage.MYSQL)) {
 			plugin.getMysql().clearCacheBasic();

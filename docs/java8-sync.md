@@ -826,3 +826,60 @@ occurrences/checkpoints/replay and root async decisions/defer/native action
 receipts remain to be integrated. No schema/configuration/wire/release-version
 change; additive ownership getter/helper only. This cohort is not live MySQL,
 FLAT, proxy or failed-shutdown acceptance, full main parity, or final PR readiness.
+
+### Checked bulk user-data replacement
+
+All legacy `UserData.setValues` overloads now use a defensive copy and one
+synchronous checked native batch under the existing plugin-local UUID owner.
+SQL continues to ignore the exact `uuid` key; empty effective batches are no-ops.
+The active-store cache flushes its older finite prefix first, then publishes
+matching fields only after storage acknowledges the replacement. Newer queued
+fields remain visible, including fields queued during that older flush; the
+scalar direct setter now guards this timing window too. A failed new batch does
+not publish its values. A successfully flushed older prefix remains committed;
+a failed older flush retains its pending work and prevents the newer write.
+Explicit alternate-storage conversions do not flush or publish active-store
+cache state. FLAT writes use the existing checked atomic-file owner, retaining
+unrelated fields and rejecting malformed predecessor YAML without replacing it.
+
+Bulk writes retain their legacy absence of their own change notifications.
+Older-prefix notifications run after releasing ownership. If such a callback
+fails after the bulk replacement committed, `CommittedUserDataBatchException`
+exposes an immutable map of acknowledged values; callers must not retry the
+committed effect. Callback failures are suppressed onto a primary storage
+failure instead of hiding it. No new executor, dependency, schema, configuration,
+proxy format or release-version change is introduced.
+
+Deterministic tests cover batch acknowledgement/failure, queued-overlay races,
+alternate storage, callbacks awaiting another writer, SQL identity/no-op behavior,
+uncached writes, invalid input, and real FLAT file publication/malformed-file
+rejection through the public bulk entry point without starting the legacy poller.
+The coordinated Java 8 clean builds and exact-consumer SQLite runtime evidence
+are recorded in the isolated workspace. This does not cover legacy SQL
+delete/wipe/migration bypasses, global lifecycle admission/drain, cross-process
+atomicity, strict reward queue append/provenance/checkpoints/replay or the full
+pinned upstream ledger. Live MySQL/FLAT/proxy acceptance for this portion and
+complete final independent review remain outstanding.
+
+Validation for this portion used Temurin 1.8.0_504 and Maven 3.9.9 with
+`-Dmaven.resolver.transport=wagon`, the workspace-local Maven repository and
+workspace-local temporary directory. Commands actually completed:
+`mvn -B -f AdvancedCore/pom.xml -Dtest=LegacyCheckedBulkUserDataTest test`
+(14 tests), producer `mvn -B -f AdvancedCore/pom.xml clean install`
+(212 unit + 12 artifact tests), and exact-consumer
+`mvn -B -f VotingPlugin/pom.xml clean verify` (19 unit + 1 artifact test).
+All had zero failures, errors and skips; 1820 / 2440 base classes have maximum
+major 52. Full commands/output and artifact hashes are in
+`bulk-write-flat-focused.log`, `bulk-write-flat-clean-install.log`,
+`bulk-write-flat-consumer-clean-verify.log`, `bulk-write-flat-build-results.json`.
+
+Final consumer SHA256
+`3b2f23ada6954cf6e797f3ab63ae60c10ba143cd8ad6a668b95055bb9f4d7871`
+passed real Java 8 / Spigot 1.8.8 `BulkFinalSQL` acceptance: checked two-field
+bulk SQLite write/readback/cache publication and restoration, cached mutation,
+retirement/uncached write/repopulation, detached reward snapshot, pending async
+reward receipt, vote/reward, points10,total1, graceful stop, SQLite integrity and
+restart persistence. No observed linkage/checked-write errors. Evidence:
+`checked-cache-runtime-results-BulkFinalSQL.json`, `bulk-write-final-live.log`.
+The controlled test is SQLite-only; deterministic real-file FLAT tests do not
+constitute full live FLAT startup/reward acceptance.

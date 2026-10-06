@@ -285,7 +285,7 @@ public class UserDataCache {
 				committedValue = value;
 				synchronized (this) {
 					// Later queued changes remain optimistic and must not be overwritten.
-					if (Objects.equals(expectedVersion, changedAt.get(key))) {
+					if (Objects.equals(expectedVersion, changedAt.get(key)) && !pendingKeys().contains(key)) {
 						cache.put(key, value);
 						changedAt.put(key, ++snapshotVersion);
 					}
@@ -314,6 +314,55 @@ public class UserDataCache {
 			}
 		}
 		return committedValue;
+	}
+
+	/** Publish a checked bulk replacement without adding legacy bulk change callbacks. */
+	public void writeDirectBatch(java.util.Map<String, DataValue> values, Runnable storageWrite) {
+		HashMap<String, DataValue> candidate = new HashMap<>(values);
+		if (candidate.isEmpty()) return;
+		Objects.requireNonNull(storageWrite, "storageWrite");
+		for (Entry<String, DataValue> entry : candidate.entrySet()) {
+			Objects.requireNonNull(entry.getKey(), "key");
+			Objects.requireNonNull(entry.getValue(), "value");
+		}
+		Runnable pendingNotification = null;
+		Throwable failure = null;
+		boolean committed = false;
+		batchOwner.lock();
+		try {
+			synchronized (this) {
+				if (uuid == null || removing || inFlight) throw new IllegalStateException("User cache cannot accept a bulk write");
+			}
+			pendingNotification = flushClaimedChanges();
+			HashMap<String, Long> expectedVersions = new HashMap<>();
+			synchronized (this) {
+				for (String key : candidate.keySet()) expectedVersions.put(key, changedAt.get(key));
+				inFlight = true;
+			}
+			try {
+				storageWrite.run();
+				committed = true;
+				synchronized (this) {
+					Set<String> pending = pendingKeys();
+					for (Entry<String, DataValue> entry : candidate.entrySet()) {
+						String key = entry.getKey();
+						if (Objects.equals(expectedVersions.get(key), changedAt.get(key)) && !pending.contains(key)) {
+							cache.put(key, entry.getValue());
+							changedAt.put(key, ++snapshotVersion);
+						}
+					}
+				}
+			} finally { synchronized (this) { inFlight = false; } }
+		} catch (RuntimeException | Error rejected) { failure = rejected; throw rejected; }
+		finally {
+			batchOwner.unlock();
+			if (pendingNotification != null) try { pendingNotification.run(); }
+			catch (RuntimeException | Error rejected) {
+				if (failure != null) { if (failure != rejected) failure.addSuppressed(rejected); }
+				else if (committed) throw new CommittedUserDataBatchException(candidate, rejected);
+				else throw rejected;
+			}
+		}
 	}
 
 	/** Called only by the batch owner; claims a finite batch under the cache monitor. */

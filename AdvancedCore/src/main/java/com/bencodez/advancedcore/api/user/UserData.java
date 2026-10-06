@@ -553,36 +553,21 @@ public class UserData {
 		setValues(user.getPlugin().getStorageType(), values);
 	}
 
-	@SuppressWarnings("deprecation")
 	public void setValues(UserStorage storage, HashMap<String, DataValue> values) {
-		if (storage.equals(UserStorage.MYSQL)) {
-			if (user.getPlugin().getMysql() != null) {
-				ArrayList<Column> cols = new ArrayList<>();
-				for (Entry<String, DataValue> entry : values.entrySet()) {
-					if (!entry.getKey().equals("uuid")) {
-						cols.add(new Column(entry.getKey(), entry.getValue()));
-					}
-				}
-				user.getPlugin().getMysql().update(user.getUUID(), cols, false);
-			}
-		} else if (storage.equals(UserStorage.SQLITE)) {
-			ArrayList<Column> cols = new ArrayList<>();
-			for (Entry<String, DataValue> entry : values.entrySet()) {
-				if (!entry.getKey().equals("uuid")) {
-					cols.add(new Column(entry.getKey(), entry.getValue()));
-				}
-				user.getPlugin().getSQLiteUserTable().update(new Column("uuid", new DataValueString(user.getUUID())),
-						cols);
-			}
-		} else if (storage.equals(UserStorage.FLAT)) {
-			for (Entry<String, DataValue> entry : values.entrySet()) {
-				if (entry.getValue() instanceof DataValueString) {
-					setData(user.getUUID(), entry.getKey(), entry.getValue().getString());
-				} else if (entry.getValue() instanceof DataValueInt) {
-					setData(user.getUUID(), entry.getKey(), entry.getValue().getInt());
-				}
-			}
+		HashMap<String, DataValue> candidate = new HashMap<>(values);
+		// SQL identity is never part of the update, as in the legacy bulk API.
+		if (storage == UserStorage.MYSQL || storage == UserStorage.SQLITE) candidate.remove("uuid");
+		if (candidate.isEmpty()) return;
+		for (Entry<String, DataValue> entry : candidate.entrySet()) {
+			java.util.Objects.requireNonNull(entry.getKey(), "key");
+			java.util.Objects.requireNonNull(entry.getValue(), "value");
 		}
+		Runnable storageWrite = () -> {
+			try { setValuesStrict(storage, candidate); }
+			catch (SQLException | IOException failure) { throw new IllegalStateException("Bulk user-data write was not acknowledged", failure); }
+		};
+		user.getPlugin().getUserManager().getDataManager().writeBatch(user, candidate, storageWrite,
+				storage == user.getPlugin().getStorageType());
 	}
 
 	/** Writes one synchronous checked batch; callers retain pending changes on failure. */
