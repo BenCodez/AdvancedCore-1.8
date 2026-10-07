@@ -189,7 +189,9 @@ public class PlayerManager {
 		}
 
 		if (!plugin.getOptions().isOnlineMode()) {
-			return UUID.nameUUIDFromBytes(("OfflinePlayer:" + playerName).getBytes(StandardCharsets.UTF_8)).toString();
+			String identity = plugin.getOptions().isCaseInsensitiveOfflineUuids()
+                    ? playerName.toLowerCase(java.util.Locale.ROOT).trim() : playerName;
+            return UUID.nameUUIDFromBytes(("OfflinePlayer:" + identity).getBytes(StandardCharsets.UTF_8)).toString();
 		}
 
 		Player player = Bukkit.getPlayerExact(playerName);

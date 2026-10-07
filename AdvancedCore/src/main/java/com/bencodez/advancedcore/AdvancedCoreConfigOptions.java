@@ -124,6 +124,11 @@ public class AdvancedCoreConfigOptions {
 	@ConfigDataBoolean(path = "OnlineMode")
 	private boolean onlineMode = true;
 
+    /** Opt-in current VotingPlugin proxy identity policy; standalone behavior stays unchanged. */
+    @Getter
+    @Setter
+    private boolean caseInsensitiveOfflineUuids;
+
 	@Getter
 	@Setter
 	@ConfigDataString(path = "Format.HelpLine")

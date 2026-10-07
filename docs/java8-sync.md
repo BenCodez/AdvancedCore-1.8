@@ -4245,3 +4245,19 @@ Shared-user runtime foundation and remaining native integration:
 
 Native shared-cache admission, staging and notification dependency milestone:
 [java8-native-shared-cache.md](java8-native-shared-cache.md).
+
+## Current-proxy offline identity opt-in
+
+The paired VotingPlugin backend can opt into `caseInsensitiveOfflineUuids` on
+its own AdvancedCoreConfigOptions instance. The default remains false, so existing
+standalone and legacy-mode case-sensitive offline UUIDs retain their behavior.
+Online identities are unaffected. The opt-in uses lower-case names with Locale.ROOT
+and UTF-8, matching the pinned main proxy/reference policy. No database/schema
+migration or automatic account merging occurs; existing records remain stored
+under their original UUID. Operators must plan identity migration before switching
+an established offline network to current-proxy mode. This policy requires restart.
+
+Two focused tests cover preserved legacy casing and canonical current-proxy
+casing. Actual Java 8 producer `AdvancedCore/pom.xml clean install` with the
+workspace-local Maven repository passed 848 unit +78 artifact tests (926 total),
+zero failures/errors/skips. The paired backend consumes that exact local artifact.
