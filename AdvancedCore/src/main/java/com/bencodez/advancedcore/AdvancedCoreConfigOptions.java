@@ -222,7 +222,7 @@ public class AdvancedCoreConfigOptions {
 
 	@Setter
 	@Getter
-	@ConfigDataInt(path = "SpamClickTime")
+	/* Parsed manually so both legacy numeric milliseconds and modern durations work. */
 	private int spamClickTime = 100;
 
 	@ConfigDataString(path = "DataStorage")
@@ -264,12 +264,12 @@ public class AdvancedCoreConfigOptions {
 
 	@Getter
 	@Setter
-	@ConfigDataInt(path = "DelayLoginEvent")
+	/* Parsed manually; see load(). */
 	private int delayLoginEvent = 0;
 
 	@Getter
 	@Setter
-	@ConfigDataInt(path = "SkullLoadDelay")
+	/* Parsed manually; see load(). */
 	private int SkullLoadDelay = 4000;
 
 	@Getter
@@ -305,9 +305,27 @@ public class AdvancedCoreConfigOptions {
 
 	public void load(AdvancedCorePlugin plugin) {
 		if (getYmlConfig() != null) {
-			new AnnotationHandler().load(getYmlConfig().getData(), this);
+			ConfigurationSection data = getYmlConfig().getData();
+			new AnnotationHandler().load(data, this);
+			// These keys are deliberately read after annotation loading: old releases
+			// accepted numeric milliseconds, while current configs use duration text.
+			spamClickTime = data.contains("SpamClickTime") ? checkedDuration(data.get("SpamClickTime")) : 100;
+			delayLoginEvent = data.contains("DelayLoginEvent") ? checkedDuration(data.get("DelayLoginEvent")) : 0;
+			SkullLoadDelay = data.contains("SkullLoadDelay") ? checkedDuration(data.get("SkullLoadDelay")) : 4000;
+			if (!data.contains("DisableJavascript") && data.contains("JavascriptEngine.Enabled")) {
+				disableJavascript = !data.getBoolean("JavascriptEngine.Enabled");
+			}
+			if (!data.contains("EnableJavascriptCommand") && data.contains("JavascriptEngine.CommandEnabled")) {
+				enableJavascriptCommand = data.getBoolean("JavascriptEngine.CommandEnabled");
+			}
 			debug = DebugLevel.getDebug(debugLevelStr);
 			storageType = UserStorage.value(userStorageString.toUpperCase());
 		}
+	}
+
+	private static int checkedDuration(Object raw) {
+		long value = ConfigDuration.parseMillis(raw);
+		if (value > Integer.MAX_VALUE) throw new IllegalArgumentException("duration exceeds integer milliseconds: " + raw);
+		return (int) value;
 	}
 }

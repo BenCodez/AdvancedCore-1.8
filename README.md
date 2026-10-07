@@ -44,3 +44,5 @@ GitHub Actions builds and tests pull requests using Temurin Java 8 and Maven
 `clean verify`. Download the shaded plugin JAR from the successful run's
 Artifacts section; artifacts are retained for 14 days. Builds also run on
 `master` pushes and can be started manually after the workflow reaches `master`.
+
+Backend configuration compatibility: [docs/backend-config-alignment.md](docs/backend-config-alignment.md).

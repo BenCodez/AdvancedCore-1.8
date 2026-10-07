@@ -1,17 +1,17 @@
 # This is a reward file
 # Define rewards in here (Items, commands, etc)
-# File name is the reward name, without file extention
+# File name is the reward name, without file extension
 # This reward is named "ExampleAdvanced"
 # That is what you put as a reward for other plugins, like VotingPlugin
 # DO NOT HAVE DUPLICATE NAMES!!
 
 # Do not use ExampleBasic or ExampleAdvanced as rewards, they are disabled from loading!
 
-# Wiki Page: 
+# Wiki Page:
 # https://github.com/BenCodez/AdvancedCore/wiki/Reward-files
 
 # You can just remove values you don't want (just delete it)
-# If you just want money just have a reward file containg only "Money: 100", for example
+# If you just want money just have a reward file containing only "Money: 100", for example
 # Don't use this file as a reward, example only
 
 # This is the advanced example, if you only want an item or command then look
@@ -25,7 +25,7 @@ Delayed:
   Minutes: 0
   Seconds: 0
   MilliSeconds: 0
-  
+
 # Specific time of day to give this reward file
 # in 24 hour time, relative to local time zone
 Timed:
@@ -41,7 +41,7 @@ Chance: 40
 # Item conditional example
 Items:
   Item1:
-    # Javacript for conditional
+    # Javascript for conditional
     # Uses return value to get item info (can be anything, like numbers)
     ConditionalJavascript: 'User.canVoteAll()'
     Conditional:
@@ -59,7 +59,7 @@ Items:
 #  Y: 0
 #  Z: 0
 #  Distance: 10
-  
+
 # Will give one command from the list
 RandomCommand: []
 
@@ -94,6 +94,12 @@ RandomItem:
     Material: IRON_INGOT
     Amount: 10
 
+ # Send one of the following messages to the player
+RandomMessage:
+- 'random message 1'
+- 'random message 2'
+- 'random message 3'
+
 # Require permission to give this reward file
 # Permission is AdvancedCore.Reward.(REWARDNAME) by default
 # E.g: AdvancedCore.Reward.ExampleAdvanced
@@ -115,7 +121,7 @@ Permission: 'AdvancedCore.Reward.ExampleAdvanced'
 
 # Javascript
 # Only use this if you know what you are doing
-# 
+#
 # Bukkit API placeholders:
 # Using "BukkitServer" in your javascript will return Bukkit.getServer()
 # You can use any methods inside of the Server class
@@ -131,7 +137,7 @@ Javascript:
   TrueRewards: {}
   # Reward files to run if expression is false
   FalseRewards: {}
-  
+
 # Do things like set health or other things
 # not possible with commands
 Javascripts: []
@@ -143,7 +149,7 @@ JavascriptExpression: ''
 # Will only execute first possible reward that can be given
 # Recommend using AdvancedPriority (same thing but can avoid having multiple files)
 Priority: []
-  
+
 # Advanced example
 # 50% chance for reward1, if reward1 not given then 20% chance to get reward2, if reward2 not given then fallback
 AdvancedPriority:
@@ -165,7 +171,7 @@ AdvancedPriority:
   Fallback:
     Messages:
       Player: 'You got unlucky'
-      
+
 # Give rewards based on what world the player is on
 AdvancedWorld:
   world:
@@ -180,9 +186,9 @@ AdvancedWorld:
 #  Reward1:
 #    Commands:
 #    - say test
-      
+
 # Special chance
-# percentage is caculated with all numbers added up
+# Percentage is calculated with all numbers added up
 # E.g. below:
 # Total is 100, so 5 is 5 out of 100, and so on
 # The number represents a weight value essentially
@@ -203,7 +209,7 @@ SpecialChance:
   50:
     Commands:
     - say 50
-    
+
 # Let the user pick a reward file to get
 # User can only pick one
 EnableChoices: false
@@ -247,7 +253,7 @@ BlackListedWorlds:
 # Reward type
 # Possible Values: ONLINE,OFFLINE,BOTH
 # Default: BOTH
-# Make this reward file only give rewards depending 
+# Make this reward file only give rewards depending
 # if player was online/offline when the reward attempted to give
 RewardType: 'BOTH'
 
@@ -261,7 +267,7 @@ ForceOffline: false
 # Date based rewards
 # ------------------------------------
 
-Date:  
+Date:
   # Day required to give reward
   # Also supports using 1-7 for week day
   WeekDay: MONDAY
@@ -271,7 +277,7 @@ Date:
 
   # Month required to give reward
   Month: MARCH
-  
+
 # DayOfMonth requirement configuration
 DayOfMonth:
   # Enable or disable the DayOfMonth requirement
@@ -282,9 +288,9 @@ DayOfMonth:
   - 15
 
 
-# Vault group required to get reward 
+# Vault group required to get reward
 #VaultGroup: 'NORMAL'
-  
+
 # Potions to give on reward
 Potions:
   # Potion effect name
@@ -295,7 +301,7 @@ Potions:
     Duration: 100
     # Amplifier
     Amplifier: 1
-    
+
 # Title to send to player
 Title:
   Enabled: false
@@ -304,7 +310,7 @@ Title:
   FadeIn: 10
   ShowTime: 50
   FadeOut: 10
-  
+
 # Send bossbar to player
 # This requires 1.9+
 BossBar:
@@ -317,11 +323,11 @@ BossBar:
   # Bar Styles:
   # https://hub.spigotmc.org/javadocs/spigot/org/bukkit/boss/BarStyle.html
   Style: 'SOLID'
-  # Precentage for bar
+  # Percentage for bar
   Progress: 0.50
   # Delay until bar goes away (in ticks)
   Delay: 30
-  
+
 # Sound on reward
 Sound:
   # Enable or Disable Sound
@@ -335,18 +341,18 @@ Sound:
   # Pitch
   # Range: 0.0 to 2.0
   Pitch: 1.0
-  
+
 # Play particle effect on reward
 # 1.10 Effects can be found here:
 # https://hub.spigotmc.org/javadocs/spigot/org/bukkit/Effect.html
 Effect:
   Enabled: false
   Effect: 'EXPLOSION_NORMAL'
-  # Ususally speed
+  # Usually speed
   Data: 1
   Particles: 10
   Radius: 5
-  
+
 Firework:
   Enabled: false
   Power: 2
@@ -355,7 +361,7 @@ Firework:
   Colors:
   - BLUE
   #- #123123 hex color code format
-  FadeOutColor: 
+  FadeOutColor:
   - RED
   Trail: true
   Flicker: true
@@ -365,15 +371,15 @@ Firework:
   - BALL_LARGE
   # Detonate firework instantly
   Detonate: false
-  
+
 # Send action bar
 ActionBar:
   Message: '&cThis is an actionbar!'
   # Delay until action bar goes away (in ticks)
   Delay: 30
 
-# Lucky rewards  
-  
+# Lucky rewards
+
 OnlyOneLucky: false
 # The example below would give a 1 in 10 chance of receiving an extra $100, and a 1 in 50 chance of an extra $1000.
 Lucky:
@@ -385,7 +391,7 @@ Lucky:
     Messages:
       Player: 'You were lucky and received an extra $1000!'
     Money: 1000
-    
+
 # Only for some GUI's
 # Required for choice rewards
 # not a reward
@@ -393,13 +399,13 @@ DisplayItem:
   Material: 'DIAMOND'
   Name: '&aAdvancedReward'
   Amount: 1
-    
+
 # Ability for server option
 # Makes sure the correct server gets the reward
 #Server: 'Minecraft Server'
 
 # List of servers that will prevent the reward from running on, such as a hub/lobby server
-#BlockedServers: 
+#BlockedServers:
 #- lobby
 
 #############################################
@@ -425,24 +431,4 @@ Random:
   Rewards: []
   # A list of fall back rewards if chance is unlucky
   # Don't set this reward as a reward, may cause infinite loop
-  FallBack: [] 
-  
-################################################
-# REPEAT REWARDS
-# Meant for advanced uses
-# Rewards do not persist on shutdown (unless enabled)
-# Not tested in all situations yet, use at your own risk
-################################################
-Repeat:
-  Enabled: true
-  # Time in milliseconds 1000 = 1 second
-  TimeBetween: 60000
-  # Number of times to repeat
-  # set to -1 for no limit
-  Amount: -1
-  # Start repeating on startup, otherwise it will only repeat when reward is given
-  # If true, the reward will not repeat when executed
-  # Will execute for every player online at time of execution
-  RepeatOnStartup: false
-  # If any reward requirement fails to pass, the reward will stop repeating
-  AutoStop: true
+  FallBack: []

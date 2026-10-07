@@ -909,8 +909,20 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 
 	@SuppressWarnings("deprecation")
 	MySQL createMySQLProvider() {
-		return new MySQL(javaPlugin, javaPlugin.getName() + "_Users",
-				getOptions().getYmlConfig().getData().getConfigurationSection("MySQL"));
+		org.bukkit.configuration.ConfigurationSection root = getOptions().getYmlConfig().getData();
+		// Modern AdvancedCore calls this section Database; retain MySQL precedence
+		// when both are present so existing installations remain authoritative.
+		org.bukkit.configuration.ConfigurationSection section = root.getConfigurationSection("MySQL");
+		if (section == null) {
+            section = root.getConfigurationSection("Database");
+            if (section != null) {
+                String type = section.getString("DbType", "MYSQL");
+                if (!"MYSQL".equalsIgnoreCase(type) && !"MARIADB".equalsIgnoreCase(type)) {
+                    throw new IllegalArgumentException("Java 8 native MYSQL storage supports Database.DbType MYSQL or MARIADB only");
+                }
+            }
+        }
+		return new MySQL(javaPlugin, javaPlugin.getName() + "_Users", section);
 	}
 
 	private void cleanupSQLiteCandidate(Database candidate, Throwable failure) {
