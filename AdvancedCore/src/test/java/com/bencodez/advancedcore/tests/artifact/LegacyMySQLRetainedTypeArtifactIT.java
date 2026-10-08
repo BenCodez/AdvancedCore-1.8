@@ -67,12 +67,13 @@ class LegacyMySQLRetainedTypeArtifactIT {
             assertTrue(f.columns().contains("RetainedValue"));f.verifyEviction();
         }
     }
-    @Test void bootstrapConnectionWrapperDoesNotHideSupportedDriver() throws Exception {
+    @Test void jdkConnectionWrapperDoesNotHideSupportedDriver() throws Exception {
         try(Fixture f=new Fixture("DECIMAL(12,2)")) {
             f.decimalFence();
-            Connection wrapper=(Connection)java.lang.reflect.Proxy.newProxyInstance(null,new Class[]{Connection.class},(proxy,method,args)->{
+            Connection wrapper=(Connection)java.lang.reflect.Proxy.newProxyInstance(Connection.class.getClassLoader(),new Class[]{Connection.class},(proxy,method,args)->{
                 try{return method.invoke(f.connection,args);}catch(InvocationTargetException failure){throw failure.getCause();}
             });
+            assertSame(Connection.class.getClassLoader(), wrapper.getClass().getClassLoader());
             f.borrowed.set(wrapper);f.add("RetainedValue",DataType.STRING);
             verify(f.statement).executeUpdate();assertTrue(f.columns().contains("RetainedValue"));
             f.pool.getClass().getMethod("evictConnection",Connection.class).invoke(verify(f.pool),wrapper);
