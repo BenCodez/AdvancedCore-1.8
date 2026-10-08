@@ -121,24 +121,22 @@ public abstract class BungeeTimeChecker {
 
 	public boolean hasMonthChanged(boolean set) {
 		String prevMonth = getPrevMonth();
-		String month = getTime().getMonth().toString();
-
+		LocalDateTime current = getTime();
+		String month = current.getMonth().toString();
 		if (prevMonth.equals(month)) {
 			return false;
 		}
 		if (set) {
 			setPrevMonth(month);
 		}
-		if (!timeChangeFailSafeBypass) {
-			if (getTime().getDayOfMonth() > 3) {
-				warning("Detected a month change, but current day is not near end of a month, ignoring month change, "
-						+ getTime().getDayOfMonth());
-				setPrevMonth(month);
-				return false;
-			}
+		LocalDateTime graceEnd = current.withDayOfMonth(1).toLocalDate().atStartOfDay().plusHours(12);
+		if (!timeChangeFailSafeBypass && current.isAfter(graceEnd)) {
+			warning("Detected a month change outside the first 12 hours of the month, ignoring month change: "
+					+ current);
+			setPrevMonth(month);
+			return false;
 		}
 		return true;
-
 	}
 
 	public boolean hasTimeOffSet() {
@@ -216,7 +214,9 @@ public abstract class BungeeTimeChecker {
 	public abstract void timeChanged(TimeType type, boolean fake, boolean pre, boolean post);
 	
 	public void shutdown() {
-		timer.shutdownNow();
+		if (timer != null) {
+			timer.shutdownNow();
+		}
 	}
 
 	/**

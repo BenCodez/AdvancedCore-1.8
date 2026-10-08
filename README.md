@@ -34,3 +34,15 @@ API used in the plugins developed by BenCodez, can be used in any project.
   Versions:  
   LATEST - latest stable release  
   Check out all tags [on the releases tab](https://github.com/BenCodez/AdvancedCore/tags).
+
+
+Java 8 synchronization decisions and validation: [docs/java8-sync.md](docs/java8-sync.md).
+
+## Pull-request JAR builds
+
+GitHub Actions builds and tests pull requests using Temurin Java 8 and Maven
+`clean verify`. Download the shaded plugin JAR from the successful run's
+Artifacts section; artifacts are retained for 14 days. Builds also run on
+`master` pushes and can be started manually after the workflow reaches `master`.
+
+Backend configuration compatibility: [docs/backend-config-alignment.md](docs/backend-config-alignment.md).

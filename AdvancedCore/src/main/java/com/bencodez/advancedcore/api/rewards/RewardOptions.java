@@ -11,6 +11,21 @@ import lombok.Setter;
 
 public class RewardOptions {
 
+    @Getter @Setter private int completedAsyncInjections;
+    @Getter @Setter private java.util.Map<String,Integer> asyncReplayProgress = new HashMap<>();
+    @Getter @Setter private java.util.Map<String,String> asyncReplayRegistryFingerprints = new HashMap<>();
+    @Getter @Setter private boolean legacyAsyncReplayCheckpoint;
+    @Getter @Setter private Reward.ReplayState asyncReplayState;
+    @Getter @Setter private String asyncReplayKey;
+    @Getter @Setter private String asyncReplayOccurrenceId;
+    @Getter @Setter private java.util.function.Consumer<Reward.ReplayCheckpoint> asyncReplayCheckpointConsumer;
+    @Getter private boolean livePlayerStateSet;
+    @Getter private boolean livePlayerVanished;
+    public RewardOptions captureLivePlayerState(boolean online, boolean vanished) {
+        this.online=online;this.onlineSet=true;this.livePlayerStateSet=true;this.livePlayerVanished=vanished;return this;
+    }
+
+
 	@Getter
 	private boolean checkRepeat = true;
 	private boolean checkTimed = true;
@@ -46,7 +61,43 @@ public class RewardOptions {
 	@Getter
 	private long orginalTrigger = -1;
 
+	/** Deferral must retain this occurrence in its original timed queue. */
+	@Getter
+	@Setter
+	private boolean timedQueueReplay;
+
 	public RewardOptions() {
+	}
+
+	/** Copy one dispatch's mutable options before crossing a scheduler boundary. */
+	RewardOptions copyForDispatch() {
+		RewardOptions copy = new RewardOptions();
+		copy.checkRepeat = checkRepeat;
+		copy.checkTimed = checkTimed;
+		copy.forceOffline = forceOffline;
+		copy.giveOffline = giveOffline;
+		copy.ignoreChance = ignoreChance;
+		copy.ignoreRequirements = ignoreRequirements;
+		copy.online = online;
+		copy.onlineSet = onlineSet;
+		copy.placeholders = new HashMap<>(placeholders);
+		copy.prefix = prefix;
+		copy.server = server;
+		copy.suffix = suffix;
+		copy.useDefaultWorlds = useDefaultWorlds;
+		copy.orginalTrigger = orginalTrigger;
+		copy.completedAsyncInjections=completedAsyncInjections;
+		copy.asyncReplayProgress=new HashMap<>(asyncReplayProgress);
+		copy.asyncReplayRegistryFingerprints=new HashMap<>(asyncReplayRegistryFingerprints);
+		copy.legacyAsyncReplayCheckpoint=legacyAsyncReplayCheckpoint;
+        copy.asyncReplayState=asyncReplayState;
+        copy.asyncReplayKey=asyncReplayKey;
+        copy.asyncReplayOccurrenceId=asyncReplayOccurrenceId;
+        copy.asyncReplayCheckpointConsumer=asyncReplayCheckpointConsumer;
+        copy.timedQueueReplay=timedQueueReplay;
+		copy.livePlayerStateSet=livePlayerStateSet;
+		copy.livePlayerVanished=livePlayerVanished;
+		return copy;
 	}
 
 	public RewardOptions addPlaceholder(String arg1, String arg2) {
@@ -184,6 +235,18 @@ public class RewardOptions {
 			placeholders.put(entry.getKey(), entry.getValue());
 		}
 		return this;
+	}
+
+	RewardOptions copyForNestedDispatch(String replayKey) {
+		RewardOptions copy = copyForDispatch();
+		copy.setCompletedAsyncInjections(0);
+		copy.setAsyncReplayProgress(new HashMap<>());
+		// The checkpoint consumer belongs to the queued parent occurrence. Nested
+		// children share its ReplayState but must never replace or complete that
+		// queue entry independently.
+		copy.setAsyncReplayCheckpointConsumer(null);
+		copy.setAsyncReplayKey(replayKey);
+		return copy;
 	}
 
 }

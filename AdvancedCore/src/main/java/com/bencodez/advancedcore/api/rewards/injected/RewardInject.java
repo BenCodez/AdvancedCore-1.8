@@ -2,6 +2,9 @@ package com.bencodez.advancedcore.api.rewards.injected;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.function.Supplier;
 
 import org.bukkit.configuration.ConfigurationSection;
 
@@ -17,6 +20,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 public abstract class RewardInject extends Inject {
+	private CompletableFuture<Void> synchronizedAsyncTail = CompletableFuture.completedFuture(null);
 
 	@Getter
 	private boolean addAsPlaceholder = false;
@@ -95,6 +99,60 @@ public abstract class RewardInject extends Inject {
 
 	public abstract Object onRewardRequest(Reward reward, AdvancedCoreUser user, ConfigurationSection data,
 			HashMap<String, String> placeholders);
+
+	/** Existing injectors remain synchronous until they explicitly opt in. */
+	public boolean supportsAsyncRequest() { return false; }
+
+	public boolean requiresConfiguredDataForAsync() { return false; }
+
+	public boolean hasPendingReplayWork(HashMap<String, String> placeholders) { return false; }
+
+	/** Nested reward injectors must opt out to avoid waiting on their own unfinished chain. */
+	public boolean supportsAsyncSynchronization() { return true; }
+
+	/** Bridge for legacy synchronous callbacks; it does not observe hidden scheduled work. */
+	public CompletionStage<Object> onRewardRequestAsync(Reward reward, AdvancedCoreUser user,
+			ConfigurationSection data, HashMap<String, String> placeholders) {
+		CompletableFuture<Object> result = new CompletableFuture<>();
+		try { result.complete(onRewardRequest(reward, user, data, placeholders)); }
+		catch (Throwable failure) { result.completeExceptionally(failure); }
+		return result;
+	}
+
+	/** Additive checkpoint hook; no checkpoint is inferred from dispatch acceptance. */
+	public CompletionStage<Void> onReplayCheckpointPersisted(Reward reward, AdvancedCoreUser user,
+			String occurrenceId, String injectionKey) {
+		return CompletableFuture.completedFuture(null);
+	}
+
+	/** Serialize opted-in async requests until their returned stages settle. */
+	public CompletionStage<Object> runSynchronizedAsync(Supplier<CompletionStage<Object>> request) {
+		java.util.Objects.requireNonNull(request, "request");
+		CompletableFuture<Object> result = new CompletableFuture<>();
+		CompletableFuture<Void> finished = new CompletableFuture<>();
+		CompletableFuture<Void> previous;
+		synchronized (this) {
+			previous = synchronizedAsyncTail;
+			synchronizedAsyncTail = finished;
+		}
+		// User code and stage callbacks run outside the injection monitor.
+		previous.handle((ignored, failure) -> null).thenRun(() -> {
+			try {
+				CompletionStage<Object> stage = request.get();
+				if (stage == null) throw new IllegalStateException("Asynchronous reward injection returned null");
+				stage.whenComplete((value, failure) -> {
+					try {
+						if (failure == null) result.complete(value);
+						else result.completeExceptionally(failure);
+					} finally { finished.complete(null); }
+				});
+			} catch (Throwable failure) {
+				try { result.completeExceptionally(failure); }
+				finally { finished.complete(null); }
+			}
+		});
+		return result;
+	}
 
 	public RewardInject postReward() {
 		postReward = true;

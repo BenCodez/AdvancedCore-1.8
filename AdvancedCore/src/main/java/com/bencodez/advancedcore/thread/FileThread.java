@@ -1,13 +1,26 @@
 package com.bencodez.advancedcore.thread;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFileAttributes;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 
 import com.bencodez.advancedcore.AdvancedCorePlugin;
 import com.bencodez.advancedcore.api.misc.files.FilesManager;
 import com.bencodez.advancedcore.api.user.UserData;
+import com.bencodez.simpleapi.sql.data.DataValue;
+import com.bencodez.simpleapi.sql.data.DataValueInt;
+import com.bencodez.simpleapi.sql.data.DataValueString;
 
 /**
  * The Class Thread.
@@ -153,6 +166,216 @@ public class FileThread {
 	 * Instantiates a new thread.
 	 */
 	private FileThread() {
+	}
+
+	/** Checked configuration replacement under the same owner as legacy FilesManager writes. */
+	public void saveConfigurationStrict(File file, FileConfiguration data) throws IOException {
+		java.util.Objects.requireNonNull(file, "file");
+		java.util.Objects.requireNonNull(data, "data");
+		synchronized (FileThread.getInstance()) {
+			Path target = file.getCanonicalFile().toPath();
+			PosixFileAttributes attributes = null;
+			if (!Files.notExists(target)) {
+				if (!Files.isRegularFile(target)) throw new IOException("Configuration target is not a regular file");
+				try { new YamlConfiguration().load(target.toFile()); }
+				catch (InvalidConfigurationException invalid) { throw new IOException("Existing configuration is malformed", invalid); }
+				if (Files.getFileAttributeView(target, PosixFileAttributeView.class) != null) {
+					attributes = Files.readAttributes(target, PosixFileAttributes.class);
+				}
+			}
+			Files.createDirectories(target.getParent());
+			Path staged = Files.createTempFile(target.getParent(), ".configuration-", ".tmp");
+			Throwable failure = null;
+			try {
+				data.save(staged.toFile());
+				if (attributes != null) {
+					PosixFileAttributeView view = Files.getFileAttributeView(staged, PosixFileAttributeView.class);
+					view.setPermissions(attributes.permissions());
+					view.setOwner(attributes.owner());
+					view.setGroup(attributes.group());
+				}
+				publishStrict(staged, target);
+				staged = null;
+			} catch (IOException | RuntimeException | Error problem) {
+				failure = problem;
+				throw problem;
+			} finally {
+				if (staged != null) {
+					try { Files.deleteIfExists(staged); }
+					catch (IOException cleanup) {
+						if (failure != null) failure.addSuppressed(cleanup); else throw cleanup;
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * Publishes one checked legacy user-data batch under the existing file owner.
+	 * Does not start the deprecated polling thread. Malformed/unreadable input is
+	 * a failed write, never an empty document to overwrite.
+	 */
+	public void setValuesStrict(String uuid, Map<String, DataValue> values) throws IOException {
+		if (values.isEmpty()) return;
+		UUID.fromString(uuid); // Keep the supplied filename spelling; reject path-like identities.
+		for (Map.Entry<String, DataValue> entry : values.entrySet()) {
+			DataValue value = entry.getValue();
+			if (entry.getKey() == null || entry.getKey().isEmpty() || value == null
+					|| (!value.isString() && !value.isInt() && !value.isBoolean())) {
+				throw new IllegalArgumentException("Unsupported user-data batch value");
+			}
+		}
+		synchronized (FileThread.getInstance()) {
+			if (plugin == null) throw new IOException("User file owner is not initialized");
+			Path target = new File(new File(plugin.getDataFolder(), "Data"), uuid + ".yml")
+					.getCanonicalFile().toPath();
+			YamlConfiguration data = new YamlConfiguration();
+			PosixFileAttributes attributes = null;
+			if (!Files.notExists(target)) {
+				if (!Files.isRegularFile(target)) throw new IOException("User data is not a readable regular file");
+				try {
+					data.load(target.toFile());
+				} catch (InvalidConfigurationException invalid) {
+					throw new IOException("Existing user data is malformed", invalid);
+				}
+				if (Files.getFileAttributeView(target, PosixFileAttributeView.class) != null) {
+					attributes = Files.readAttributes(target, PosixFileAttributes.class);
+				}
+			}
+			for (Map.Entry<String, DataValue> entry : values.entrySet()) {
+				DataValue value = entry.getValue();
+				if (value.isInt()) data.set(entry.getKey(), value.getInt());
+				else if (value.isBoolean()) data.set(entry.getKey(), Boolean.toString(value.getBoolean()));
+				else data.set(entry.getKey(), value.getString());
+			}
+			Files.createDirectories(target.getParent());
+			Path staged = Files.createTempFile(target.getParent(), ".user-data-", ".tmp");
+			Throwable failure = null;
+			try {
+				data.save(staged.toFile());
+				if (attributes != null) {
+					PosixFileAttributeView view = Files.getFileAttributeView(staged, PosixFileAttributeView.class);
+					view.setPermissions(attributes.permissions());
+					view.setOwner(attributes.owner());
+					view.setGroup(attributes.group());
+				}
+				publishStrict(staged, target);
+				staged = null; // Publication succeeded; cleanup cannot turn it into a failed write.
+			} catch (IOException | RuntimeException | Error problem) {
+				failure = problem;
+				throw problem;
+			} finally {
+				if (staged != null) {
+					try { Files.deleteIfExists(staged); }
+					catch (IOException cleanup) {
+						if (failure != null) failure.addSuppressed(cleanup);
+						else throw cleanup;
+					}
+				}
+			}
+		}
+	}
+
+	/** Checked identity-file deletion, preserving legacy symlink deletion semantics. */
+	public void deletePlayerFileStrict(String uuid) throws IOException {
+		UUID.fromString(uuid);
+		synchronized (FileThread.getInstance()) {
+			if (plugin == null) throw new IOException("User file owner is not initialized");
+			Path target = new File(new File(plugin.getDataFolder(), "Data"), uuid + ".yml").toPath();
+			if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+					&& !Files.isRegularFile(target) && !Files.isSymbolicLink(target)) throw new IOException("User data is not a regular file");
+			Files.deleteIfExists(target);
+		}
+	}
+
+	/** Read-only checked snapshot under the same file owner as checked writes. */
+	public HashMap<String, DataValue> getValuesStrict(String uuid) throws IOException {
+		UUID.fromString(uuid);
+		synchronized (FileThread.getInstance()) {
+			if (plugin == null) throw new IOException("User file owner is not initialized");
+			Path target = new File(new File(plugin.getDataFolder(), "Data"), uuid + ".yml").getCanonicalFile().toPath();
+			HashMap<String, DataValue> values = new HashMap<>();
+			if (Files.notExists(target)) return values;
+			if (!Files.isRegularFile(target)) throw new IOException("User data is not a readable regular file");
+			YamlConfiguration data = new YamlConfiguration();
+			try { data.load(target.toFile()); }
+			catch (InvalidConfigurationException invalid) { throw new IOException("Existing user data is malformed", invalid); }
+			for (String key : data.getKeys(false)) {
+				if (data.isInt(key)) values.put(key, new DataValueInt(data.getInt(key)));
+				else values.put(key, new DataValueString(data.getString(key, "")));
+			}
+			return values;
+		}
+	}
+
+	/** Read the explicit FLAT conversion source under the existing file owner. */
+	public HashMap<UUID, HashMap<String, DataValue>> getAllValuesStrict() throws IOException {
+		synchronized (FileThread.getInstance()) {
+			if (plugin == null) throw new IOException("User file owner is not initialized");
+			Path directory = new File(plugin.getDataFolder(), "Data").toPath();
+			HashMap<UUID, HashMap<String, DataValue>> result = new HashMap<>();
+			if (Files.notExists(directory)) return result;
+			if (!Files.isDirectory(directory)) throw new IOException("User data directory is unavailable");
+			try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(directory, "*.yml")) {
+				for (Path file : files) {
+					String name = file.getFileName().toString();String text = name.substring(0, name.length() - 4);UUID identity;
+					try { identity = UUID.fromString(text);if (!identity.toString().equalsIgnoreCase(text)) throw new IllegalArgumentException(); }
+					catch (IllegalArgumentException invalid) { throw new IOException("Invalid source user file identity", invalid); }
+					if (!Files.isRegularFile(file)) throw new IOException("User source is not a readable regular file");
+					String source = new String(Files.readAllBytes(file), java.nio.charset.StandardCharsets.UTF_8);
+					validateConversionYaml(source);
+					YamlConfiguration data = new YamlConfiguration();
+					try { data.loadFromString(source); }
+					catch (InvalidConfigurationException invalid) { throw new IOException("Existing user source is malformed", invalid); }
+					HashMap<String, DataValue> values = new HashMap<>();
+					for (String key : data.getKeys(false)) {
+						Object value = data.get(key);
+						if (value instanceof Integer) values.put(key, new DataValueInt((Integer) value));
+						else if (value instanceof String || value instanceof Boolean || value instanceof Number)
+							values.put(key, new DataValueString(String.valueOf(value)));
+						else throw new IOException("Unsupported structured user source value");
+					}
+					if (result.put(identity, values) != null) throw new IOException("Duplicate source user file identity");
+				}
+			}
+			return result;
+		}
+	}
+
+	/** Inspect syntax nodes before Bukkit's legacy loader can collapse duplicate keys. */
+	private void validateConversionYaml(String source) throws IOException {
+		org.yaml.snakeyaml.nodes.Node root;
+		try { root = new org.yaml.snakeyaml.Yaml().compose(new java.io.StringReader(source)); }
+		catch (org.yaml.snakeyaml.error.YAMLException invalid) { throw new IOException("Existing user source is malformed", invalid); }
+		if (root == null) return;
+		if (!(root instanceof org.yaml.snakeyaml.nodes.MappingNode)) throw new IOException("User source must be a mapping");
+		java.util.Set<org.yaml.snakeyaml.nodes.Node> visited = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<org.yaml.snakeyaml.nodes.Node, Boolean>());
+		java.util.Set<org.yaml.snakeyaml.nodes.Node> active = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<org.yaml.snakeyaml.nodes.Node, Boolean>());
+		java.util.ArrayDeque<java.util.Map.Entry<org.yaml.snakeyaml.nodes.Node, Boolean>> pending = new java.util.ArrayDeque<>();
+		pending.push(new java.util.AbstractMap.SimpleImmutableEntry<>(root, false));
+		while (!pending.isEmpty()) {
+			java.util.Map.Entry<org.yaml.snakeyaml.nodes.Node, Boolean> frame = pending.pop();org.yaml.snakeyaml.nodes.Node node = frame.getKey();
+			if (frame.getValue()) { active.remove(node);visited.add(node);continue; }
+			if (visited.contains(node)) continue;
+			if (!active.add(node)) throw new IOException("Recursive user source YAML alias");
+			pending.push(new java.util.AbstractMap.SimpleImmutableEntry<>(node, true));
+			if (node instanceof org.yaml.snakeyaml.nodes.MappingNode) {
+				java.util.Set<String> keys = new java.util.HashSet<>();
+				for (org.yaml.snakeyaml.nodes.NodeTuple entry : ((org.yaml.snakeyaml.nodes.MappingNode) node).getValue()) {
+					if (!(entry.getKeyNode() instanceof org.yaml.snakeyaml.nodes.ScalarNode)) throw new IOException("Unsupported user source key");
+					String key = ((org.yaml.snakeyaml.nodes.ScalarNode) entry.getKeyNode()).getValue();
+					if (!keys.add(key)) throw new IOException("Duplicate user source YAML key");
+					pending.push(new java.util.AbstractMap.SimpleImmutableEntry<>(entry.getValueNode(), false));
+				}
+			} else if (node instanceof org.yaml.snakeyaml.nodes.SequenceNode) {
+				for (org.yaml.snakeyaml.nodes.Node child : ((org.yaml.snakeyaml.nodes.SequenceNode) node).getValue())
+					pending.push(new java.util.AbstractMap.SimpleImmutableEntry<>(child, false));
+			}
+		}
+	}
+
+	void publishStrict(Path staged, Path target) throws IOException {
+		Files.move(staged, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
 	}
 
 	/**

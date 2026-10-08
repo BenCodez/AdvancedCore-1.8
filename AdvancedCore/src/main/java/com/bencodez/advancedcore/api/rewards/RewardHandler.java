@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.Timer;
@@ -150,6 +151,10 @@ public class RewardHandler {
 	}
 
 	public void addDirectlyDefined(DirectlyDefinedReward directlyDefinedReward) {
+		if (getDirectlyDefined(directlyDefinedReward.getPath()) != null) {
+			plugin.extraDebug("DirectlyDefinedReward with path already exists, skipping: " + directlyDefinedReward.getPath());
+			return;
+		}
 		plugin.extraDebug("Adding directlydefined reward handle: " + directlyDefinedReward.getPath()
 				+ ", isdirectlydefined: " + directlyDefinedReward.isDirectlyDefined());
 		directlyDefinedRewards.add(directlyDefinedReward);
@@ -198,6 +203,10 @@ public class RewardHandler {
 	}
 
 	public void addSubDirectlyDefined(SubDirectlyDefinedReward subDirectlyDefinedReward) {
+		if (getSubDirectlyDefined(subDirectlyDefinedReward.getFullPath()) != null) {
+			plugin.extraDebug("SubDirectlyDefinedReward with path already exists, skipping: " + subDirectlyDefinedReward.getFullPath());
+			return;
+		}
 		plugin.extraDebug("Adding subdirectlydefined reward handle: " + subDirectlyDefinedReward.getFullPath()
 				+ ", isdirectlydefined: " + subDirectlyDefinedReward.isDirectlyDefined());
 		subDirectlyDefinedRewards.add(subDirectlyDefinedReward);
@@ -264,7 +273,7 @@ public class RewardHandler {
 
 	public DirectlyDefinedReward getDirectlyDefined(String path) {
 		for (DirectlyDefinedReward direct : getDirectlyDefinedRewards()) {
-			if (direct.getPath().equalsIgnoreCase(path)) {
+			if (matchesDirectPath(direct.getPath(), path)) {
 				return direct;
 			}
 		}
@@ -314,10 +323,7 @@ public class RewardHandler {
 	 * @return the reward
 	 */
 	public Reward getReward(String reward) {
-		if (reward == null) {
-			reward = "";
-		}
-		reward = reward.replace(" ", "_");
+		reward = normalizeLookupName(reward);
 
 		/*
 		 * if (rewardOptions != null) { String prefix = rewardOptions.getPrefix(); if
@@ -325,12 +331,6 @@ public class RewardHandler {
 		 * + "_" + str; } String suffix = rewardOptions.getSuffix(); if (suffix != null
 		 * && !suffix.equals("")) { reward += "_" + suffix; } }
 		 */
-
-		for (Reward rewardFile : getRewards()) {
-			if (rewardFile.getName().equalsIgnoreCase(reward)) {
-				return rewardFile;
-			}
-		}
 
 		if (reward.equals("")) {
 			plugin.getLogger().warning("Tried to get any empty reward file name, renaming to EmptyName");
@@ -342,28 +342,31 @@ public class RewardHandler {
 		}
 
 		for (DirectlyDefinedReward direct : getDirectlyDefinedRewards()) {
-			if (direct.getPath().replace(".", "_").equals(reward)) {
+			if (matchesDirectPath(direct.getPath(), reward)) {
 				plugin.debug("Using directlydefined reward for: " + reward);
 				return direct.getReward();
 			}
 		}
 
 		for (SubDirectlyDefinedReward direct : getSubDirectlyDefinedRewards()) {
-			if (direct.getFullPath().equalsIgnoreCase(reward)
-					|| direct.getFullPath().equalsIgnoreCase(reward.replaceAll("_", "."))) {
+			if (matchesSubDirectlyDefined(direct, reward)) {
 				plugin.debug("Using subdirectlydefined reward for: " + reward);
 				return direct.getReward();
 			}
 		}
 
+		for (Reward rewardFile : getRewards()) {
+			if (rewardFile.getName().equalsIgnoreCase(reward)) {
+				return rewardFile;
+			}
+		}
+
+		validateRewardFileName(reward);
 		return new Reward(reward);
 	}
 
 	public Reward getRewardDirectlyDefined(String reward) {
-		if (reward == null) {
-			reward = "";
-		}
-		reward = reward.replace(" ", "_");
+		reward = normalizeLookupName(reward);
 
 		for (Reward rewardFile : getRewards()) {
 			File folder = rewardFile.getConfig().getRewardFolder();
@@ -383,6 +386,7 @@ public class RewardHandler {
 			plugin.getLogger().warning("Using example rewards as a reward, becarefull");
 		}
 
+		validateRewardFileName(reward);
 		File directFolder = new File(getDefaultFolder().getAbsolutePath() + File.separator + "DirectlyDefined");
 		directFolder.mkdirs();
 		return new Reward(directFolder, reward);
@@ -445,8 +449,7 @@ public class RewardHandler {
 
 	public SubDirectlyDefinedReward getSubDirectlyDefined(String path) {
 		for (SubDirectlyDefinedReward direct : getSubDirectlyDefinedRewards()) {
-			if (direct.getFullPath().equalsIgnoreCase(path)
-					|| direct.getFullPath().equalsIgnoreCase(path.replaceAll("_", "."))) {
+			if (matchesSubDirectlyDefined(direct, path)) {
 				return direct;
 			}
 		}
@@ -568,6 +571,149 @@ public class RewardHandler {
 
 	}
 
+    private boolean hasConfiguredNestedReward(ConfigurationSection data,String path) {
+        if(data.isConfigurationSection(path))return true;
+        if(data.isList(path))return !data.getList(path).isEmpty();
+        return !data.getString(path,"").isEmpty();
+    }
+
+    /** Completion-aware configuration dispatch preserving list/scalar/inline shapes. */
+    public java.util.concurrent.CompletionStage<Void> giveRewardAsync(AdvancedCoreUser user,
+            ConfigurationSection data,String path,RewardOptions requested) {
+        if(data==null || path==null)return java.util.concurrent.CompletableFuture.completedFuture(null);
+        RewardOptions options=requested==null?new RewardOptions():requested.copyForDispatch();
+        Reward.ReplayState state=Reward.replayStateFor(options);state.captureRuntime(plugin);options.setAsyncReplayState(state);
+        String parent=options.getAsyncReplayKey();if(parent==null)parent=Reward.currentReplayKey();
+        if(parent==null)parent="list:"+path;
+        final String parentKey=parent;final String lane="nested-list:"+path;
+        if(options.getAsyncReplayOccurrenceId()==null)options.setAsyncReplayOccurrenceId(Reward.currentReplayOccurrenceId());
+        return state.getActionDispatchOwner().dispatch(()->{
+            if(data.isList(path) || Reward.hasReplayNestedRewardSnapshot(options.getPlaceholders(),lane,state,parentKey)) {
+                java.util.List<String> configured=data.isList(path)?new ArrayList<>(data.getStringList(path)):java.util.Collections.emptyList();
+                return Reward.replayNestedRewardSequence(plugin,options.getPlaceholders(),lane,configured,state,parentKey,(name,index)->{
+                    RewardOptions child=options.copyForNestedDispatch(parentKey+"/"+name+":"+index);child.setAsyncReplayState(state);
+                    if(Reward.isDurableReplay(options))state.mergeReplayMetadataInto(child.getPlaceholders());
+                    return giveRewardAsync(user,name,child);
+                });
+            }
+            if(data.isConfigurationSection(path)) {
+                String prefix=options.getPrefix(),suffix=options.getSuffix();
+                String name=(prefix==null || prefix.isEmpty()?"":prefix+"_")+path.replace(".","_")
+                        +(suffix==null || suffix.isEmpty()?"":"_"+suffix);
+                DirectlyDefinedReward direct=getDirectlyDefined(path);SubDirectlyDefinedReward sub=getSubDirectlyDefined(name);
+                if(prefix!=null && suffix!=null && (direct!=null || sub!=null)) {
+                    Reward definition=direct!=null?direct.getReward():sub.getReward();
+                    return giveRewardAsync(user,definition,options);
+                }
+                Reward definition=new Reward(name,data.getConfigurationSection(path));
+                return state.getActionDispatchOwner().dispatchOffPrimary(()->{
+                    definition.checkRewardFile();return giveRewardAsync(user,definition,options);
+                },java.util.concurrent.TimeUnit.SECONDS.toMillis(30));
+            }
+            String name=data.getString(path,"");
+            if(name.isEmpty() && Reward.isDurableReplay(options))return failedQueueReward(new IllegalStateException("Nested replay configuration is missing"));
+            return giveRewardAsync(user,name,options);
+        },java.util.concurrent.TimeUnit.SECONDS.toMillis(30));
+    }
+
+    /** Await a named child or its legacy slash-command form on the admitted runtime. */
+    public java.util.concurrent.CompletionStage<Void> giveRewardAsync(AdvancedCoreUser user, String name,
+            RewardOptions options) {
+        RewardOptions captured=options==null?new RewardOptions():options.copyForDispatch();
+        Reward.ReplayState state=Reward.replayStateFor(captured);state.captureRuntime(plugin);captured.setAsyncReplayState(state);
+        ServerThreadRewardDispatch owner=state.getActionDispatchOwner();
+        if(name==null)return failedQueueReward(new IllegalArgumentException("Reward name is null"));
+        if(name.isEmpty())return java.util.concurrent.CompletableFuture.completedFuture(null);
+        if(name.startsWith("/")) {
+            return owner.dispatchOffPrimary(()->java.util.concurrent.CompletableFuture.completedFuture(user.getPlayerName()),
+                    java.util.concurrent.TimeUnit.SECONDS.toMillis(30)).thenCompose(playerName->owner.dispatch(()->{
+                String command=name;Player player=Bukkit.getPlayer(playerName);
+                if(player!=null)command=PlaceholderUtils.replaceJavascript(player,command);
+                command=PlaceholderUtils.replacePlaceHolder(command,captured.getPlaceholders());
+                if(command.startsWith("/"))command=command.substring(1);
+                Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(),command);
+                return java.util.concurrent.CompletableFuture.<Void>completedFuture(null);
+            },java.util.concurrent.TimeUnit.SECONDS.toMillis(30)));
+        }
+        return owner.dispatchOffPrimary(()->{
+            // Durable retries may not turn a missing child into a newly created empty file.
+            Reward reward=Reward.isDurableReplay(captured)?resolveRegisteredQueuedReward(name):getReward(name);
+            if(reward==null)return failedQueueReward(new IllegalStateException("Nested reward could not be resolved"));
+            return giveRewardAsync(user,reward,captured);
+        },java.util.concurrent.TimeUnit.SECONDS.toMillis(30));
+    }
+
+    /** Await a registered reward without creating a missing reward file. */
+    public java.util.concurrent.CompletionStage<Void> giveRewardAsync(AdvancedCoreUser user, Reward reward,
+            RewardOptions options) {
+        if(reward==null)return failedQueueReward(new IllegalStateException("Reward was not resolved"));
+        if(!plugin.isEnabled())return failedQueueReward(new IllegalStateException("Plugin disabled before asynchronous reward dispatch"));
+        RewardOptions captured=options==null?new RewardOptions():options.copyForDispatch();
+        Reward.ReplayState state=Reward.replayStateFor(captured);state.captureRuntime(plugin);captured.setAsyncReplayState(state);
+        return state.getActionDispatchOwner().dispatchOffPrimary(()->reward.giveRewardAsync(user,captured),
+                java.util.concurrent.TimeUnit.SECONDS.toMillis(30));
+    }
+
+    /** Persisted queue provenance permits a bounded generated snapshot fallback, never a command. */
+    public java.util.concurrent.CompletionStage<Void> givePersistedQueueRewardAsync(AdvancedCoreUser user,
+            com.bencodez.advancedcore.api.user.PersistedQueueReference reference,RewardOptions options) {
+        if(reference==null)return java.util.concurrent.CompletableFuture.completedFuture(null);
+        RewardOptions captured=options==null?new RewardOptions():options.copyForDispatch();
+        Reward.ReplayState state=Reward.replayStateFor(captured);state.captureRuntime(plugin);captured.setAsyncReplayState(state);
+        return state.getActionDispatchOwner().dispatchOffPrimary(()->{
+            String stored=reference.getReference();
+            if(stored==null || stored.isEmpty())return failedQueueReward(new IllegalStateException("Persisted queue reference is empty"));
+            String name=stored;Boolean snapshot=null;
+            String prefix="\\AdvancedCoreQueue/1/";
+            if(stored.startsWith(prefix)) {
+                String encoded=stored.substring(prefix.length());int separator=encoded.indexOf('/');
+                if(separator<1)return failedQueueReward(new IllegalArgumentException("Malformed persisted queue reference"));
+                String mode=encoded.substring(0,separator);
+                if(!mode.equals("normal") && !mode.equals("snapshot"))return failedQueueReward(new IllegalArgumentException("Unknown persisted queue reference mode"));
+                try {name=new String(java.util.Base64.getUrlDecoder().decode(encoded.substring(separator+1)),java.nio.charset.StandardCharsets.UTF_8);}
+                catch(IllegalArgumentException failure){return failedQueueReward(failure);}
+                snapshot=mode.equals("snapshot");
+            }
+            Reward resolved;
+            if(Boolean.TRUE.equals(snapshot))resolved=getQueuedGeneratedReward(name,user.getUUID());
+            else {
+                resolved=resolveRegisteredQueuedReward(name);
+                if(resolved==null && snapshot==null)resolved=getQueuedGeneratedReward(name,user.getUUID());
+            }
+            if(resolved==null)return failedQueueReward(new IllegalStateException("Persisted queued reward could not be resolved"));
+            return giveRewardAsync(user,resolved,captured);
+        },java.util.concurrent.TimeUnit.SECONDS.toMillis(30));
+    }
+
+    private Reward resolveRegisteredQueuedReward(String name) {
+        if(hasDirectRewardHandle(name))return getReward(name);
+        String normalized=normalizeLookupName(name);
+        List<Reward> registered=getRewards();List<Reward> snapshot;
+        synchronized(registered){snapshot=new ArrayList<>(registered);}
+        for(Reward candidate:snapshot) {
+            if(candidate.getName().equalsIgnoreCase(normalized) && candidate.getConfig()!=null
+                    && !candidate.getConfig().isDirectlyDefinedReward())return candidate;
+        }
+        return null;
+    }
+
+    public Reward getQueuedGeneratedReward(String name,String userUuid) {
+        if(name==null || name.isEmpty() || userUuid==null || userUuid.isEmpty())return null;
+        name=normalizeLookupName(name);validateRewardFileName(name);
+        File folder=new File(getDefaultFolder(),"DirectlyDefined");File file=new File(folder,name+".yml");
+        if(!file.isFile())return null;
+        org.bukkit.configuration.file.YamlConfiguration data=new org.bukkit.configuration.file.YamlConfiguration();
+        try {data.load(file);}catch(java.io.IOException | org.bukkit.configuration.InvalidConfigurationException failure){
+            throw new IllegalStateException("Persisted generated reward snapshot could not be read",failure);
+        }
+        if(!data.getBoolean("DirectlyDefinedReward",false))return null;
+        return new QueuedGeneratedReward(file,name,java.util.Collections.singleton(userUuid),data);
+    }
+
+    private static <T> java.util.concurrent.CompletableFuture<T> failedQueueReward(Throwable failure) {
+        java.util.concurrent.CompletableFuture<T> result=new java.util.concurrent.CompletableFuture<>();result.completeExceptionally(failure);return result;
+    }
+
 	public void giveReward(AdvancedCoreUser user, String reward, RewardOptions rewardOptions) {
 		if (!reward.equals("")) {
 			if (reward.startsWith("/")) {
@@ -581,18 +727,38 @@ public class RewardHandler {
 
 	public boolean hasDirectRewardHandle(String reward) {
 		for (DirectlyDefinedReward direct : getDirectlyDefinedRewards()) {
-			if (direct.getPath().replace(".", "_").equals(reward)) {
+			if (matchesDirectPath(direct.getPath(), reward)) {
 				return true;
 			}
 		}
 
 		for (SubDirectlyDefinedReward direct : getSubDirectlyDefinedRewards()) {
-			if (direct.getFullPath().equalsIgnoreCase(reward)
-					|| direct.getFullPath().equalsIgnoreCase(reward.replaceAll("_", "."))) {
+			if (matchesSubDirectlyDefined(direct, reward)) {
 				return true;
 			}
 		}
 		return false;
+	}
+
+	private boolean matchesSubDirectlyDefined(SubDirectlyDefinedReward direct, String reward) {
+		return matchesDirectPath(direct.getFullPath(), reward);
+	}
+
+	private static String normalizeLookupName(String reward) {
+		return reward == null ? "" : reward.replace(" ", "_");
+	}
+
+	private static boolean matchesDirectPath(String registeredPath, String lookupPath) {
+		return normalizeLookupName(registeredPath).replace('.', '_').toLowerCase(Locale.ROOT)
+				.equals(normalizeLookupName(lookupPath).replace('.', '_').toLowerCase(Locale.ROOT));
+	}
+
+	private void validateRewardFileName(String reward) {
+		if (reward == null || reward.indexOf('\0') >= 0 || new File(reward).isAbsolute()
+				|| reward.indexOf('/') >= 0 || reward.indexOf('\\') >= 0) {
+			plugin.getLogger().warning("Rejected unsafe reward file name");
+			throw new IllegalArgumentException("Reward name must not contain path separators or be an absolute path");
+		}
 	}
 
 	public boolean hasRewards(FileConfiguration data, String path) {
@@ -682,7 +848,7 @@ public class RewardHandler {
 				return true;
 			}
 		}.priority(100).addEditButton(
-				new EditGUIButton(new ItemBuilder("CLOCK"), new EditGUIValueNumber("RewardExpiration", null) {
+				new EditGUIButton(new ItemBuilder(Material.WATCH), new EditGUIValueNumber("RewardExpiration", null) {
 
 					@Override
 					public void setValue(Player player, Number value) {
@@ -921,7 +1087,7 @@ public class RewardHandler {
 				return false;
 			}
 		}.priority(100).allowReattempt().alwaysForceNoData().addEditButton(
-				new EditGUIButton(new ItemBuilder("END_PORTAL_FRAME"), new EditGUIValueList("Worlds", null) {
+				new EditGUIButton(new ItemBuilder(Material.ENDER_PORTAL_FRAME), new EditGUIValueList("Worlds", null) {
 
 					@Override
 					public void setValue(Player player, ArrayList<String> value) {
@@ -988,7 +1154,7 @@ public class RewardHandler {
 				return true;
 			}
 		}.priority(100).allowReattempt().alwaysForceNoData().addEditButton(
-				new EditGUIButton(new ItemBuilder("END_PORTAL_FRAME"), new EditGUIValueList("BlackListedWorlds", null) {
+				new EditGUIButton(new ItemBuilder(Material.ENDER_PORTAL_FRAME), new EditGUIValueList("BlackListedWorlds", null) {
 
 					@Override
 					public void setValue(Player player, ArrayList<String> value) {
@@ -1030,7 +1196,7 @@ public class RewardHandler {
 				return true;
 			}
 		}.priority(100).addEditButton(
-				new EditGUIButton(new ItemBuilder("REDSTONE_TORCH"), new EditGUIValueString("RewardType", null) {
+				new EditGUIButton(new ItemBuilder(Material.REDSTONE_TORCH_ON), new EditGUIValueString("RewardType", null) {
 
 					@Override
 					public void setValue(Player player, String value) {
@@ -1308,6 +1474,18 @@ public class RewardHandler {
 
 		injectedRewards.add(new RewardInjectConfigurationSection("NumberCommand") {
 
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplayCommandSnapshot(placeholders,"console");}
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if(section==null && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                ConfigurationSection configured=section==null?new org.bukkit.configuration.file.YamlConfiguration():section;
+                String number=Reward.replaySelection(placeholders,()->String.valueOf(ThreadLocalRandom.current().nextInt(configured.getInt("Min",0),configured.getInt("Max",100)+1)));
+                String command=configured.getString("Command","").replace("%number%",number);
+                return MiscUtils.getInstance().executeConsoleCommandsAsync(user.getPlayerName(),command,placeholders).thenApply(ignored->(Object)number);
+            }
+
 			@Override
 			public String onRewardRequested(Reward reward, AdvancedCoreUser user, ConfigurationSection section,
 					HashMap<String, String> placeholders) {
@@ -1333,11 +1511,11 @@ public class RewardHandler {
 			@Override
 			public String onRewardRequest(Reward reward, AdvancedCoreUser user, int num,
 					HashMap<String, String> placeholders) {
-				user.giveExp(num);
+				if(num!=0)user.giveExp(num);
 				return null;
 			}
 		}.asPlaceholder("EXP").priority(100).addEditButton(
-				new EditGUIButton(new ItemBuilder("EXPERIENCE_BOTTLE"), new EditGUIValueInventory("EXP") {
+				new EditGUIButton(new ItemBuilder(Material.EXP_BOTTLE), new EditGUIValueInventory("EXP") {
 
 					@Override
 					public void openInventory(ClickEvent clickEvent) {
@@ -1367,11 +1545,11 @@ public class RewardHandler {
 			@Override
 			public String onRewardRequest(Reward reward, AdvancedCoreUser user, int num,
 					HashMap<String, String> placeholders) {
-				user.giveExpLevels(num);
+				if(num!=0)user.giveExpLevels(num);
 				return null;
 			}
 		}.asPlaceholder("EXP").priority(100).addEditButton(
-				new EditGUIButton(new ItemBuilder("EXPERIENCE_BOTTLE"), new EditGUIValueInventory("EXPLevels") {
+				new EditGUIButton(new ItemBuilder(Material.EXP_BOTTLE), new EditGUIValueInventory("EXPLevels") {
 
 					@Override
 					public void openInventory(ClickEvent clickEvent) {
@@ -1446,7 +1624,7 @@ public class RewardHandler {
 				user.sendMessage(value, placeholders);
 				return null;
 			}
-		}.addEditButton(new EditGUIButton(new ItemBuilder("OAK_SIGN"), new EditGUIValueInventory("Messages") {
+		}.addEditButton(new EditGUIButton(new ItemBuilder(Material.SIGN), new EditGUIValueInventory("Messages") {
 
 			@Override
 			public void openInventory(ClickEvent clickEvent) {
@@ -1563,13 +1741,22 @@ public class RewardHandler {
 
 		injectedRewards.add(new RewardInjectString("Command") {
 
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplayCommandSnapshot(placeholders,"console");}
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                if(!data.isString(getPath()) && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                String command=data.getString(getPath(),"");
+                return MiscUtils.getInstance().executeConsoleCommandsAsync(user.getPlayerName(),command,placeholders).thenApply(ignored->(Object)command);
+            }
+
 			@Override
 			public String onRewardRequest(Reward reward, AdvancedCoreUser user, String value,
 					HashMap<String, String> placeholders) {
 				MiscUtils.getInstance().executeConsoleCommands(user.getPlayerName(), value, placeholders);
 				return null;
 			}
-		}.addEditButton(new EditGUIButton(new ItemBuilder("COMMAND_BLOCK"), new EditGUIValueString("Command", null) {
+		}.addEditButton(new EditGUIButton(new ItemBuilder(Material.COMMAND), new EditGUIValueString("Command", null) {
 
 			@Override
 			public void setValue(Player player, String value) {
@@ -1632,6 +1819,15 @@ public class RewardHandler {
 
 		injectedRewards.add(new RewardInjectStringList("Commands") {
 
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplayCommandSnapshot(placeholders,"console");}
+            @Override @SuppressWarnings("unchecked") public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                if(!data.isList(getPath()) && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                ArrayList<String> commands=new ArrayList<>((java.util.List<String>)data.getList(getPath(),new ArrayList<String>()));
+                return MiscUtils.getInstance().executeConsoleCommandsAsync(user.getPlayerName(),commands,placeholders,true).thenApply(ignored->(Object)null);
+            }
+
 			@Override
 			public String onRewardRequest(Reward reward, AdvancedCoreUser user, ArrayList<String> list,
 					HashMap<String, String> placeholders) {
@@ -1640,7 +1836,7 @@ public class RewardHandler {
 				}
 				return null;
 			}
-		}.addEditButton(new EditGUIButton(new ItemBuilder("COMMAND_BLOCK"), new EditGUIValueList("Commands", null) {
+		}.addEditButton(new EditGUIButton(new ItemBuilder(Material.COMMAND), new EditGUIValueList("Commands", null) {
 
 			@Override
 			public void setValue(Player player, ArrayList<String> value) {
@@ -1670,6 +1866,23 @@ public class RewardHandler {
 		}));
 
 		injectedRewards.add(new RewardInjectConfigurationSection("Commands") {
+
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplayCommandSnapshot(placeholders,"console") || Reward.hasReplayCommandSnapshot(placeholders,"player");}
+            @Override @SuppressWarnings("unchecked") public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if(section==null && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                ConfigurationSection configured=section==null?new org.bukkit.configuration.file.YamlConfiguration():section;
+                ArrayList<String> console=new ArrayList<>((java.util.List<String>)configured.getList("Console",new ArrayList<String>()));
+                ArrayList<String> player=new ArrayList<>((java.util.List<String>)configured.getList("Player",new ArrayList<String>()));
+                boolean consolePending=Reward.hasReplayCommandSnapshot(placeholders,"console") || !console.isEmpty();
+                boolean playerPending=Reward.hasReplayCommandSnapshot(placeholders,"player")?Reward.hasPendingReplayCommandWork(placeholders,"player"):!player.isEmpty();
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey();
+                java.util.concurrent.CompletionStage<Void> availability=playerPending?user.validatePlayerCommandAvailabilityAsync():java.util.concurrent.CompletableFuture.completedFuture(null);
+                return availability.thenCompose(ignored->consolePending?MiscUtils.getInstance().executeConsoleCommandsAsync(user.getPlayerName(),console,placeholders,configured.getBoolean("Stagger",true),state,key):java.util.concurrent.CompletableFuture.completedFuture(null))
+                        .thenCompose(ignored->user.preformCommandAsync(player,placeholders,state,key)).thenApply(ignored->(Object)null);
+            }
 
 			@SuppressWarnings("unchecked")
 			@Override
@@ -1738,6 +1951,34 @@ public class RewardHandler {
 
 		injectedRewards.add(new RewardInjectConfigurationSection("Javascript") {
 
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean supportsAsyncSynchronization(){return false;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplaySelection(placeholders);}
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,
+                    AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if((section==null || !section.getBoolean("Enabled")) && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                String path=Reward.replaySelection(placeholders,()->{
+                    String expression=PlaceholderUtils.replacePlaceHolders(user.getOfflinePlayer(),section.getString("Expression"));
+                    boolean selected=new JavascriptEngine().addPlayer(user.getOfflinePlayer())
+                            .getBooleanValue(PlaceholderUtils.replacePlaceHolder(expression,placeholders));
+                    String branch=selected?"TrueRewards":"FalseRewards";
+                    return hasConfiguredNestedReward(section,branch)?branch:"none";
+                });
+                if(path==null || path.equals("none"))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                if(!path.equals("TrueRewards") && !path.equals("FalseRewards"))return failedQueueReward(new IllegalStateException("Unknown Javascript reward replay branch"));
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey(),occurrence=Reward.currentReplayOccurrenceId();
+                String prefix=reward.getName()+".Javascript";
+                return Reward.persistReplayMetadataAsync(plugin,placeholders).thenCompose(unused->
+                        Reward.replaySingleNestedReward(plugin,placeholders,"selected",state,key,()->{
+                            if(section==null)return failedQueueReward(new IllegalStateException("Selected Javascript reward definition is missing"));
+                            RewardBuilder builder=new RewardBuilder(section,path).withPrefix(prefix).withPlaceHolder(placeholders);
+                            Reward.withReplayState(builder.getRewardOptions(),state,key,"path:"+path,occurrence);
+                            return builder.sendAsync(user);
+                        })).thenApply(unused->(Object)null);
+            }
+
 			@Override
 			public String onRewardRequested(Reward reward, AdvancedCoreUser user, ConfigurationSection section,
 					HashMap<String, String> placeholders) {
@@ -1790,6 +2031,42 @@ public class RewardHandler {
 		}.addLore("Run javascript to run rewards based on expression return value of true/false"))));
 
 		injectedRewards.add(new RewardInjectConfigurationSection("Lucky") {
+
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean supportsAsyncSynchronization(){return false;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders) {
+                return Reward.hasReplaySelection(placeholders) && !Reward.hasCompletedNestedRewardSequence(placeholders,"lucky:"+getPath());
+            }
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,
+                    AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if(section==null && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                String choices=Reward.replaySelection(placeholders,()->{
+                    HashMap<Integer,String> luckyRewards=new HashMap<>();
+                    for(String name:section.getKeys(false)) {
+                        if(MessageAPI.isInt(name)) {
+                            int denominator=Integer.parseInt(name);
+                            if(denominator>0)luckyRewards.put(denominator,"Lucky."+denominator);
+                        }
+                    }
+                    HashMap<String,Integer> selected=new LinkedHashMap<>();
+                    for(Entry<Integer,String> entry:luckyRewards.entrySet()) {
+                        if(MiscUtils.getInstance().checkChance(1,entry.getKey()))selected.put(entry.getValue(),entry.getKey());
+                    }
+                    selected=ArrayUtils.sortByValuesStr(selected,false);
+                    ArrayList<String> paths=new ArrayList<>(selected.keySet());
+                    if(reward.getConfig().getConfigData().getBoolean("OnlyOneLucky",false) && paths.size()>1)paths.subList(1,paths.size()).clear();
+                    return paths.isEmpty()?null:String.join("\n",paths);
+                });
+                if(choices==null)return java.util.concurrent.CompletableFuture.completedFuture(null);
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey(),occurrence=Reward.currentReplayOccurrenceId();
+                return Reward.replayNestedRewardSequence(plugin,placeholders,"lucky:"+getPath(),java.util.Arrays.asList(choices.split("\\n")),state,key,(path,index)->{
+                    RewardBuilder builder=new RewardBuilder(reward.getConfig().getConfigData(),path).withPrefix(reward.getName()).withPlaceHolder(placeholders);
+                    Reward.withReplayState(builder.getRewardOptions(),state,key,path+":"+index,occurrence);
+                    return builder.sendAsync(user);
+                }).thenApply(unused->(Object)null);
+            }
 
 			@Override
 			public String onRewardRequested(Reward reward, AdvancedCoreUser user, ConfigurationSection section,
@@ -1877,6 +2154,38 @@ public class RewardHandler {
 
 		injectedRewards.add(new RewardInjectConfigurationSection("Random") {
 
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean supportsAsyncSynchronization(){return false;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplaySelection(placeholders);}
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,
+                    AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if(section==null && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                String choice=Reward.replaySelection(placeholders,()->{
+                    if(!MiscUtils.getInstance().checkChance(section.getDouble("Chance",100),100))
+                        return hasConfiguredNestedReward(data,"Random.FallBack")?"fallback":"none";
+                    if(!section.getBoolean("PickRandom",true))return hasConfiguredNestedReward(data,"Random.Rewards")?"rewards":"none";
+                    java.util.List<String> list=section.getStringList("Rewards");
+                    return list.isEmpty()?"none":"pick:"+list.get(ThreadLocalRandom.current().nextInt(list.size()));
+                });
+                if(choice==null || choice.equals("none"))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey(),occurrence=Reward.currentReplayOccurrenceId();
+                if(choice.startsWith("pick:")) {
+                    String selected=choice.substring(5);
+                    if(selected.isEmpty())return java.util.concurrent.CompletableFuture.completedFuture(null);
+                    RewardOptions child=Reward.withReplayState(new RewardOptions().setPlaceholders(placeholders),state,key,"selected:"+selected,occurrence);
+                    return Reward.persistReplayMetadataAsync(plugin,placeholders).thenCompose(unused->
+                            Reward.replaySingleNestedReward(plugin,placeholders,"selected",state,key,()->giveRewardAsync(user,selected,child))).thenApply(unused->(Object)null);
+                }
+                if(!choice.equals("rewards") && !choice.equals("fallback"))return failedQueueReward(new IllegalStateException("Unknown random reward replay choice"));
+                String path=choice.equals("rewards")?"Random.Rewards":"Random.FallBack";
+                RewardBuilder builder=new RewardBuilder(data,path).withPrefix(reward.getName()).withPlaceHolder(placeholders);
+                Reward.withReplayState(builder.getRewardOptions(),state,key,"path:"+path,occurrence);
+                return Reward.persistReplayMetadataAsync(plugin,placeholders).thenCompose(unused->
+                        Reward.replaySingleNestedReward(plugin,placeholders,"selected",state,key,()->builder.sendAsync(user))).thenApply(unused->(Object)null);
+            }
+
 			@SuppressWarnings("unchecked")
 			@Override
 			public String onRewardRequested(Reward reward, AdvancedCoreUser user, ConfigurationSection section,
@@ -1922,6 +2231,23 @@ public class RewardHandler {
 
 		injectedRewards.add(new RewardInjectConfigurationSection("Rewards") {
 
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean supportsAsyncSynchronization(){return false;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){
+                String lane="nested-list:"+getPath();
+                return Reward.hasReplayNestedRewardSnapshot(placeholders,lane) && !Reward.hasCompletedNestedRewardSequence(placeholders,lane);
+            }
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,
+                    AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders){
+                if(!data.contains(getPath()) && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                RewardBuilder builder=new RewardBuilder(data,getPath()).withPrefix(reward.getName()).withPlaceHolder(placeholders);
+                builder.getRewardOptions().setAsyncReplayState(Reward.currentReplayState());
+                builder.getRewardOptions().setAsyncReplayKey(Reward.currentReplayKey());
+                builder.getRewardOptions().setAsyncReplayOccurrenceId(Reward.currentReplayOccurrenceId());
+                return builder.sendAsync(user).thenApply(ignored->(Object)null);
+            }
+
 			@Override
 			public String onRewardRequested(Reward reward, AdvancedCoreUser user, ConfigurationSection section,
 					HashMap<String, String> placeholders) {
@@ -1952,6 +2278,16 @@ public class RewardHandler {
 		}.addLore("Sub rewards"))).priority(5).alwaysForce().postReward());
 
 		injectedRewards.add(new RewardInjectStringList("RandomCommand") {
+
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplayCommandSnapshot(placeholders,"console");}
+            @Override @SuppressWarnings("unchecked") public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                java.util.List<String> commands=(java.util.List<String>)data.getList(getPath(),new ArrayList<String>());
+                if(commands.isEmpty() && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                String command=Reward.replaySelection(placeholders,()->commands.get(ThreadLocalRandom.current().nextInt(commands.size())));
+                return MiscUtils.getInstance().executeConsoleCommandsAsync(user.getPlayerName(),command,placeholders).thenApply(ignored->(Object)null);
+            }
 
 			@Override
 			public String onRewardRequest(Reward r, AdvancedCoreUser user, ArrayList<String> list,
@@ -1985,6 +2321,23 @@ public class RewardHandler {
 		}));
 
 		injectedRewards.add(new RewardInjectStringList("RandomReward") {
+
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean supportsAsyncSynchronization(){return false;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplaySelection(placeholders);}
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,
+                    AdvancedCoreUser user, ConfigurationSection data, HashMap<String,String> placeholders) {
+                java.util.List<String> list=data.getStringList(getPath());
+                if(list.isEmpty() && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                String selected=Reward.replaySelection(placeholders,()->list.get(ThreadLocalRandom.current().nextInt(list.size())));
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey();
+                RewardOptions childOptions=Reward.withReplayState(new RewardOptions().setPlaceholders(placeholders),
+                        state,key,"selected:"+selected,Reward.currentReplayOccurrenceId());
+                return Reward.persistReplayMetadataAsync(plugin,placeholders).thenCompose(ignored->
+                        Reward.replaySingleNestedReward(plugin,placeholders,"selected",state,key,
+                                ()->giveRewardAsync(user,selected,childOptions))).thenApply(ignored->(Object)selected);
+            }
 
 			@Override
 			public String onRewardRequest(Reward r, AdvancedCoreUser user, ArrayList<String> list,
@@ -2047,6 +2400,27 @@ public class RewardHandler {
 
 		injectedRewards.add(new RewardInjectConfigurationSection("AdvancedRewards") {
 
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean supportsAsyncSynchronization(){return false;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders) {
+                String lane="advanced-rewards:"+getPath();
+                return Reward.hasReplayNestedRewardSnapshot(placeholders,lane) && !Reward.hasCompletedNestedRewardSequence(placeholders,lane);
+            }
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,
+                    AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if(section==null && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                java.util.List<String> configured=section==null?java.util.Collections.emptyList():new ArrayList<>(section.getKeys(false));
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey(),occurrence=Reward.currentReplayOccurrenceId();
+                return Reward.replayNestedRewardSequence(plugin,placeholders,"advanced-rewards:"+getPath(),configured,state,key,(name,index)->{
+                    if(section==null || !section.contains(name))return failedQueueReward(new IllegalStateException("Pending advanced reward definition is missing"));
+                    RewardOptions child=Reward.withReplayState(new RewardOptions().setPlaceholders(placeholders),state,key,name+":"+index,occurrence)
+                            .setPrefix(reward.getRewardName()+"_AdvancedRewards_"+name);
+                    return giveRewardAsync(user,section,name,child);
+                }).thenApply(unused->(Object)null);
+            }
+
 			@Override
 			public String onRewardRequested(Reward r, AdvancedCoreUser user, ConfigurationSection section,
 					HashMap<String, String> placeholders) {
@@ -2099,6 +2473,26 @@ public class RewardHandler {
 				}.addLore("Execute rewards"))).synchronize().priority(20).postReward());
 
 		injectedRewards.add(new RewardInjectConfigurationSection("AdvancedRandomReward") {
+
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean supportsAsyncSynchronization(){return false;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders){return Reward.hasReplaySelection(placeholders);}
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,
+                    AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if(section==null && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                java.util.List<String> keys=section==null?java.util.Collections.emptyList():new ArrayList<>(section.getKeys(false));
+                if(keys.isEmpty() && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                String selected=Reward.replaySelection(placeholders,()->keys.get(ThreadLocalRandom.current().nextInt(keys.size())));
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey();
+                RewardOptions child=Reward.withReplayState(new RewardOptions().setPlaceholders(placeholders),state,key,
+                        "selected:"+selected,Reward.currentReplayOccurrenceId()).setPrefix(reward.getRewardName()+"_AdvancedRandomReward");
+                return Reward.persistReplayMetadataAsync(plugin,placeholders).thenCompose(unused->
+                        Reward.replaySingleNestedReward(plugin,placeholders,"selected",state,key,()->
+                                section==null?failedQueueReward(new IllegalStateException("Selected advanced random definition is missing")):
+                                        giveRewardAsync(user,section,selected,child))).thenApply(unused->(Object)selected);
+            }
 
 			@Override
 			public String onRewardRequested(Reward r, AdvancedCoreUser user, ConfigurationSection section,
@@ -2258,7 +2652,7 @@ public class RewardHandler {
 				return null;
 
 			}
-		}.addEditButton(new EditGUIButton(new ItemBuilder("DRAGON_HEAD"), new EditGUIValueInventory("BossBar") {
+		}.addEditButton(new EditGUIButton(new ItemBuilder(Material.SKULL_ITEM), new EditGUIValueInventory("BossBar") {
 
 			@Override
 			public void openInventory(ClickEvent clickEvent) {
@@ -2356,7 +2750,7 @@ public class RewardHandler {
 				return null;
 
 			}
-		}.addEditButton(new EditGUIButton(new ItemBuilder("FIREWORK_ROCKET"), new EditGUIValueInventory("Firework") {
+		}.addEditButton(new EditGUIButton(new ItemBuilder(Material.FIREWORK), new EditGUIValueInventory("Firework") {
 
 			@Override
 			public void openInventory(ClickEvent clickEvent) {
@@ -2457,6 +2851,32 @@ public class RewardHandler {
 				.priority(10).alwaysValid().postReward());
 
 		injectedRewards.add(new RewardInjectConfigurationSection("AdvancedWorld") {
+
+            @Override public boolean supportsAsyncRequest(){return true;}
+            @Override public boolean requiresConfiguredDataForAsync(){return true;}
+            @Override public boolean supportsAsyncSynchronization(){return false;}
+            @Override public boolean hasPendingReplayWork(HashMap<String,String> placeholders) {
+                String lane="advanced-world:"+getPath();
+                return Reward.hasReplayNestedRewardSnapshot(placeholders,lane) && !Reward.hasCompletedNestedRewardSequence(placeholders,lane);
+            }
+            @Override public java.util.concurrent.CompletionStage<Object> onRewardRequestAsync(Reward reward,
+                    AdvancedCoreUser user,ConfigurationSection data,HashMap<String,String> placeholders) {
+                ConfigurationSection section=data.getConfigurationSection(getPath());
+                if(section==null && !hasPendingReplayWork(placeholders))return java.util.concurrent.CompletableFuture.completedFuture(null);
+                java.util.List<String> configured=section==null?java.util.Collections.emptyList():new ArrayList<>(section.getKeys(false));
+                Reward.ReplayState state=Reward.currentReplayState();String key=Reward.currentReplayKey(),occurrence=Reward.currentReplayOccurrenceId();
+                if(state!=null)state.captureRuntime(plugin);
+                ServerThreadRewardDispatch owner=state==null?plugin.getRewardDispatch():state.getActionDispatchOwner();
+                return Reward.replayNestedRewardSequence(plugin,placeholders,"advanced-world:"+getPath(),configured,state,key,(name,index)->
+                    owner.dispatch(()->{
+                        if(section==null || !section.contains(name))return failedQueueReward(new IllegalStateException("Pending advanced world reward definition is missing"));
+                        section.set(name+".Worlds",ArrayUtils.convert(new String[]{name}));
+                        RewardOptions child=Reward.withReplayState(new RewardOptions().withPlaceHolder(placeholders),state,key,name+":"+index,occurrence)
+                                .setPrefix(reward.getName()+"_AdvancedWorld");
+                        return giveRewardAsync(user,section,name,child);
+                    },java.util.concurrent.TimeUnit.SECONDS.toMillis(30))
+                ).thenApply(unused->(Object)null);
+            }
 
 			@Override
 			public String onRewardRequested(Reward reward1, AdvancedCoreUser user, ConfigurationSection section,
@@ -2869,6 +3289,7 @@ public class RewardHandler {
 	 * @return true, if successful
 	 */
 	public boolean rewardExist(String reward) {
+		reward = normalizeLookupName(reward);
 		if (reward.equals("")) {
 			return false;
 		}
@@ -2903,15 +3324,23 @@ public class RewardHandler {
 		}
 	}
 
+	/** Stop submissions before other plugin producers are awaited. */
+	public void stopSubmittingDelayedRewards() {
+		if (repeatTimer != null) repeatTimer.cancel();
+		if (delayedTimer != null) delayedTimer.shutdown();
+		AdvancedCoreUser.cancelTimedStorageWakeups(plugin);
+		AdvancedCoreUser.retireQueuePublications(plugin);
+	}
+
 	public void shutdown() {
-		delayedTimer.shutdown();
+		stopSubmittingDelayedRewards();
+		if (delayedTimer == null) return;
 		try {
-			delayedTimer.awaitTermination(10, TimeUnit.SECONDS);
-		} catch (InterruptedException e) {
-			e.printStackTrace();
+			if (!delayedTimer.awaitTermination(10, TimeUnit.SECONDS)) throw new IllegalStateException("Delayed reward work has not settled; storage provider remains open");
+		} catch (InterruptedException interrupted) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("Delayed reward shutdown interrupted; storage provider remains open", interrupted);
 		}
-		delayedTimer.shutdownNow();
-		repeatTimer.cancel();
 	}
 
 	public void sortInjectedRequirements() {
@@ -2991,6 +3420,14 @@ public class RewardHandler {
 	}
 
 	public void updateReward(Reward reward) {
+        RewardFileData config=reward==null?null:reward.getConfig();
+        if(config!=null && config.isDirectlyDefinedReward()) {
+            File folder=config.getRewardFolder();
+            if(folder!=null && folder.getName().equalsIgnoreCase("DirectlyDefined")) {
+                plugin.extraDebug("Keeping generated queued reward snapshot out of public registry: "+reward.getName());
+                return;
+            }
+        }
 		reward.validate();
 		for (int i = getRewards().size() - 1; i >= 0; i--) {
 			if (getRewards().get(i).getFile().getPath().equals(reward.getFile().getPath())) {

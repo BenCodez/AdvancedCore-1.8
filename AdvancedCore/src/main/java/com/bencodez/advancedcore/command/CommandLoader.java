@@ -140,7 +140,7 @@ public class CommandLoader {
 			@Override
 			public void execute(CommandSender sender, String[] args) {
 				if (plugin.getOptions().getStorageType().equals(UserStorage.MYSQL)) {
-					for (UserDataKey key : plugin.getUserManager().getDataManager().getKeys()) {
+					for (UserDataKey key : plugin.getUserManager().getDataManager().getRegisteredKeysSnapshot()) {
 						plugin.getMysql().alterColumnType(key.getKey(), key.getColumnType());
 					}
 					sendMessage(sender, "&cColumn sizes updated");
@@ -553,11 +553,11 @@ public class CommandLoader {
 			}
 		});
 
-		cmds.add(new CommandHandler(plugin, new String[] { "User", "All", "SetData", "(text)", "(text)" },
-				permPrefix + ".SetAllData", "Set all users data") {
+		cmds.add(new PlayerCommandHandler(plugin, new String[] { "User", "(player)", "SetData", "(text)", "(text)" },
+				permPrefix + ".SetData", "Set user data") {
 
 			@Override
-			public void execute(CommandSender sender, String[] args) {
+			public void executeAll(CommandSender sender, String[] args) {
 				String data = args[4];
 				if (data.equalsIgnoreCase("\"\"")) {
 					data = "";
@@ -570,27 +570,6 @@ public class CommandLoader {
 				}
 				sender.sendMessage(MessageAPI.colorize("&cSet all users " + args[3] + " to " + args[4]));
 			}
-		});
-
-		cmds.add(new PlayerCommandHandler(plugin, new String[] { "User", "(player)", "SetData", "(text)", "(text)" },
-				permPrefix + ".SetData", "Set user data") {
-
-			@Override
-			public void executeAll(CommandSender sender, String[] args) {
-				if (sender.hasPermission(permPrefix + ".SetAllData")) {
-					String data = args[4];
-					if (data.equalsIgnoreCase("\"\"")) {
-						data = "";
-					}
-					for (String uuid : plugin.getUserManager().getAllUUIDs()) {
-						AdvancedCoreUser user = plugin.getUserManager().getUser(UUID.fromString(uuid));
-						user.dontCache();
-						user.getData().setString(args[3], data);
-
-					}
-					sender.sendMessage(MessageAPI.colorize("&cSet all users " + args[3] + " to " + args[4]));
-				}
-			}
 
 			@Override
 			public void executeSinglePlayer(CommandSender sender, String[] args) {
@@ -602,7 +581,7 @@ public class CommandLoader {
 				user.getData().setString(args[3], data);
 				sender.sendMessage(MessageAPI.colorize("&cSet " + args[3] + " for " + args[1] + " to " + args[4]));
 			}
-		});
+		}.withLegacyAllPermissionAliases(permPrefix + ".SetAllData"));
 
 		cmds.add(new CommandHandler(plugin, new String[] { "User", "(Player)", "ViewData" }, permPrefix + ".ViewData",
 				"View playerdata") {
@@ -670,10 +649,8 @@ public class CommandLoader {
 
 				@Override
 				public void execute(CommandSender sender, String[] args) {
-					sendMessage(sender,
-							"&cStarting convert from " + plugin.getStorageType().toString() + " to " + args[1]);
-					plugin.convertDataStorage(plugin.getStorageType(), UserStorage.value(args[1]));
-					sendMessage(sender, "&cFinished converting");
+					startStorageConversion(plugin.getStorageType(), UserStorage.value(args[1]),
+							message -> sendMessage(sender, message));
 				}
 			});
 
@@ -683,10 +660,8 @@ public class CommandLoader {
 
 				@Override
 				public void execute(CommandSender sender, String[] args) {
-					sendMessage(sender,
-							"&cStarting convert from " + args[1] + " to " + plugin.getStorageType().toString());
-					plugin.convertDataStorage(UserStorage.value(args[1]), plugin.getStorageType());
-					sendMessage(sender, "&cFinished converting");
+					startStorageConversion(UserStorage.value(args[1]), plugin.getStorageType(),
+							message -> sendMessage(sender, message));
 				}
 			});
 		}
@@ -696,6 +671,23 @@ public class CommandLoader {
 		}
 
 		return cmds;
+	}
+
+	/** Both command directions report only after physical conversion completion. */
+	void startStorageConversion(UserStorage from, UserStorage to, java.util.function.Consumer<String> reply) {
+		plugin.getRewardDispatch().dispatch(() -> {
+			reply.accept("&cStarting convert from " + from + " to " + to);
+			return java.util.concurrent.CompletableFuture.<Void>completedFuture(null);
+		}, java.util.concurrent.TimeUnit.SECONDS.toMillis(30))
+				.thenCompose(ignored -> plugin.convertDataStorageAsync(from, to)).whenComplete((ignored, failure) -> {
+					if (failure != null) plugin.getLogger().severe("User storage conversion failed (" + failure.getClass().getSimpleName() + ")");
+					plugin.getRewardDispatch().dispatch(() -> {
+						reply.accept(failure == null ? "&cFinished converting" : "&cUser storage conversion failed; see the server log");
+						return java.util.concurrent.CompletableFuture.<Void>completedFuture(null);
+					}, java.util.concurrent.TimeUnit.SECONDS.toMillis(30)).whenComplete((sent, notificationFailure) -> {
+						if (notificationFailure != null) plugin.getLogger().warning("User storage conversion result message could not be delivered");
+					});
+				});
 	}
 
 	public ArrayList<CommandHandler> getBasicCommands(String permPrefix) {

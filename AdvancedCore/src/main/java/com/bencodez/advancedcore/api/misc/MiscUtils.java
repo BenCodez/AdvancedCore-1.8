@@ -22,6 +22,7 @@ import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Pattern;
 
 import org.bukkit.Bukkit;
+import org.bukkit.Material;
 import org.bukkit.Location;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.World;
@@ -60,7 +61,7 @@ public class MiscUtils {
 
 	public Date addSeconds(Date date, int seconds) {
 		Calendar c = Calendar.getInstance();
-		c.setTime(new Date());
+		c.setTime(date);
 		c.add(Calendar.SECOND, seconds);
 		return c.getTime();
 	}
@@ -147,6 +148,7 @@ public class MiscUtils {
 			for (final String cmd : commands) {
 				plugin.debug("Executing console command: " + cmd);
 				runConsoleCommand(cmd, tick, stagger);
+				tick++;
 			}
 
 		}
@@ -162,6 +164,7 @@ public class MiscUtils {
 			for (final String cmd : commands) {
 				plugin.debug("Executing console command: " + cmd);
 				runConsoleCommand(cmd, tick, stagger);
+				tick++;
 			}
 
 		}
@@ -169,8 +172,8 @@ public class MiscUtils {
 
 	public void executeConsoleCommands(Player player, String command, HashMap<String, String> placeholders) {
 		if (command != null && !command.isEmpty()) {
-			final String cmd = PlaceholderUtils.replaceJavascript(player,
-					PlaceholderUtils.replacePlaceHolder(command, placeholders));
+			final String cmd = stripLeadingSlash(PlaceholderUtils.replaceJavascript(player,
+					PlaceholderUtils.replacePlaceHolder(command, placeholders)));
 
 			plugin.debug("Executing console command: " + command);
 			plugin.getBukkitScheduler().executeOrScheduleSync(plugin, new Runnable() {
@@ -200,6 +203,7 @@ public class MiscUtils {
 			for (final String cmd : commands) {
 				plugin.debug("Executing console command: " + cmd);
 				runConsoleCommand(cmd, tick, stagger);
+				tick++;
 			}
 		}
 	}
@@ -210,10 +214,7 @@ public class MiscUtils {
 			if (p != null) {
 				command = PlaceholderUtils.replaceJavascript(p, command);
 			}
-			if (command.startsWith("/")) {
-				command.replaceFirst("/", "");
-			}
-			final String cmd = PlaceholderUtils.replacePlaceHolder(command, placeholders);
+			final String cmd = stripLeadingSlash(PlaceholderUtils.replacePlaceHolder(command, placeholders));
 
 			plugin.debug("Executing console command: " + command);
 			plugin.getBukkitScheduler().executeOrScheduleSync(plugin, new Runnable() {
@@ -227,6 +228,61 @@ public class MiscUtils {
 		}
 
 	}
+
+    /** Await a console command on the admitted runtime; legacy void overloads remain unchanged. */
+    public java.util.concurrent.CompletionStage<Void> executeConsoleCommandsAsync(String playerName,String command,
+            HashMap<String,String> placeholders) {
+        ArrayList<String> commands=new ArrayList<>();if(command!=null && !command.isEmpty())commands.add(command);
+        return executeConsoleCommandsAwaited(playerName,commands,placeholders,false,true);
+    }
+
+    /** Await each legacy-staggered console dispatch and its replay checkpoint. */
+    public java.util.concurrent.CompletionStage<Void> executeConsoleCommandsAsync(String playerName,ArrayList<String> commands,
+            HashMap<String,String> placeholders,boolean stagger) {
+        return executeConsoleCommandsAwaited(playerName,commands,placeholders,stagger,false);
+    }
+
+    private java.util.concurrent.CompletionStage<Void> executeConsoleCommandsAwaited(String playerName,ArrayList<String> input,
+            HashMap<String,String> placeholders,boolean stagger,boolean single) {
+        return executeConsoleCommandsAwaited(playerName,input,placeholders,stagger,single,
+                com.bencodez.advancedcore.api.rewards.Reward.currentReplayState(),com.bencodez.advancedcore.api.rewards.Reward.currentReplayKey());
+    }
+
+    /** Explicit context for a mixed-command continuation after player admission. */
+    public java.util.concurrent.CompletionStage<Void> executeConsoleCommandsAsync(String playerName,ArrayList<String> commands,
+            HashMap<String,String> placeholders,boolean stagger,
+            com.bencodez.advancedcore.api.rewards.Reward.ReplayState state,String key) {
+        return executeConsoleCommandsAwaited(playerName,commands,placeholders,stagger,false,state,key);
+    }
+
+    private java.util.concurrent.CompletionStage<Void> executeConsoleCommandsAwaited(String playerName,ArrayList<String> input,
+            HashMap<String,String> placeholders,boolean stagger,boolean single,
+            com.bencodez.advancedcore.api.rewards.Reward.ReplayState state,String key) {
+        if(state!=null)state.captureRuntime(plugin);
+        com.bencodez.advancedcore.api.rewards.ServerThreadRewardDispatch owner=state==null?plugin.getRewardDispatch():state.getActionDispatchOwner();
+        ArrayList<String> templates=input==null?new ArrayList<>():new ArrayList<>(input);
+        return owner.dispatch(()->{
+            ArrayList<String> expanded=new ArrayList<>(templates);
+            if(single && !expanded.isEmpty()) {
+                Player player=Bukkit.getPlayer(playerName);
+                if(player!=null && !expanded.isEmpty())expanded.set(0,PlaceholderUtils.replaceJavascript(player,expanded.get(0)));
+            } else if(!expanded.isEmpty()) {
+                placeholders.put("player",playerName);
+                OfflinePlayer player=Bukkit.getOfflinePlayer(playerName);
+                if(player!=null)expanded=PlaceholderUtils.replaceJavascript(player,expanded);
+            }
+            expanded=PlaceholderUtils.replacePlaceHolder(expanded,placeholders);
+            return com.bencodez.advancedcore.api.rewards.Reward.replayCommandSequence(plugin,placeholders,"console",templates,expanded,state,key,
+                (command,index)->{
+                    java.util.function.Supplier<java.util.concurrent.CompletionStage<Void>> physical=()->{
+                        Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(),stripLeadingSlash(command));
+                        return java.util.concurrent.CompletableFuture.completedFuture(null);
+                    };
+                    if(single || (!stagger && index>0))return owner.dispatch(physical,30000);
+                    return owner.dispatchAfterTicks(physical,stagger && index>0?1:0,30000);
+                });
+        },30000);
+    }
 
 	public Object getBlockMeta(Block block, String str) {
 		for (MetadataValue meta : block.getMetadata(str)) {
@@ -417,12 +473,13 @@ public class MiscUtils {
 	}
 
 	private void runConsoleCommand(String command, int delay, boolean hasDelay) {
+		final String commandToRun = stripLeadingSlash(command);
 		if (hasDelay && delay > 0) {
 			plugin.getBukkitScheduler().runTaskLater(plugin, new Runnable() {
 
 				@Override
 				public void run() {
-					Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), command);
+					Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), commandToRun);
 				}
 			}, delay);
 
@@ -431,10 +488,17 @@ public class MiscUtils {
 
 				@Override
 				public void run() {
-					Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), command);
+					Bukkit.getServer().dispatchCommand(Bukkit.getConsoleSender(), commandToRun);
 				}
 			});
 		}
+	}
+
+	private String stripLeadingSlash(String command) {
+		if (command != null && command.startsWith("/")) {
+			return command.substring(1);
+		}
+		return command;
 	}
 
 	public void setBlockMeta(Block block, String str, Object value) {
@@ -588,7 +652,7 @@ public class MiscUtils {
 	 */
 	@Deprecated
 	public ItemStack setSkullOwner(String playerName) {
-		return new ItemBuilder("PLAYER_HEAD").setSkullOwner(playerName).toItemStack();
+		return new ItemBuilder(Material.SKULL_ITEM).setDurability((short) 3).setSkullOwner(playerName).toItemStack();
 	}
 
 	public LinkedHashMap<Double, String> sortByKeys(LinkedHashMap<Double, String> topVoterAllTime,

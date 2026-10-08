@@ -1,9 +1,12 @@
 package com.bencodez.advancedcore.api.user.userstorage.sql;
 
+import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+
+import com.bencodez.advancedcore.api.user.userstorage.SqlColumnNames;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -69,11 +72,11 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 			return;
 		}
 		try {
-			String query = "ALTER TABLE " + getName() + " ADD COLUMN " + column.getName() + " "
+			String query = "ALTER TABLE " + getName() + " ADD COLUMN `" + column.getName() + "` "
 					+ column.getDataType().toString();
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			s.executeUpdate();
-			s.close();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query)) {
+				s.executeUpdate();
+			}
 			columns.add(column);
 		} catch (SQLException e) {
 			e.printStackTrace();
@@ -85,10 +88,10 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 			return;
 		}
 		try {
-			String query = "ALTER TABLE " + getName() + " ADD COLUMN " + column.getKey() + " " + column.getColumnType();
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			s.executeUpdate();
-			s.close();
+			String query = "ALTER TABLE " + getName() + " ADD COLUMN `" + column.getKey() + "` " + column.getColumnType();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query)) {
+				s.executeUpdate();
+			}
 			if (column instanceof UserDataKeyInt) {
 				columns.add(new Column(column.getKey(), DataType.INTEGER));
 			} else {
@@ -101,7 +104,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 
 	public void addCustomColumns() {
 		// add custom column types
-		for (UserDataKey key : plugin.getUserManager().getDataManager().getKeys()) {
+		for (UserDataKey key : plugin.getUserManager().getDataManager().getRegisteredKeysSnapshot()) {
 			addColoumn(key);
 		}
 	}
@@ -133,20 +136,18 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		String query = "SELECT uuid FROM " + getName();
 
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			ResultSet rs = s.executeQuery();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+				ResultSet rs = s.executeQuery()) {
 			/*
 			 * Query query = new Query(mysql, sql); ResultSet rs = query.executeQuery();
 			 */
 			while (rs.next()) {
 				String str = rs.getString("uuid");
 				if (str != null && str.equals(index)) {
-					rs.close();
-					s.close();
 					return true;
 				}
 			}
-			rs.close();
+			}
 
 		} catch (SQLException ex) {
 			ex.printStackTrace();
@@ -159,8 +160,9 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		checkColumn(new Column(columnFromName, dataType));
 		String sql = "UPDATE `" + getName() + "` SET `" + columnToName + "` = `" + columnFromName + "`;";
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(sql);
-			s.executeUpdate();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(sql)) {
+				s.executeUpdate();
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
@@ -170,7 +172,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		if (column.getName().equalsIgnoreCase(primaryKey.getName())) {
 			String query = "DELETE FROM " + getName() + " WHERE `" + column.getName() + "`=?";
 			try {
-				PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+				try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query)) {
 				if (column.getValue().isString()) {
 					s.setString(1, column.getValue().getString());
 				} else if (column.getValue().isInt()) {
@@ -179,7 +181,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 					s.setBoolean(1, column.getValue().getBoolean());
 				}
 				s.executeUpdate();
-				s.close();
+				}
 			} catch (SQLException e) {
 				e.printStackTrace();
 			}
@@ -188,11 +190,28 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		}
 	}
 
+	/** Checked primary-key deletion; the shared connection remains owner-managed. */
+	public void deleteStrict(Column primary) throws SQLException {
+		if (!primary.getName().equalsIgnoreCase(primaryKey.getName())) throw new IllegalArgumentException("The configured primary identity must be used");
+		java.util.Objects.requireNonNull(primary.getValue(), "value");
+		synchronized (object) {
+			if (sqLite == null) throw new SQLException("SQLite user storage is unavailable");
+			Connection connection = sqLite.getSQLConnection();
+			if (connection == null) throw new SQLException("SQLite connection is unavailable");
+			if (!connection.getAutoCommit()) throw new SQLException("Checked user removal requires auto-commit");
+			try (PreparedStatement statement = connection.prepareStatement("DELETE FROM " + getName() + " WHERE `" + primaryKey.getName() + "`=?")) {
+				bindStrictValue(statement, 1, primary);
+				statement.executeUpdate();
+			}
+		}
+	}
+
 	public void executeQuery(String str) {
 		try {
-			PreparedStatement s = sqLite.getSQLConnection()
-					.prepareStatement(PlaceholderUtils.replacePlaceHolder(str, "tablename", getName()));
-			s.executeUpdate();
+			try (PreparedStatement s = sqLite.getSQLConnection()
+					.prepareStatement(PlaceholderUtils.replacePlaceHolder(str, "tablename", getName()))) {
+				s.executeUpdate();
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
@@ -202,8 +221,8 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		List<List<Column>> results = new ArrayList<>();
 		String query = "SELECT * FROM " + getName();
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			ResultSet rs = s.executeQuery();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+				ResultSet rs = s.executeQuery()) {
 			while (rs.next()) {
 				List<Column> result = new ArrayList<>();
 				for (int i = 0; i < getColumns().size(); i++) {
@@ -220,11 +239,24 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				}
 				results.add(result);
 			}
-			sqLite.close(s, rs);
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
 		return results;
+	}
+
+	/** Complete conversion source without taking ownership of the shared connection. */
+	public HashMap<UUID, ArrayList<Column>> getAllQueryStrict() throws SQLException {
+		synchronized (object) {
+			if (sqLite == null) throw new SQLException("SQLite user storage is unavailable");
+			Connection connection = sqLite.getSQLConnection();
+			if (connection == null || !connection.getAutoCommit()) throw new SQLException("Complete user source requires an available auto-commit connection");
+			try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM " + getName());
+					ResultSet rows = statement.executeQuery()) {
+				return com.bencodez.advancedcore.api.user.userstorage.CompleteUserRows.read(rows, plugin.getUserManager().getDataManager());
+			}
+		}
 	}
 
 	public HashMap<UUID, ArrayList<Column>> getAllQuery() {
@@ -232,14 +264,15 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		String query = "SELECT * FROM " + getName() + ";";
 
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			ResultSet rs = s.executeQuery();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+				ResultSet rs = s.executeQuery()) {
+				SqlColumnNames names = SqlColumnNames.capture(plugin.getUserManager().getDataManager());
 
 			while (rs.next()) {
 				ArrayList<Column> cols = new ArrayList<>();
 				UUID uuid = null;
 				for (int i = 1; i <= rs.getMetaData().getColumnCount(); i++) {
-					String columnName = rs.getMetaData().getColumnLabel(i);
+					String columnName = names.name(rs.getMetaData().getColumnLabel(i));
 					Column rCol = null;
 
 					if (plugin.getUserManager().getDataManager().isInt(columnName)) {
@@ -273,8 +306,8 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				}
 				result.put(uuid, cols);
 			}
-			rs.close();
 			return result;
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		} catch (ArrayIndexOutOfBoundsException e) {
@@ -297,13 +330,40 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		return list;
 	}
 
+	/** Checked read of the configured primary identity, retaining the shared connection owner. */
+	public ArrayList<Column> getExactStrict(Column primary) throws SQLException {
+		if (!primary.getName().equalsIgnoreCase(primaryKey.getName())) throw new IllegalArgumentException("The configured primary identity must be used");
+		synchronized (object) {
+			if (sqLite == null) throw new SQLException("SQLite user storage is unavailable");
+			Connection connection = sqLite.getSQLConnection();
+			if (connection == null) throw new SQLException("SQLite connection is unavailable");
+			if (!connection.getAutoCommit()) throw new SQLException("Checked user snapshots require auto-commit");
+			try (PreparedStatement statement = connection.prepareStatement("SELECT * FROM " + getName() + " WHERE `" + primaryKey.getName() + "`=?")) {
+				bindStrictValue(statement, 1, primary);
+				try (ResultSet rows = statement.executeQuery()) {
+					SqlColumnNames names = SqlColumnNames.capture(plugin.getUserManager().getDataManager());
+					ArrayList<Column> result = new ArrayList<>();
+					if (rows.next()) {
+						for (int i = 1; i <= rows.getMetaData().getColumnCount(); i++) {
+							String key = names.name(rows.getMetaData().getColumnLabel(i));
+							if (plugin.getUserManager().getDataManager().isInt(key)) result.add(new Column(key, new DataValueInt(rows.getInt(i))));
+							else if (plugin.getUserManager().getDataManager().isBoolean(key)) result.add(new Column(key, new DataValueBoolean(Boolean.valueOf(rows.getString(i)))));
+							else result.add(new Column(key, new DataValueString(rows.getString(i))));
+						}
+					}
+					return result;
+				}
+			}
+		}
+	}
+
 	public ArrayList<Column> getExact(Column column) {
 		ArrayList<Column> result = new ArrayList<>();
 
 		String query = "SELECT * FROM " + getName() + " WHERE `" + column.getName() + "`=?";
 		try {
 			synchronized (object) {
-				PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+				try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query)) {
 				if (column.getValue().isString()) {
 					s.setString(1, column.getValue().getString());
 				} else if (column.getValue().isInt()) {
@@ -311,11 +371,12 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				} else {
 					s.setBoolean(1, column.getValue().getBoolean());
 				}
-				ResultSet rs = s.executeQuery();
+				try (ResultSet rs = s.executeQuery()) {
+				SqlColumnNames names = SqlColumnNames.capture(plugin.getUserManager().getDataManager());
 
 				if (rs.next()) {
 					for (int i = 1; i <= rs.getMetaData().getColumnCount(); i++) {
-						String columnName = rs.getMetaData().getColumnLabel(i);
+						String columnName = names.name(rs.getMetaData().getColumnLabel(i));
 						Column rCol = null;
 						if (plugin.getUserManager().getDataManager().isInt(columnName)) {
 							rCol = new Column(columnName, DataType.INTEGER);
@@ -330,9 +391,9 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 						result.add(rCol);
 					}
 				}
-				rs.close();
-				s.close();
 				return result;
+				}
+			}
 			}
 
 		} catch (SQLException e) {
@@ -366,14 +427,14 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		String sqlStr = "SELECT " + column + " FROM " + getName() + ";";
 
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(sqlStr);
-			ResultSet rs = s.executeQuery();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(sqlStr);
+				ResultSet rs = s.executeQuery()) {
 
 			while (rs.next()) {
 				result.add(rs.getInt(column));
 			}
 
-			sqLite.close(s, rs);
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
@@ -390,7 +451,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		String sql = "CREATE TABLE IF NOT EXISTS " + getName() + " (";
 		sql += "uuid VARCHAR(37), ";
 		// add custom column types
-		for (UserDataKey key : AdvancedCorePlugin.getInstance().getUserManager().getDataManager().getKeys()) {
+		for (UserDataKey key : AdvancedCorePlugin.getInstance().getUserManager().getDataManager().getRegisteredKeysSnapshot()) {
 			sql += key.getKey() + " " + key.getColumnType() + ", ";
 		}
 		sql += "PRIMARY KEY ( uuid ));";
@@ -402,19 +463,17 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		String query = "SELECT uuid FROM " + getName();
 
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			ResultSet rs = s.executeQuery();
-			try {
-				while (rs.next()) {
-					Column rCol = new Column("uuid", new DataValueString(rs.getString("uuid")));
-					result.add(rCol);
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+					ResultSet rs = s.executeQuery()) {
+				try {
+					while (rs.next()) {
+						Column rCol = new Column("uuid", new DataValueString(rs.getString("uuid")));
+						result.add(rCol);
+					}
+				} catch (SQLException e) {
+					e.printStackTrace();
+					return null;
 				}
-				sqLite.close(s, rs);
-			} catch (SQLException e) {
-				s.close();
-				rs.close();
-				e.printStackTrace();
-				return null;
 			}
 		} catch (SQLException e) {
 			e.printStackTrace();
@@ -429,17 +488,16 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		String query = "SELECT PlayerName FROM " + getName();
 
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			ResultSet rs = s.executeQuery();
-			try {
-				while (rs.next()) {
-					Column rCol = new Column("PlayerName", new DataValueString(rs.getString("PlayerName")));
-					result.add(rCol);
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+					ResultSet rs = s.executeQuery()) {
+				try {
+					while (rs.next()) {
+						Column rCol = new Column("PlayerName", new DataValueString(rs.getString("PlayerName")));
+						result.add(rCol);
+					}
+				} catch (SQLException e) {
+					return null;
 				}
-				sqLite.close(s, rs);
-			} catch (SQLException e) {
-				s.close();
-				return null;
 			}
 		} catch (SQLException e) {
 			e.printStackTrace();
@@ -452,8 +510,8 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		ArrayList<String> columns = new ArrayList<>();
 		String query = "SELECT * FROM " + getName();
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-			ResultSet rs = s.executeQuery();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+				ResultSet rs = s.executeQuery()) {
 			ResultSetMetaData metadata = rs.getMetaData();
 			int columnCount = metadata.getColumnCount();
 
@@ -463,7 +521,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				columns.add(columnName);
 			}
 
-			sqLite.close(s, rs);
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
@@ -471,21 +529,15 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 	}
 
 	public String getUUID(String playerName) {
-		String query = "SELECT uuid FROM " + getName() + " WHERE " + "PlayerName" + "='" + playerName + "';";
-
+		String query = "SELECT uuid FROM " + getName() + " WHERE PlayerName=?;";
 		try (PreparedStatement sql = sqLite.getSQLConnection().prepareStatement(query)) {
-			ResultSet rs = sql.executeQuery();
-			/*
-			 * Query sql = new Query(mysql, query); ResultSet rs = sql.executeQuery();
-			 */
-			if (rs.next()) {
-				String uuid = rs.getString("uuid");
-				if (uuid != null && !uuid.isEmpty()) {
-					rs.close();
-					return uuid;
+			sql.setString(1, playerName);
+			try (ResultSet rs = sql.executeQuery()) {
+				if (rs.next()) {
+					String uuid = rs.getString("uuid");
+					if (uuid != null && !uuid.isEmpty()) return uuid;
 				}
 			}
-			rs.close();
 		} catch (SQLException e) {
 			e.printStackTrace();
 		} catch (ArrayIndexOutOfBoundsException e) {
@@ -519,7 +571,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		}
 		query += ";";
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query)) {
 			for (int i = 0; i < columns.size(); i++) {
 				if (columns.get(i).getValue() != null) {
 					if (columns.get(i).getValue().isString()) {
@@ -534,7 +586,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				}
 			}
 			s.executeUpdate();
-			s.close();
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
@@ -548,7 +600,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		}
 		String query = "SELECT * FROM " + getName() + " WHERE `" + column.getName() + "`=?";
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query)) {
 			if (column.getValue().isString()) {
 				s.setString(1, column.getValue().getString());
 			} else if (column.getValue().isInt()) {
@@ -557,7 +609,7 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				s.setBoolean(1, column.getValue().getBoolean());
 			}
 
-			ResultSet rs = s.executeQuery();
+			try (ResultSet rs = s.executeQuery()) {
 			while (rs.next()) {
 				List<Column> result = new ArrayList<>();
 				for (int i = 0; i < getColumns().size(); i++) {
@@ -575,7 +627,8 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 				}
 				results.add(result);
 			}
-			sqLite.close(s, rs);
+			}
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}
@@ -600,47 +653,108 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 	}
 
 	public void update(Column primaryKey, List<Column> columns) {
-		for (Column c : columns) {
-			checkColumn(c);
-		}
+		for (Column c : columns) checkColumn(c);
+		if (columns.isEmpty()) return;
 		if (containsKey(primaryKey.getValue().toString())) {
 			synchronized (object) {
-				String query = "UPDATE " + getName() + " SET ";
-				for (Column column : columns) {
-					if (column.getValue().isString()) {
-						query += "`" + column.getName() + "`='" + column.getValue().getString() + "'";
-					} else if (column.getValue().isBoolean()) {
-						query += "`" + column.getName() + "`=" + column.getValue().getBoolean();
-					} else if (column.getValue().isInt()) {
-						query += "`" + column.getName() + "`=" + column.getValue().getInt();
-					}
-					if (columns.indexOf(column) == columns.size() - 1) {
-						query += " ";
-					} else {
-						query += ", ";
-					}
+				StringBuilder query = new StringBuilder("UPDATE ").append(getName()).append(" SET ");
+				for (int i = 0; i < columns.size(); i++) {
+					query.append("`").append(columns.get(i).getName()).append("`=?");
+					if (i != columns.size() - 1) query.append(", ");
 				}
-				query += "WHERE `" + primaryKey.getName() + "`=";
-				query += "'" + primaryKey.getValue().getString() + "'";
-				try {
-					PreparedStatement s = sqLite.getSQLConnection().prepareStatement(query);
-					s.executeUpdate();
-					s.close();
+				query.append(" WHERE `").append(primaryKey.getName()).append("`=?");
+				try (PreparedStatement statement = sqLite.getSQLConnection().prepareStatement(query.toString())) {
+					int parameter = 1;
+					for (Column column : columns) bindValue(statement, parameter++, column);
+					bindValue(statement, parameter, primaryKey);
+					statement.executeUpdate();
 				} catch (SQLException e) {
 					e.printStackTrace();
 				}
 			}
 		} else {
 			boolean addPrimary = true;
-			for (Column col : columns) {
-				if (col.getName().equals("uuid")) {
-					addPrimary = false;
-				}
+			for (Column column : columns) {
+				if (column.getName().equals("uuid")) addPrimary = false;
 			}
-			if (addPrimary) {
-				columns.add(primaryKey);
-			}
+			if (addPrimary) columns.add(primaryKey);
 			insert(columns);
+		}
+	}
+
+	/**
+	 * Synchronously writes a batch without replacing unrelated row columns.
+	 * Supports the legacy SQLite driver; no modern UPSERT syntax is required.
+	 * SQL failures propagate. The shared SQLite connection remains owner-managed.
+	 */
+	public void updateStrict(Column primary, List<Column> values) throws SQLException {
+		if (values.isEmpty()) return;
+		if (!primary.getName().equalsIgnoreCase(primaryKey.getName())) {
+			throw new IllegalArgumentException("The configured primary identity must be used");
+		}
+		for (Column column : values) {
+			if (column.getName().equalsIgnoreCase(primary.getName())) {
+				throw new IllegalArgumentException("The primary identity cannot be updated");
+			}
+		}
+		synchronized (object) {
+			Connection connection = sqLite.getSQLConnection();
+			if (connection == null) throw new SQLException("SQLite connection is unavailable");
+			if (!connection.getAutoCommit()) throw new SQLException("Checked user writes require auto-commit");
+			for (Column column : values) checkColumn(column);
+			StringBuilder update = new StringBuilder("UPDATE ").append(getName()).append(" SET ");
+			for (int i = 0; i < values.size(); i++) {
+				if (i > 0) update.append(", ");
+				update.append("`").append(values.get(i).getName()).append("`=?");
+			}
+			update.append(" WHERE `").append(primary.getName()).append("`=?");
+			if (executeStrictUpdate(connection, update.toString(), primary, values) > 0) return;
+			StringBuilder insert = new StringBuilder("INSERT OR IGNORE INTO ").append(getName())
+					.append(" (`").append(primary.getName()).append("`");
+			for (Column column : values) insert.append(", `").append(column.getName()).append("`");
+			insert.append(") VALUES (?");
+			for (int i = 0; i < values.size(); i++) insert.append(", ?");
+			insert.append(")");
+			try (PreparedStatement statement = connection.prepareStatement(insert.toString())) {
+				bindStrictValue(statement, 1, primary);
+				for (int i = 0; i < values.size(); i++) bindStrictValue(statement, i + 2, values.get(i));
+				if (statement.executeUpdate() > 0) return;
+			}
+			// Another writer may have inserted this identity after the first UPDATE.
+			if (executeStrictUpdate(connection, update.toString(), primary, values) == 0) {
+				throw new SQLException("User identity was not written");
+			}
+		}
+	}
+
+	private int executeStrictUpdate(Connection connection, String query, Column primary, List<Column> values) throws SQLException {
+		try (PreparedStatement statement = connection.prepareStatement(query)) {
+			for (int i = 0; i < values.size(); i++) bindStrictValue(statement, i + 1, values.get(i));
+			bindStrictValue(statement, values.size() + 1, primary);
+			return statement.executeUpdate();
+		}
+	}
+
+	private void bindStrictValue(PreparedStatement statement, int parameter, Column column) throws SQLException {
+		// UserData boolean readers expect the legacy textual true/false format.
+		if (column.getValue() != null && column.getValue().isBoolean()) {
+			statement.setString(parameter, Boolean.toString(column.getValue().getBoolean()));
+		} else {
+			bindValue(statement, parameter, column);
+		}
+	}
+
+	private void bindValue(PreparedStatement statement, int parameter, Column column) throws SQLException {
+		if (column.getValue() == null) {
+			statement.setObject(parameter, null);
+		} else if (column.getValue().isString()) {
+			statement.setString(parameter, column.getValue().getString());
+		} else if (column.getValue().isBoolean()) {
+			statement.setBoolean(parameter, column.getValue().getBoolean());
+		} else if (column.getValue().isInt()) {
+			statement.setInt(parameter, column.getValue().getInt());
+		} else {
+			statement.setObject(parameter, column.getValue().toString());
 		}
 	}
 
@@ -648,8 +762,9 @@ public class UserTable extends com.bencodez.simpleapi.sql.sqlite.Table {
 		checkColumn(new Column(columnName, dataType));
 		String sql = "UPDATE " + getName() + " SET " + columnName + " = " + dataType.getNoValue() + ";";
 		try {
-			PreparedStatement s = sqLite.getSQLConnection().prepareStatement(sql);
-			s.executeUpdate();
+			try (PreparedStatement s = sqLite.getSQLConnection().prepareStatement(sql)) {
+				s.executeUpdate();
+			}
 		} catch (SQLException e) {
 			e.printStackTrace();
 		}

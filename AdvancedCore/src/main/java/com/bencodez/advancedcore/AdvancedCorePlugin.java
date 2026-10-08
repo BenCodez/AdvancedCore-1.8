@@ -124,7 +124,9 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	@Getter
 	private CMIHandler cmiHandle;
 
-	private Database database;
+	private volatile Database database;
+	private final Object sqliteInitialization = new Object();
+	private final ThreadLocal<Boolean> sqliteBootstrap = ThreadLocal.withInitial(() -> false);
 
 	@Getter
 	private FullInventoryHandler fullInventoryHandler;
@@ -152,7 +154,7 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	@Setter
 	private boolean loadUserData = true;
 	@Getter
-	private MySQL mysql;
+	private volatile MySQL mysql;
 	@Getter
 	private AdvancedCoreConfigOptions options = new AdvancedCoreConfigOptions();
 
@@ -175,6 +177,10 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	private TimeChecker timeChecker;
 
 	@Getter
+	private volatile com.bencodez.advancedcore.api.rewards.ServerThreadRewardDispatch rewardDispatch =
+			new com.bencodez.advancedcore.api.rewards.ServerThreadRewardDispatch(this);
+
+	@Getter
 	private ScheduledExecutorService timer;
 
 	@Getter
@@ -185,6 +191,10 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 
 	@Setter
 	private UserManager userManager;
+
+	@Getter
+	private final com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership userStorageOwnership =
+			new com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership();
 
 	private ArrayList<UserStartup> userStartup = new ArrayList<>();
 
@@ -298,19 +308,45 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 
 	}
 
+	/** Worker callers retain synchronous completion; server callers dispatch off-owner. */
 	public void convertDataStorage(UserStorage from, UserStorage to) {
-		debug("Starting convert process");
-		if (to == null) {
-			throw new RuntimeException("Invalid Storage Method");
+		if (from == null || to == null) throw new RuntimeException("Invalid Storage Method");
+		if (Bukkit.getServer() != null && Bukkit.isPrimaryThread()) {
+			convertDataStorageAsync(from, to).whenComplete((ignored, failure) -> {
+				if (failure != null) getLogger().severe("User storage conversion failed (" + failure.getClass().getSimpleName() + ")");
+			});
+			return;
 		}
-		loadUserAPI(from);
-		loadUserAPI(to);
+		getUserStorageOwnership().maintain(5, TimeUnit.SECONDS, this::flushStorageForReplacement,
+				() -> convertDataStorageOwned(from, to));
+	}
+
+	/** Completion observes the synchronous conversion body, not scheduler admission. */
+	public java.util.concurrent.CompletionStage<Void> convertDataStorageAsync(UserStorage from, UserStorage to) {
+		if (from == null || to == null) {
+			java.util.concurrent.CompletableFuture<Void> failed = new java.util.concurrent.CompletableFuture<>();
+			failed.completeExceptionally(new RuntimeException("Invalid Storage Method"));
+			return failed;
+		}
+		return getRewardDispatch().dispatchOffPrimary(() -> {
+			if (Bukkit.isPrimaryThread()) throw new IllegalStateException("Storage conversion requires a worker thread");
+			convertDataStorage(from, to);
+			return java.util.concurrent.CompletableFuture.<Void>completedFuture(null);
+		}, TimeUnit.SECONDS.toMillis(30));
+	}
+
+	private void convertDataStorageOwned(UserStorage from, UserStorage to) {
+		debug("Starting convert process");
+		if (!hasStorageProvider(from)) loadUserAPI(from);
 
 		if (getMysql() != null) {
 			getMysql().clearCacheBasic();
 		}
 
-		HashMap<UUID, ArrayList<Column>> cols = getUserManager().getAllKeys(from);
+		HashMap<UUID, ArrayList<Column>> cols;
+		try { cols = getUserManager().getAllKeysStrict(from); }
+		catch (java.sql.SQLException | java.io.IOException failure) { throw new IllegalStateException("Conversion source was not completely read", failure); }
+		if (!hasStorageProvider(to)) loadUserAPI(to);
 		Queue<Entry<UUID, ArrayList<Column>>> players = new LinkedList<>(cols.entrySet());
 
 		while (players.size() > 0) {
@@ -327,6 +363,12 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 		}
 		debug("Convert finished!");
 
+	}
+
+	private boolean hasStorageProvider(UserStorage storage) {
+		if (storage == UserStorage.MYSQL) return getMysql() != null;
+		if (storage == UserStorage.SQLITE) return database != null;
+		return storage == UserStorage.FLAT;
 	}
 
 	public void debug(DebugLevel debugLevel, String debug) {
@@ -389,17 +431,32 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	}
 
 	public UserTable getSQLiteUserTable() {
-		if (database == null && loadUserData) {
-			loadUserAPI(getStorageType());
-		}
-		if (loadUserData) {
-			for (Table table : database.getTables()) {
-				if (table instanceof UserTable) {
-					return (UserTable) table;
+		if (!loadUserData) return null;
+		if (database == null) {
+			if (getUserStorageOwnership().isReplacingOnCurrentThread()) {
+				initializeSQLiteIfMissing();
+			} else {
+				try (com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Scope admission = getUserStorageOwnership().admit()) {
+					initializeSQLiteIfMissing();
 				}
 			}
 		}
+		Database current = database;
+		if (current == null) throw new IllegalStateException("SQLite user storage is unavailable");
+		for (Table table : current.getTables()) {
+			if (table instanceof UserTable) return (UserTable) table;
+		}
 		return null;
+	}
+
+	private void initializeSQLiteIfMissing() {
+		synchronized (sqliteInitialization) {
+			if (database != null) return;
+			if (sqliteBootstrap.get()) throw new IllegalStateException("SQLite initialization is already in progress on this thread");
+			sqliteBootstrap.set(true);
+			try { loadUserAPI(getStorageType()); }
+			finally { sqliteBootstrap.remove(); }
+		}
 	}
 
 	public UserStorage getStorageType() {
@@ -470,10 +527,13 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	}
 
 	private void loadConfig(boolean userStorage) {
-		getOptions().load(this);
 		if (loadUserData && userStorage) {
-			loadUserAPI(getOptions().getStorageType());
-		}
+			getUserStorageOwnership().replace(5, TimeUnit.SECONDS, this::flushStorageForReplacement, () -> {
+				// Pending batches must use the old type/config, before Options changes.
+				getOptions().load(this);
+				loadUserAPI(getOptions().getStorageType());
+			});
+		} else getOptions().load(this);
 	}
 
 	private void loadHandle() {
@@ -792,21 +852,91 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 		TabCompleteHandler.getInstance().addTabCompleteOption("(TimeType)", times);
 	}
 
-	@SuppressWarnings("deprecation")
 	public void loadUserAPI(UserStorage storageType) {
-		if (storageType.equals(UserStorage.SQLITE)) {
-			ArrayList<Column> columns = new ArrayList<>();
-			Column key = new Column("uuid", DataType.STRING);
-			columns.add(key);
-			UserTable table = new UserTable(this, "Users", columns, key);
-			database = new Database(this, "Users", table);
-			table.addCustomColumns();
-		} else if (storageType.equals(UserStorage.MYSQL)) {
-			setMysql(new MySQL(javaPlugin, javaPlugin.getName() + "_Users",
-					getOptions().getYmlConfig().getData().getConfigurationSection("MySQL")));
-		} else if (storageType.equals(UserStorage.FLAT)) {
+		java.util.Objects.requireNonNull(storageType, "storageType");
+		if (getUserStorageOwnership().isReplacingOnCurrentThread()
+				|| (storageType == UserStorage.SQLITE && database == null && sqliteBootstrap.get())) {
+			loadUserAPIOwned(storageType);
+		} else {
+			getUserStorageOwnership().replace(5, TimeUnit.SECONDS, this::flushStorageForReplacement, () -> loadUserAPIOwned(storageType));
+		}
+	}
+
+	private void loadUserAPIOwned(UserStorage storageType) {
+		if (storageType == UserStorage.SQLITE) {
+			synchronized (sqliteInitialization) {
+				Database candidate = java.util.Objects.requireNonNull(createSQLiteProvider(), "SQLite provider");
+				try {
+					if (candidate.getDB() == null) throw new IllegalStateException("SQLite provider did not initialize");
+					java.sql.Connection connection = candidate.getDB().getConnection();
+					if (connection == null || connection.isClosed()) throw new IllegalStateException("SQLite provider did not initialize");
+					if (candidate == database) return;
+					closeSQLiteProvider(database);
+					database = candidate;
+				} catch (java.sql.SQLException failure) {
+					IllegalStateException reported = new IllegalStateException("SQLite initialization was not acknowledged", failure);
+					cleanupSQLiteCandidate(candidate, reported);
+					throw reported;
+				} catch (RuntimeException | Error failure) {
+					cleanupSQLiteCandidate(candidate, failure);
+					throw failure;
+				}
+			}
+		} else if (storageType == UserStorage.MYSQL) {
+			MySQL candidate = java.util.Objects.requireNonNull(createMySQLProvider(), "MySQL provider");
+			try { setMysql(candidate); }
+			catch (RuntimeException | Error failure) {
+				if (mysql != candidate) {
+					try { candidate.close(); }
+					catch (RuntimeException | Error cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+				}
+				throw failure;
+			}
+		} else if (storageType == UserStorage.FLAT) {
 			getLogger().severe("Detected using FLAT storage, this will be removed in the future!");
 		}
+	}
+
+	Database createSQLiteProvider() {
+		ArrayList<Column> columns = new ArrayList<>();
+		Column key = new Column("uuid", DataType.STRING);
+		columns.add(key);
+		UserTable table = new UserTable(this, "Users", columns, key);
+		Database candidate = new Database(this, "Users", table);
+		try { table.addCustomColumns(); return candidate; }
+		catch (RuntimeException | Error failure) { cleanupSQLiteCandidate(candidate, failure); throw failure; }
+	}
+
+	@SuppressWarnings("deprecation")
+	MySQL createMySQLProvider() {
+		org.bukkit.configuration.ConfigurationSection root = getOptions().getYmlConfig().getData();
+		// Modern AdvancedCore calls this section Database; retain MySQL precedence
+		// when both are present so existing installations remain authoritative.
+		org.bukkit.configuration.ConfigurationSection section = root.getConfigurationSection("MySQL");
+		if (section == null) {
+            section = root.getConfigurationSection("Database");
+            if (section != null) {
+                String type = section.getString("DbType", "MYSQL");
+                if (!"MYSQL".equalsIgnoreCase(type) && !"MARIADB".equalsIgnoreCase(type)) {
+                    throw new IllegalArgumentException("Java 8 native MYSQL storage supports Database.DbType MYSQL or MARIADB only");
+                }
+            }
+        }
+		return new MySQL(javaPlugin, javaPlugin.getName() + "_Users", section);
+	}
+
+	private void cleanupSQLiteCandidate(Database candidate, Throwable failure) {
+		if (candidate == database) return;
+		try { closeSQLiteProvider(candidate); }
+		catch (RuntimeException | Error cleanup) { if (cleanup != failure) failure.addSuppressed(cleanup); }
+	}
+
+	private void closeSQLiteProvider(Database provider) {
+		if (provider == null || provider.getDB() == null) return;
+		// getSQLConnection/Database.getConnection can reopen a retired connection.
+		java.sql.Connection connection = provider.getDB().getConnection();
+		if (connection != null) try { connection.close(); }
+		catch (java.sql.SQLException failure) { throw new IllegalStateException("SQLite provider close was not acknowledged", failure); }
 	}
 
 	private void loadUUIDs() {
@@ -891,45 +1021,69 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 		advancedCoreBuildNumber = conf.getString("buildnumber", "NOTSET");
 	}
 
+	/** Stop subclass producers while the shared storage executor is still available. */
+	public void onPreUnLoad() {
+	}
+
 	@Override
 	public void onDisable() {
-
-		if (getOptions().getStorageType().equals(UserStorage.MYSQL)) {
-			getMysql().close();
-		}
-		getServerDataFile().setLastUpdated();
-		timer.shutdown();
-		loginTimer.shutdown();
-		timeChecker.getTimer().shutdown();
-		inventoryTimer.shutdown();
-		try {
-			getLogger().info("Allowing background tasks to finish, this could take up to 5 seconds");
-			loginTimer.awaitTermination(2, TimeUnit.SECONDS);
-			timer.awaitTermination(2, TimeUnit.SECONDS);
-			timeChecker.getTimer().awaitTermination(2, TimeUnit.SECONDS);
-			inventoryTimer.awaitTermination(1, TimeUnit.SECONDS);
-		} catch (InterruptedException e) {
-			debug(e);
-		}
-		rewardHandler.shutdown();
-		loginTimer.shutdownNow();
-		timer.shutdownNow();
-		inventoryTimer.shutdownNow();
-		timeChecker.getTimer().shutdownNow();
-		onUnLoad();
-		getSkullCacheHandler().close();
-		fullInventoryHandler.save();
+		if (rewardDispatch != null) rewardDispatch.close();
+		if (rewardHandler != null) rewardHandler.stopSubmittingDelayedRewards();
+		onPreUnLoad();
+		if (rewardHandler != null) rewardHandler.shutdown();
+		if (serverDataFile != null) serverDataFile.setLastUpdated();
+		ScheduledExecutorService timeTimer = timeChecker == null ? null : timeChecker.getTimer();
+		ScheduledExecutorService cacheTimer = userManager == null || userManager.getDataManager() == null
+				? null : userManager.getDataManager().getTimer();
+		shutdownProducer(loginTimer);
+		shutdownProducer(timeTimer);
+		shutdownProducer(inventoryTimer);
+		shutdownProducer(cacheTimer);
+		long started = System.nanoTime();
+		long grace = TimeUnit.SECONDS.toNanos(5);
+		getLogger().info("Allowing accepted background work to finish before storage retirement");
+		// Producer tasks may submit storage work; keep the shared timer open until they settle.
+		awaitProducer(loginTimer, started, grace, "login");
+		awaitProducer(timeTimer, started, grace, "time checker");
+		awaitProducer(inventoryTimer, started, grace, "inventory");
+		awaitProducer(cacheTimer, started, grace, "user cache");
+		shutdownProducer(timer);
+		awaitProducer(timer, started, grace, "shared storage");
+		long remaining = Math.max(0L, grace - (System.nanoTime() - started));
+		userStorageOwnership.retire(remaining, TimeUnit.NANOSECONDS, () -> {
+			onUnLoad();
+			if (userManager != null && userManager.getDataManager() != null) userManager.getDataManager().clearCacheForShutdown();
+		}, () -> {
+			if (mysql != null) mysql.close();
+			closeSQLiteProvider(database);
+		});
+		if (skullCacheHandler != null) skullCacheHandler.close();
+		if (fullInventoryHandler != null) fullInventoryHandler.shutdown();
 		unRegisterValueRequest();
-
-		if (getPermissionHandler() != null) {
-			getPermissionHandler().shutDown();
-		}
-
+		if (permissionHandler != null) permissionHandler.shutDown();
 		javaPlugin = null;
+	}
+
+	private static void shutdownProducer(ScheduledExecutorService executor) {
+		if (executor != null) executor.shutdown();
+	}
+
+	private static void awaitProducer(ScheduledExecutorService executor, long started, long grace, String name) {
+		if (executor == null || executor.isTerminated()) return;
+		long remaining = Math.max(0L, grace - (System.nanoTime() - started));
+		try {
+			if (!executor.awaitTermination(remaining, TimeUnit.NANOSECONDS)) {
+				throw new IllegalStateException("The " + name + " executor has not settled; storage provider remains open");
+			}
+		} catch (InterruptedException interrupted) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("Shutdown interrupted; storage provider remains open", interrupted);
+		}
 	}
 
 	@Override
 	public void onEnable() {
+		rewardDispatch = new com.bencodez.advancedcore.api.rewards.ServerThreadRewardDispatch(this);
 		javaPlugin = this;
 		bukkitScheduler = new BukkitScheduler(this);
 		timer = Executors.newSingleThreadScheduledExecutor();
@@ -974,7 +1128,7 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 		loadConfig(userStorage);
 
 		if (userStorage) {
-			getUserManager().getDataManager().clearCache();
+			if (!loadUserData) getUserManager().getDataManager().clearCache();
 			if (getStorageType().equals(UserStorage.MYSQL) && getMysql() != null) {
 				getMysql().clearCacheBasic();
 			}
@@ -1025,10 +1179,23 @@ public abstract class AdvancedCorePlugin extends JavaPlugin {
 	 * @param mysql the mysql to set
 	 */
 	public void setMysql(MySQL mysql) {
-		if (this.mysql != null) {
-			this.mysql.close();
-			this.mysql = null;
+		if (this.mysql == mysql) return;
+		if (getUserStorageOwnership().isReplacingOnCurrentThread()) {
+			setMysqlOwned(mysql);
+		} else {
+			getUserStorageOwnership().replace(5, TimeUnit.SECONDS, this::flushStorageForReplacement, () -> setMysqlOwned(mysql));
 		}
+	}
+
+	private void flushStorageForReplacement() {
+		// Do not create a user manager merely to replace an unused provider.
+		if (userManager != null && userManager.getDataManager() != null) {
+			userManager.getDataManager().clearCacheForShutdown();
+		}
+	}
+
+	private void setMysqlOwned(MySQL mysql) {
+		if (this.mysql != null) this.mysql.close();
 		this.mysql = mysql;
 	}
 

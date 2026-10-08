@@ -17,6 +17,8 @@
 		<maven.compiler.source>8</maven.compiler.source>
 		<maven.compiler.target>8</maven.compiler.target>
 		<maven.compiler.release>8</maven.compiler.release>
+        <!-- Default matches Spigot 1.8.8; override only for additional driver tests. -->
+        <sqlite.test.version>3.7.2</sqlite.test.version>
 	</properties>
 	<build>
 		<resources>
@@ -62,6 +64,29 @@
 			</plugins>
 		</pluginManagement>
 		<plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <version>3.2.5</version>
+                <executions>
+                    <execution><goals><goal>integration-test</goal><goal>verify</goal></goals></execution>
+                </executions>
+                <configuration>
+                    <!-- Artifact fixtures need only core subclass mocks; mixing inline/subclass
+                         makers makes Mockito 4 handler lookup ambiguous on Java 8. -->
+                    <classpathDependencyExcludes>
+                        <classpathDependencyExclude>org.mockito:mockito-inline</classpathDependencyExclude>
+                    </classpathDependencyExcludes>
+                    <systemPropertyVariables>
+                        <advancedcore.jar>${project.build.directory}/AdvancedCore.jar</advancedcore.jar>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
 			<plugin>
 				<groupId>org.projectlombok</groupId>
 				<artifactId>lombok-maven-plugin</artifactId>
@@ -95,7 +120,8 @@
 				<version>3.6.0</version>
 				<configuration>
 					<shadedArtifactAttached>false</shadedArtifactAttached>
-					<minimizeJar>true</minimizeJar>
+					<!-- Public APIs and scheduler implementations are loaded by dependent plugins/reflection. -->
+					<minimizeJar>false</minimizeJar>
 				</configuration>
 				<executions>
 					<execution>
@@ -113,8 +139,31 @@
                                  <exclude>META-INF/*.RSA</exclude>
                               </excludes>
                               </filter>
+                            <!-- SimpleAPI 0.0.7 embeds a newer pool and Folia-only implementations.
+                                 Retain the existing Java 8 pool below; Folia is outside this artifact's contract. -->
+                            <filter>
+                              <artifact>com.bencodez:simpleapi</artifact>
+                              <excludes>
+                                <exclude>com/bencodez/simpleapi/hikari/**</exclude>
+                                <exclude>com/bencodez/simpleapi/servercomm/global/GlobalMessageProxyHandler.class</exclude>
+                                <exclude>com/bencodez/simpleapi/file/BungeeJsonFile.class</exclude>
+                                <exclude>com/bencodez/simpleapi/folialib/impl/FoliaImplementation.class</exclude>
+                                <exclude>com/bencodez/simpleapi/folialib/wrapper/task/WrappedFoliaTask.class</exclude>
+                              </excludes>
+                            </filter>
+                            <filter>
+                              <artifact>com.tcoded:FoliaLib</artifact>
+                              <excludes>
+                                <exclude>com/tcoded/folialib/impl/FoliaImplementation.class</exclude>
+                                <exclude>com/tcoded/folialib/wrapper/task/WrappedFoliaTask.class</exclude>
+                              </excludes>
+                            </filter>
                             </filters>
 							<relocations>
+                                <relocation>
+                                  <pattern>com.bencodez.simpleapi.hikari</pattern>
+                                  <shadedPattern>com.bencodez.advancedcore.hikari</shadedPattern>
+                                </relocation>
 								<relocation>
 									<pattern>com.zaxxer.HikariCP</pattern>
 									<shadedPattern>
@@ -195,10 +244,40 @@
 		</repository>
 	</repositories>
 	<dependencies>
+        <!-- Exact legacy driver used by reconnect/ownership artifact regressions only. -->
+        <dependency>
+            <groupId>mysql</groupId>
+            <artifactId>mysql-connector-java</artifactId>
+            <version>5.1.14</version>
+            <scope>test</scope>
+        </dependency>
+        <!-- Legacy Bungee supplies Gson 2.8.0; compile compatibility bridges against its API. -->
+        <dependency>
+            <groupId>com.google.code.gson</groupId><artifactId>gson</artifactId><version>2.8.0</version><scope>provided</scope>
+        </dependency>
+        <!-- Match the SQLite driver bundled by the Spigot 1.8.8 acceptance runtime. -->
+        <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+            <version>${sqlite.test.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.10.3</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-inline</artifactId>
+            <version>4.11.0</version>
+            <scope>test</scope>
+        </dependency>
 		<dependency>
 			<groupId>com.bencodez</groupId>
 			<artifactId>simpleapi</artifactId>
-			<version>0.0.7-SNAPSHOT</version>
+			<version>0.0.7</version>
 			<scope>compile</scope>
 		</dependency>
 		<dependency>
@@ -236,8 +315,13 @@
 		</dependency>
 		<dependency>
 			<groupId>org.slf4j</groupId>
+			<artifactId>slf4j-api</artifactId>
+			<version>1.7.36</version>
+		</dependency>
+		<dependency>
+			<groupId>org.slf4j</groupId>
 			<artifactId>slf4j-simple</artifactId>
-			<version>2.0.17</version>
+			<version>1.7.36</version>
 			<scope>compile</scope>
 		</dependency>
 		<dependency>

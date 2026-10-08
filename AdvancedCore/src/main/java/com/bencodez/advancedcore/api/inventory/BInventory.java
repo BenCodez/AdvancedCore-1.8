@@ -8,6 +8,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
@@ -142,6 +144,9 @@ public class BInventory {
 	@Getter
 	private boolean closeInv = true;
 
+	@Getter
+	private boolean clickAsync = true;
+
 	private HashMap<String, Object> data = new HashMap<>();
 
 	private Inventory inv;
@@ -179,6 +184,9 @@ public class BInventory {
 
 	@SuppressWarnings("rawtypes")
 	ArrayList<ScheduledFuture> futures;
+
+	private final Object timerLock = new Object();
+	private final Map<UUID, List<ScheduledFuture<?>>> playerFutures = new HashMap<>();
 
 	private ArrayList<BInventoryButton> fillItems = new ArrayList<>();
 
@@ -232,6 +240,10 @@ public class BInventory {
 		}
 	}
 
+	public boolean isSlotTaken(int slot) {
+		return buttons.containsKey(slot);
+	}
+
 	/**
 	 * Adds the button.
 	 *
@@ -278,24 +290,88 @@ public class BInventory {
 	}
 
 	public void addUpdatingButton(AdvancedCorePlugin plugin, long delay, long interval, Runnable runnable) {
-		if (futures == null) {
-			futures = new ArrayList<>();
+		synchronized (timerLock) {
+			trackFuture(null, plugin.getInventoryTimer().scheduleWithFixedDelay(runnable, delay, interval,
+					TimeUnit.MILLISECONDS));
 		}
-		futures.add(plugin.getInventoryTimer().scheduleWithFixedDelay(runnable, delay, delay, TimeUnit.MILLISECONDS));
+	}
+
+	public void addUpdatingButton(Player player, AdvancedCorePlugin plugin, long delay, long interval,
+			Runnable runnable) {
+		synchronized (timerLock) {
+			trackFuture(player, plugin.getInventoryTimer().scheduleWithFixedDelay(runnable, delay, interval,
+					TimeUnit.MILLISECONDS));
+		}
+	}
+
+	void addDelayedTask(Player player, AdvancedCorePlugin plugin, long delay, Runnable runnable) {
+		synchronized (timerLock) {
+			trackFuture(player, plugin.getInventoryTimer().schedule(runnable, delay, TimeUnit.MILLISECONDS));
+		}
 	}
 
 	@SuppressWarnings("rawtypes")
-	public void cancelTimer() {
+	private void trackFuture(Player player, ScheduledFuture<?> future) {
+		if (player == null) {
+			if (futures == null) {
+				futures = new ArrayList<>();
+			}
+			futures.removeIf(existing -> existing.isDone());
+			futures.add(future);
+		} else {
+			List<ScheduledFuture<?>> viewerFutures = playerFutures.computeIfAbsent(player.getUniqueId(),
+					ignored -> new ArrayList<>());
+			viewerFutures.removeIf(existing -> existing.isDone());
+			viewerFutures.add(future);
+		}
+	}
+
+	@SuppressWarnings("rawtypes")
+	private void cancelLegacyTimers() {
 		if (futures != null) {
-			for (ScheduledFuture f : futures) {
-				f.cancel(true);
+			for (ScheduledFuture future : futures) {
+				future.cancel(true);
 			}
 			futures = null;
 		}
 	}
 
+	private void cancelFutures(List<ScheduledFuture<?>> scheduledFutures) {
+		if (scheduledFutures != null) {
+			for (ScheduledFuture<?> future : scheduledFutures) {
+				if (future != null) {
+					future.cancel(true);
+				}
+			}
+		}
+	}
+
+	public void cancelTimer() {
+		synchronized (timerLock) {
+			cancelLegacyTimers();
+			for (List<ScheduledFuture<?>> scheduledFutures : playerFutures.values()) {
+				cancelFutures(scheduledFutures);
+			}
+			playerFutures.clear();
+		}
+	}
+
+	public void cancelTimer(Player player) {
+		if (player == null) {
+			return;
+		}
+		synchronized (timerLock) {
+			cancelFutures(playerFutures.remove(player.getUniqueId()));
+		}
+	}
+
+	Inventory getRenderingInventory() {
+		return inv;
+	}
+
 	public void closeInv(Player p, BInventoryButton b) {
-		if (!PlayerUtils.getTopInventory(p).equals(inv)) {
+		GUISession session = GUISession.extractSession(PlayerUtils.getTopInventory(p));
+		if (session == null || session.getInventoryGUI() != this) {
 			return;
 		}
 
@@ -310,37 +386,24 @@ public class BInventory {
 		}
 	}
 
-	private void closeUpdatingBInv() {
-		cancelTimer();
-	}
-
 	public BInventory dontClose() {
 		closeInv = false;
 		return this;
 	}
 
 	public void forceClose(Player p) {
+		synchronized (timerLock) {
+			cancelLegacyTimers();
+		}
+		cancelTimer(p);
+		if (p == null) {
+			return;
+		}
 		if (Bukkit.isPrimaryThread()) {
 			p.closeInventory();
-
-			AdvancedCorePlugin.getInstance().getBukkitScheduler()
-					.runTaskAsynchronously(AdvancedCorePlugin.getInstance(), new Runnable() {
-
-						@Override
-						public void run() {
-							closeUpdatingBInv();
-						}
-					});
 		} else {
-			closeUpdatingBInv();
-			AdvancedCorePlugin.getInstance().getBukkitScheduler().runTask(AdvancedCorePlugin.getInstance(),
-					new Runnable() {
-
-						@Override
-						public void run() {
-							p.closeInventory();
-						}
-					}, p);
+			AdvancedCorePlugin plugin = AdvancedCorePlugin.getInstance();
+			plugin.getBukkitScheduler().runTask(plugin, p::closeInventory, p);
 		}
 	}
 
@@ -553,6 +616,7 @@ public class BInventory {
 			pages = true;
 		}
 		if (!pages) {
+			cancelTimer(player);
 			inv = Bukkit.createInventory(new GUISession(this, 1), inventory.getInventorySize(),
 					PlaceholderUtils.replaceJavascript(player,
 							PlaceholderUtils.replacePlaceHolder(inventory.getInventoryName(), getPlaceholders())));
@@ -570,10 +634,7 @@ public class BInventory {
 			openInv(player, inv);
 
 		} else {
-			maxPage = getHighestSlot() / (maxInvSize - 9);
-			if (getHighestSlot() % (maxInvSize - 9) != 0) {
-				maxPage++;
-			}
+			maxPage = InventoryPagination.getPageCount(getHighestSlot(), maxInvSize);
 			addPlaceholder("totalpages", "" + maxPage);
 			openInventory(player, 1);
 		}
@@ -587,17 +648,25 @@ public class BInventory {
 	 * @param page   the page
 	 */
 	public void openInventory(Player player, int page) {
+		if (page < 1) {
+			throw new IllegalArgumentException("Page must be >= 1");
+		}
+		maxPage = InventoryPagination.getPageCount(getHighestSlot(), maxInvSize);
+		page = Math.min(page, maxPage);
+		cancelTimer(player);
+		addPlaceholder("totalpages", "" + maxPage);
 		BInventory inventory = this;
 		addPlaceholder("currentpage", "" + page);
 		inv = Bukkit.createInventory(new GUISession(this, page), maxInvSize, PlaceholderUtils.replaceJavascript(player,
 				PlaceholderUtils.replacePlaceHolder(inventory.getInventoryName(), getPlaceholders())));
 		this.page = page;
-		int startSlot = (page - 1) * (maxInvSize - 9);
+		int contentSize = InventoryPagination.getContentSize(maxInvSize);
+		int startSlot = InventoryPagination.getButtonSlot(page, 0, maxInvSize);
 		for (Entry<Integer, BInventoryButton> pair : inventory.getButtons().entrySet()) {
 			int slot = pair.getKey();
 			if (slot >= startSlot) {
 				slot -= startSlot;
-				if (slot < (maxInvSize - 9)) {
+				if (InventoryPagination.isContentSlot(slot, maxInvSize)) {
 					ItemStack item = pair.getValue().getItem(player, getPlaceholders());
 					inv.setItem(slot, item);
 
@@ -611,7 +680,7 @@ public class BInventory {
 		}
 
 		for (BInventoryButton b : pageButtons) {
-			inv.setItem((maxInvSize - 9) + b.getSlot(), b.getItem(player, getPlaceholders()));
+			inv.setItem(contentSize + b.getSlot(), b.getItem(player, getPlaceholders()));
 		}
 		if (prevItem == null) {
 			if (AdvancedCorePlugin.getInstance().getOptions().getPrevItem() != null) {
@@ -632,7 +701,7 @@ public class BInventory {
 			}
 		}
 
-		inv.setItem(maxInvSize - 9, prevItem);
+		inv.setItem(contentSize, prevItem);
 
 		inv.setItem(maxInvSize - 1, nextItem);
 
@@ -640,6 +709,14 @@ public class BInventory {
 	}
 
 	public void playSound(Player player) {
+		if (!playerSound) {
+			return;
+		}
+		if (!Bukkit.isPrimaryThread()) {
+			AdvancedCorePlugin plugin = AdvancedCorePlugin.getInstance();
+			plugin.getBukkitScheduler().runTask(plugin, () -> playSound(player), player);
+			return;
+		}
 		if (playerSound) {
 			Sound sound = AdvancedCorePlugin.getInstance().getOptions().getClickSoundSound();
 			if (sound != null) {
@@ -659,6 +736,20 @@ public class BInventory {
 	 */
 	public void setButtons(Map<Integer, BInventoryButton> buttons) {
 		this.buttons = buttons;
+	}
+
+	/** Existing button callbacks remain asynchronous unless explicitly opted in. */
+	public BInventory setClickAsync(boolean value) {
+		clickAsync = value;
+		return this;
+	}
+
+	public BInventory runClicksSync() {
+		return setClickAsync(false);
+	}
+
+	public BInventory runClicksAsync() {
+		return setClickAsync(true);
 	}
 
 	public BInventory setCloseInv(boolean value) {
@@ -712,6 +803,9 @@ public class BInventory {
 	 */
 	public void setPages(boolean pages) {
 		this.pages = pages;
+		if (!pages) {
+			maxPage = 1;
+		}
 	}
 
 	/**

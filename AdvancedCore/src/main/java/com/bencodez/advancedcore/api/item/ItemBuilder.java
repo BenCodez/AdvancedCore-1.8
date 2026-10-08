@@ -269,9 +269,11 @@ public class ItemBuilder {
 								addLoreLine(line);
 							}
 						}
-						int durability = data.getInt("Durability");
-						if (durability > 0) {
-							setDurability((short) durability);
+						if (data.contains("Damage")) {
+							setDamage(data.getInt("Damage"));
+						} else {
+							int durability = data.getInt("Durability");
+							if (durability > 0) setDurability((short) durability);
 						}
 
 						if (data.isConfigurationSection("Enchants")) {
@@ -292,6 +294,8 @@ public class ItemBuilder {
 							addGlow();
 						}
 
+						if (data.contains("Unbreakable")) setUnbreakable(data.getBoolean("Unbreakable", false));
+
 						checkLoreLength = data.getBoolean("CheckLoreLength", true);
 						loreLength = data.getInt("LoreLength", -1);
 
@@ -300,6 +304,12 @@ public class ItemBuilder {
 							ConfigurationSection potionColor = data.getConfigurationSection("PotionColor");
 							color = Color.fromRGB(potionColor.getInt("Red", 0), potionColor.getInt("Green", 0),
 									potionColor.getInt("Blue", 0));
+						}
+
+						if (data.isConfigurationSection("LeatherColor")) {
+							ConfigurationSection leatherColor = data.getConfigurationSection("LeatherColor");
+							setLeatherArmorColor(Color.fromRGB(leatherColor.getInt("Red", 0),
+									leatherColor.getInt("Green", 0), leatherColor.getInt("Blue", 0)));
 						}
 
 						if (data.isConfigurationSection("Potions")) {
@@ -328,6 +338,9 @@ public class ItemBuilder {
 					} else {
 						closeGUISet = false;
 					}
+					if (data.getBoolean("HideToolTip", false)) {
+						setHideTooltipCompat(is, true);
+					}
 				}
 
 			} else {
@@ -338,12 +351,27 @@ public class ItemBuilder {
 	}
 
 	/**
-	 * Create a new ItemBuilder over an existing itemstack.
+	 * Hide supported tooltip details using Spigot 1.8 item flags. Custom names
+	 * and lore remain visible; 1.8 has no native full-tooltip hiding API.
+	 * @param item item to modify, or null
+	 * @param hide true to add all available flags, false to remove them
+	 */
+	public void setHideTooltipCompat(ItemStack item, boolean hide) {
+		if (item == null) return;
+		ItemMeta meta = item.getItemMeta();
+		if (meta == null) return;
+		if (hide) meta.addItemFlags(ItemFlag.values());
+		else meta.removeItemFlags(ItemFlag.values());
+		item.setItemMeta(meta);
+	}
+
+	/**
+	 * Create a new ItemBuilder over an independent copy of an existing itemstack.
 	 *
 	 * @param is The itemstack to create the ItemBuilder over.
 	 */
 	public ItemBuilder(ItemStack is) {
-		this.is = is;
+		this.is = is == null ? null : is.clone();
 	}
 
 	/**
@@ -586,35 +614,10 @@ public class ItemBuilder {
 		return new ItemBuilder(is);
 	}
 
-	@SuppressWarnings("deprecation")
 	public LinkedHashMap<String, Object> createConfigurationData() {
-		LinkedHashMap<String, Object> data = new LinkedHashMap<>();
-		data.put("Material", is.getType().toString());
-		data.put("Amount", getAmount());
-		if (hasCustomDisplayName()) {
-			data.put("Name", getName());
-		}
-		if (hasCustomLore()) {
-			data.put("Lore", getLore());
-		}
-		data.put("Durability", is.getDurability());
-		data.put("Data", is.getData().getData());
-
-		for (Entry<Enchantment, Integer> en : is.getItemMeta().getEnchants().entrySet()) {
-			data.put("Enchants." + en.getKey().getName(), en.getValue());
-		}
-
-		ArrayList<String> flags = new ArrayList<>();
-		for (ItemFlag fl : is.getItemMeta().getItemFlags()) {
-			flags.add(fl.toString());
-		}
-
-		data.put("ItemFlags", flags);
-
-		data.put("Skull", getSkull());
-
+		LinkedHashMap<String, Object> data = new LinkedHashMap<>(getConfiguration(false));
+		if (!data.containsKey("Skull")) data.put("Skull", getSkull());
 		return data;
-
 	}
 
 	public ItemBuilder dontCheckLoreLength() {
@@ -642,28 +645,58 @@ public class ItemBuilder {
 
 	@SuppressWarnings("deprecation")
 	public Map<String, Object> getConfiguration(boolean deseralize) {
-		if (deseralize) {
-			return is.serialize();
-		}
-		HashMap<String, Object> map = new HashMap<>();
+		if (deseralize) return is.serialize();
+		LinkedHashMap<String, Object> map = new LinkedHashMap<>();
 		map.put("Material", is.getType().toString());
 		map.put("Amount", is.getAmount());
-		if (hasCustomDisplayName()) {
-			map.put("Name", getName());
+		// Keep legacy variant/durability fields readable by existing 1.8 consumers.
+		map.put("Durability", is.getDurability());
+		map.put("Data", is.getData().getData());
+		ItemMeta meta = is.getItemMeta();
+		if (meta == null) return map;
+		if (meta.hasDisplayName()) map.put("Name", meta.getDisplayName());
+		if (meta.hasLore() && meta.getLore() != null) map.put("Lore", new ArrayList<>(meta.getLore()));
+		if (is.getType().getMaxDurability() > 0 && is.getDurability() > 0) {
+			map.put("Damage", (int) is.getDurability());
 		}
-		if (hasCustomLore()) {
-			map.put("Lore", getLore());
+		Map<Enchantment, Integer> enchants = new LinkedHashMap<>(meta.getEnchants());
+		if (meta instanceof EnchantmentStorageMeta) {
+			enchants.putAll(((EnchantmentStorageMeta) meta).getStoredEnchants());
 		}
-		ItemMeta im = is.getItemMeta();
-
-		ArrayList<String> flagList = new ArrayList<>();
-		for (ItemFlag flag : im.getItemFlags()) {
-			flagList.add(flag.toString());
+		for (Entry<Enchantment, Integer> entry : enchants.entrySet()) {
+			map.put("Enchants." + entry.getKey().getName(), entry.getValue());
 		}
-		map.put("ItemFlags", flagList);
-
+		ArrayList<String> flags = new ArrayList<>();
+		for (ItemFlag flag : meta.getItemFlags()) flags.add(flag.toString());
+		map.put("ItemFlags", flags);
+		ItemMeta.Spigot spigot = meta.spigot();
+		// Plain Bukkit exposes an unimplemented base extension; omit its unavailable flag.
+		if (spigot.getClass() != ItemMeta.Spigot.class && spigot.isUnbreakable()) map.put("Unbreakable", true);
+		if (meta instanceof SkullMeta && ((SkullMeta) meta).hasOwner()) {
+			map.put("Skull", ((SkullMeta) meta).getOwner());
+		}
+		if (meta instanceof LeatherArmorMeta) {
+			Color color = ((LeatherArmorMeta) meta).getColor();
+			map.put("LeatherColor.Red", color.getRed());
+			map.put("LeatherColor.Green", color.getGreen());
+			map.put("LeatherColor.Blue", color.getBlue());
+		}
+		if (meta instanceof PotionMeta) {
+			for (PotionEffect effect : ((PotionMeta) meta).getCustomEffects()) {
+				String name = effect.getType().getName();
+				map.put("Potions." + name + ".Duration", effect.getDuration());
+				map.put("Potions." + name + ".Amplifier", effect.getAmplifier());
+			}
+		}
+		if (meta instanceof FireworkMeta && ((FireworkMeta) meta).getPower() > 0) {
+			map.put("Power", ((FireworkMeta) meta).getPower());
+		}
 		return map;
+	}
 
+	/** Alias retained for current callers; true returns Bukkit's full item data. */
+	public Map<String, Object> getConfigurationData(boolean deserialize) {
+		return getConfiguration(deserialize);
 	}
 
 	public boolean hasGetItemModel(ItemMeta meta) {
@@ -844,6 +877,21 @@ public class ItemBuilder {
 	}
 
 	/**
+	 * Sets damage on legacy damageable tools/armor without changing material data
+	 * on non-damageable items. The 1.8 storage field is a non-negative short.
+	 * @param damage damage from 0 through Short.MAX_VALUE
+	 * @return this builder
+	 */
+	public ItemBuilder setDamage(int damage) {
+		if (is.getType().getMaxDurability() <= 0) return this;
+		if (damage < 0 || damage > Short.MAX_VALUE) {
+			throw new IllegalArgumentException("Damage cannot be represented by Spigot 1.8");
+		}
+		is.setDurability((short) damage);
+		return this;
+	}
+
+	/**
 	 * Change the durability of the item.
 	 *
 	 * @param dur The durability to set it to.
@@ -883,6 +931,16 @@ public class ItemBuilder {
 
 	public ItemBuilder setHeadFromBase64(String value) {
 		is = SkullCache.getSkullBase64(value);
+		return this;
+	}
+
+	/** Sets legacy Spigot unbreakable metadata and publishes the modified copy. */
+	public ItemBuilder setUnbreakable(boolean unbreakable) {
+		ItemMeta meta = is.getItemMeta();
+		if (meta != null) {
+			meta.spigot().setUnbreakable(unbreakable);
+			is.setItemMeta(meta);
+		}
 		return this;
 	}
 

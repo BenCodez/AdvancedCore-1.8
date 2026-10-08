@@ -1,5 +1,8 @@
 package com.bencodez.advancedcore.api.user;
 
+import java.io.IOException;
+import java.sql.SQLException;
+import java.util.Map;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -37,14 +40,7 @@ public class UserData {
 	}
 
 	public HashMap<String, DataValue> convert(List<Column> cols) {
-		HashMap<String, DataValue> data = new HashMap<>();
-		if (cols != null) {
-			for (Column col : cols) {
-				data.put(col.getName(), col.getValue());
-			}
-		}
-
-		return data;
+		return com.bencodez.advancedcore.core.user.storage.SqlUserDataAccess.convert(cols);
 	}
 
 	public boolean getBoolean(String key) {
@@ -106,13 +102,10 @@ public class UserData {
 				UserDataCache cache = user.getCache();
 				if (cache != null) {
 					user.cacheIfNeeded();
-					if (cache.isCached(key)) {
-						if (cache.getCache().get(key).isInt()) {
-							// user.getPlugin().debug("Using cache: " + key + " " +
-							// cache.getCache().get(key).getInt());
-							return cache.getCache().get(key).getInt();
-						}
-						String str = cache.getCache().get(key).getString();
+					DataValue cached = cache.getCachedValue(key);
+					if (cached != null) {
+						if (cached.isInt()) return cached.getInt();
+						String str = cached.getString();
 						if (str != null && !str.equals("null")) {
 							try {
 								return Integer.parseInt(str);
@@ -241,10 +234,14 @@ public class UserData {
 	}
 
 	public List<Column> getMySqlRow() {
+		com.bencodez.advancedcore.api.user.usercache.UserDataManager manager = sharedDataManager();
+		if (manager != null && manager.hasSharedSqlBackend()) return sharedRow(manager, UserStorage.MYSQL);
 		return user.getPlugin().getMysql().getExact(user.getUUID());
 	}
 
 	public List<Column> getSQLiteRow() {
+		com.bencodez.advancedcore.api.user.usercache.UserDataManager manager = sharedDataManager();
+		if (manager != null && manager.hasSharedSqlBackend()) return sharedRow(manager, UserStorage.SQLITE);
 		return user.getPlugin().getSQLiteUserTable().getExact(new Column("uuid", new DataValueString(user.getUUID())));
 	}
 
@@ -279,8 +276,9 @@ public class UserData {
 			if (useCache) {
 				UserDataCache cache = user.getCache();
 				if (cache != null) {
-					if (cache.isCached(key)) {
-						String str = cache.getCache().get(key).getString();
+					DataValue cached = cache.getCachedValue(key);
+					if (cached != null) {
+						String str = cached.getString();
 						if (str != null) {
 							return str;
 						}
@@ -358,6 +356,62 @@ public class UserData {
 		return getString(key);
 	}
 
+	/** One checked storage snapshot; absent identities are empty, failures propagate. */
+	public HashMap<String, DataValue> getValuesStrict() throws SQLException, IOException {
+		com.bencodez.advancedcore.api.user.usercache.UserDataManager manager = sharedDataManager();
+		if (manager != null && manager.hasSharedSqlBackend()) {
+			try { return convert(sharedRow(manager, manager.effectiveStorageType(user.getPlugin().getStorageType()))); }
+			catch (IllegalStateException failure) {
+				if (failure.getCause() instanceof SQLException) throw (SQLException) failure.getCause();
+				throw failure;
+			}
+		}
+		try (com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Scope admission = user.getPlugin().getUserStorageOwnership().admit()) {
+		com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot owner = storageOwner();
+		owner.getLock().lock();
+		try {
+			if (owner.isWriting()) throw new IllegalStateException("Cannot read user snapshot from its in-flight storage write");
+			return readValuesStrictOwned();
+		}
+		finally { owner.getLock().unlock(); }
+			}
+	}
+
+	private com.bencodez.advancedcore.api.user.usercache.UserDataManager sharedDataManager() {
+		UserManager users = user.getPlugin().getUserManager();
+		return users == null ? null : users.getDataManager();
+	}
+
+	private List<Column> sharedRow(com.bencodez.advancedcore.api.user.usercache.UserDataManager manager,
+			UserStorage requested) {
+		return manager.withSharedSqlBackend(java.util.UUID.fromString(user.getUUID()), (actual, storage) -> {
+			if (actual != requested) throw new IllegalStateException("Requested user store differs from the active shared owner");
+			List<Column> row = storage.readRow(actual);
+			if (row == null) throw new IllegalStateException("Shared user storage omitted its checked snapshot");
+			return row;
+		});
+	}
+
+	private com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot storageOwner() {
+		return user.getPlugin().getUserStorageOwnership().owner(java.util.UUID.fromString(user.getUUID()));
+	}
+
+	private HashMap<String, DataValue> readValuesStrictOwned() throws SQLException, IOException {
+		UserStorage storage = user.getPlugin().getStorageType();
+		if (storage == null) throw new IllegalStateException("User storage is not initialized");
+		if (storage == UserStorage.FLAT) return FileThread.getInstance().getValuesStrict(user.getUUID());
+		List<Column> columns;
+		if (storage == UserStorage.MYSQL) {
+			if (user.getPlugin().getMysql() == null) throw new SQLException("MySQL user storage is unavailable");
+			columns = user.getPlugin().getMysql().getExactStrict(user.getUUID());
+		} else if (storage == UserStorage.SQLITE) {
+			if (user.getPlugin().getSQLiteUserTable() == null) throw new SQLException("SQLite user storage is unavailable");
+			columns = user.getPlugin().getSQLiteUserTable().getExactStrict(new Column("uuid", new DataValueString(user.getUUID())));
+		} else throw new IllegalStateException("Unsupported user storage");
+		if (columns == null) throw new IllegalStateException("User storage omitted its checked snapshot");
+		return convert(columns);
+	}
+
 	public HashMap<String, DataValue> getValues() {
 		return getValues(user.getPlugin().getStorageType());
 	}
@@ -386,6 +440,11 @@ public class UserData {
 
 	@SuppressWarnings("deprecation")
 	public boolean hasData() {
+        com.bencodez.advancedcore.api.user.usercache.UserDataManager manager = sharedDataManager();
+        if (manager != null && manager.hasSharedSqlBackend()) {
+            return manager.withSharedSqlBackend(java.util.UUID.fromString(user.getUUID()),
+                    (type, storage) -> storage.contains(type));
+        }
 		if (user.getPlugin().getStorageType().equals(UserStorage.MYSQL)) {
 			return user.getPlugin().getMysql().containsKey(user.getUUID());
 		}
@@ -397,16 +456,34 @@ public class UserData {
 		return false;
 	}
 
-	@SuppressWarnings("deprecation")
 	public void remove() {
-		if (user.getPlugin().getStorageType().equals(UserStorage.MYSQL)) {
-			user.getPlugin().getMysql().deletePlayer(user.getUUID());
-		} else if (user.getPlugin().getStorageType().equals(UserStorage.SQLITE)) {
-			user.getPlugin().getSQLiteUserTable().delete(new Column("uuid", new DataValueString(user.getUUID())));
-		} else if (user.getPlugin().getStorageType().equals(UserStorage.FLAT)) {
-			FileThread.getInstance().getThread().deletePlayerFile(user.getUUID());
-		}
-		user.clearCache();
+        com.bencodez.advancedcore.api.user.usercache.UserDataManager manager = user.getPlugin().getUserManager().getDataManager();
+        manager.removeFromStorage(user, () -> {
+            if (manager.hasSharedSqlBackend()) {
+                manager.withSharedSqlBackend(java.util.UUID.fromString(user.getUUID()), (type, storage) -> {
+                    storage.delete(type); return null;
+                });
+                return;
+            }
+			com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot owner = storageOwner();
+			owner.getLock().lock();
+			try {
+				owner.beginWrite();
+				try {
+					UserStorage storage = user.getPlugin().getStorageType();
+					if (storage == UserStorage.MYSQL) {
+						if (user.getPlugin().getMysql() == null) throw new SQLException("MySQL user storage is unavailable");
+						user.getPlugin().getMysql().deletePlayerStrict(user.getUUID());
+					} else if (storage == UserStorage.SQLITE) {
+						if (user.getPlugin().getSQLiteUserTable() == null) throw new SQLException("SQLite user storage is unavailable");
+						user.getPlugin().getSQLiteUserTable().deleteStrict(new Column("uuid", new DataValueString(user.getUUID())));
+					} else if (storage == UserStorage.FLAT) FileThread.getInstance().deletePlayerFileStrict(user.getUUID());
+					else throw new IllegalStateException("User storage is not initialized");
+				} finally { owner.endWrite(); }
+			} catch (SQLException | IOException failure) {
+				throw new IllegalStateException("User removal was not acknowledged", failure);
+			} finally { owner.getLock().unlock(); }
+		});
 	}
 
 	public void setBoolean(String key, boolean value) {
@@ -441,66 +518,11 @@ public class UserData {
 	@SuppressWarnings("deprecation")
 	public void setInt(final UserStorage storage, final String key, final int value, boolean queue, boolean async) {
 		if (key.equals("")) {
-			user.getPlugin().debug("No key: " + key + " to " + value);
+			user.getPlugin().debug("No key: " + key);
 			return;
 		}
-		if (key.contains(" ")) {
-			user.getPlugin().getLogger().severe("Keys cannot contain spaces " + key);
-		}
-
-		user.getPlugin().extraDebug("PlayerData " + storage.toString() + ": Setting " + key + " to '" + value
-				+ "' for '" + user.getPlayerName() + "/" + user.getUUID() + "' Queue: " + queue);
-
-		if (user.isCached()) {
-			user.getCache().addChange(new UserDataChangeInt(key, value), queue);
-			user.getPlugin().getUserManager().onChange(user, key);
-			if (queue) {
-				return;
-			}
-		}
-
-		if (async) {
-			user.getPlugin().getTimer().execute(new Runnable() {
-
-				@Override
-				public void run() {
-					if (storage.equals(UserStorage.SQLITE)) {
-						ArrayList<Column> columns = new ArrayList<>();
-						Column primary = new Column("uuid", new DataValueString(user.getUUID()));
-						Column column = new Column(key, new DataValueInt(value));
-						columns.add(primary);
-						columns.add(column);
-						user.getPlugin().getSQLiteUserTable().update(primary, columns);
-					} else if (storage.equals(UserStorage.MYSQL)) {
-						user.getPlugin().getMysql().update(user.getUUID(), key, new DataValueInt(value));
-					} else if (storage.equals(UserStorage.FLAT)) {
-						setData(user.getUUID(), key, value);
-					}
-
-					if (!user.isCached()) {
-						user.getPlugin().getUserManager().onChange(user, key);
-					}
-				}
-			});
-		} else {
-			// process change right away
-			if (storage.equals(UserStorage.SQLITE)) {
-				ArrayList<Column> columns = new ArrayList<>();
-				Column primary = new Column("uuid", new DataValueString(user.getUUID()));
-				Column column = new Column(key, new DataValueInt(value));
-				columns.add(primary);
-				columns.add(column);
-				user.getPlugin().getSQLiteUserTable().update(primary, columns);
-			} else if (storage.equals(UserStorage.MYSQL)) {
-				user.getPlugin().getMysql().update(user.getUUID(), key, new DataValueInt(value));
-			} else if (storage.equals(UserStorage.FLAT)) {
-				setData(user.getUUID(), key, value);
-			}
-
-			if (!user.isCached()) {
-				user.getPlugin().getUserManager().onChange(user, key);
-			}
-		}
+		if (key.contains(" ")) user.getPlugin().getLogger().severe("Keys cannot contain spaces " + key);
+		writeTypedValue(storage, key, new DataValueInt(value), queue, async);
 	}
 
 	public void setString(final String key, final String value) {
@@ -523,65 +545,101 @@ public class UserData {
 	public void setString(final UserStorage storage, final String key, final String value, boolean queue,
 			boolean async) {
 		if (key.equals("") && value != null) {
-			user.getPlugin().debug("No key/value: " + key + " to " + value);
+			user.getPlugin().debug("No key: " + key);
 			return;
 		}
-		if (key.contains(" ")) {
-			user.getPlugin().getLogger().severe("Keys cannot contain spaces " + key);
-		}
-
-		user.getPlugin().extraDebug("PlayerData " + storage.toString() + ": Setting " + key + " to '" + value
-				+ "' for '" + user.getPlayerName() + "/" + user.getUUID() + "' Queue: " + queue);
-
-		if (user.isCached()) {
-			user.getCache().addChange(new UserDataChangeString(key, value), queue);
-			user.getPlugin().getUserManager().onChange(user, key);
-			if (queue) {
-				return;
-			}
-		}
-
-		if (async) {
-			user.getPlugin().getTimer().execute(new Runnable() {
-
-				@Override
-				public void run() {
-					if (storage.equals(UserStorage.SQLITE)) {
-						ArrayList<Column> columns = new ArrayList<>();
-						Column primary = new Column("uuid", new DataValueString(user.getUUID()));
-						Column column = new Column(key, new DataValueString(value));
-						columns.add(primary);
-						columns.add(column);
-						user.getPlugin().getSQLiteUserTable().update(primary, columns);
-					} else if (storage.equals(UserStorage.MYSQL)) {
-						user.getPlugin().getMysql().update(user.getUUID(), key, new DataValueString(value));
-					} else if (storage.equals(UserStorage.FLAT)) {
-						setData(user.getUUID(), key, value);
-					}
-					if (!user.isCached()) {
-						user.getPlugin().getUserManager().onChange(user, key);
-					}
-				}
-			});
-		} else {
-			if (storage.equals(UserStorage.SQLITE)) {
-				ArrayList<Column> columns = new ArrayList<>();
-				Column primary = new Column("uuid", new DataValueString(user.getUUID()));
-				Column column = new Column(key, new DataValueString(value));
-				columns.add(primary);
-				columns.add(column);
-				user.getPlugin().getSQLiteUserTable().update(primary, columns);
-			} else if (storage.equals(UserStorage.MYSQL)) {
-				user.getPlugin().getMysql().update(user.getUUID(), key, new DataValueString(value));
-			} else if (storage.equals(UserStorage.FLAT)) {
-				setData(user.getUUID(), key, value);
-			}
-			if (!user.isCached()) {
-				user.getPlugin().getUserManager().onChange(user, key);
-			}
-		}
-
+		if (key.contains(" ")) user.getPlugin().getLogger().severe("Keys cannot contain spaces " + key);
+		writeTypedValue(storage, key, new DataValueString(value), queue, async);
 	}
+
+	private void writeTypedValue(UserStorage storage, String key, DataValue value, boolean queue, boolean async) {
+		try (com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Scope admission = user.getPlugin().getUserStorageOwnership().admit()) {
+		UserDataCache cache = user.isCached() ? user.getCache() : null;
+		if (queue && cache != null) {
+			if (value instanceof DataValueInt) cache.addChange(new UserDataChangeInt(key, value.getInt()), true);
+			else cache.addChange(new UserDataChangeString(key, value.getString()), true);
+			user.getPlugin().getUserManager().onChange(user, key);
+			return;
+		}
+		Runnable write = () -> {
+			Runnable storageWrite = () -> {
+				try { setValuesStrict(storage, java.util.Collections.singletonMap(key, value)); }
+				catch (SQLException | IOException failure) { throw new IllegalStateException("Direct user-data write was not acknowledged", failure); }
+			};
+			user.getPlugin().getUserManager().getDataManager().writeDirect(user, key, value, storageWrite);
+		};
+		if (async) user.getPlugin().getUserStorageOwnership().submit(user.getPlugin().getTimer(), write);
+		else write.run();
+			}
+	}
+
+    /**
+     * Physically commit a queue edit against the current authoritative predecessor.
+     * The transform must be side-effect-free. A checked absent key is empty;
+     * unreadable storage is a failure. Post-commit notification failures carry
+     * the committed value and must never cause the edit to be replayed.
+     */
+    public ArrayList<String> mutateStringListStrict(String key,
+            java.util.function.UnaryOperator<ArrayList<String>> transform) {
+        java.util.Objects.requireNonNull(key,"key");java.util.Objects.requireNonNull(transform,"transform");
+        if(key.isEmpty() || key.contains(" "))throw new IllegalArgumentException("Invalid queue key");
+        DataValue committed=user.getPlugin().getUserManager().getDataManager().mutateDirect(user,key,()->{
+            try {
+                DataValue stored=getValuesStrict().get(key);
+                return stored==null?new DataValueString(""):stored;
+            }catch(SQLException | IOException failure){throw new IllegalStateException("Queue predecessor could not be read",failure);}
+        },before->{
+            if(before==null)throw new IllegalStateException("Queue predecessor unavailable");
+            ArrayList<String> updated=java.util.Objects.requireNonNull(transform.apply(decodeStringList(before)),"transformed queue");
+            for(String entry:updated)java.util.Objects.requireNonNull(entry,"queue entry");
+            String serialized=String.join("%line%",updated);
+            if(serialized.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>65535)
+                throw new IllegalStateException("Queue edit exceeds the legacy storage bound");
+            return new DataValueString(serialized);
+        },value->{
+            try {setValuesStrict(java.util.Collections.singletonMap(key,value));}
+            catch(SQLException | IOException failure){throw new IllegalStateException("Queue edit was not acknowledged",failure);}
+        });
+        return decodeStringList(committed);
+    }
+
+    /** Checked observational queue snapshot; admission still performs an atomic mutation. */
+    public ArrayList<String> getStringListStrict(String key) {
+        java.util.Objects.requireNonNull(key,"key");
+        if(key.isEmpty() || key.contains(" "))throw new IllegalArgumentException("Invalid queue key");
+        com.bencodez.advancedcore.api.user.usercache.UserDataManager manager = sharedDataManager();
+        if (manager != null && manager.hasSharedSqlBackend()) {
+            java.util.UUID identity = java.util.UUID.fromString(user.getUUID());
+            return manager.withSharedSqlBackend(identity, (type, storage) -> {
+                UserDataCache cache = manager.getUserDataCache().get(identity);
+                DataValue value = cache == null || cache.getUuid() == null ? null : cache.getCachedValue(key);
+                if (value == null) {
+                    List<Column> row = storage.readRow(type);
+                    if (row == null) throw new IllegalStateException("Shared user storage omitted its checked snapshot");
+                    value = convert(row).get(key);
+                }
+                return value == null ? new ArrayList<>() : decodeStringList(value);
+            });
+        }
+        try(com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Scope admission=user.getPlugin().getUserStorageOwnership().admit()) {
+            com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot owner=storageOwner();
+            owner.getLock().lock();
+            try {
+                if(owner.isWriting())throw new IllegalStateException("Queue snapshot requested during a storage write");
+                UserDataCache cache=user.getPlugin().getUserManager().getDataManager().getUserDataCache().get(java.util.UUID.fromString(user.getUUID()));
+                DataValue value=cache==null || cache.getUuid()==null?null:cache.getCachedValue(key);
+                if(value==null)value=readValuesStrictOwned().get(key);
+                return value==null?new ArrayList<>():decodeStringList(value);
+            }catch(SQLException | IOException failure){throw new IllegalStateException("Queue snapshot could not be read",failure);}
+            finally {owner.getLock().unlock();}
+        }
+    }
+
+    private static ArrayList<String> decodeStringList(DataValue value) {
+        if(!value.isString())throw new IllegalStateException("Queue predecessor is not a string");
+        String stored=value.getString();
+        return stored==null || stored.isEmpty()?new ArrayList<>():new ArrayList<>(java.util.Arrays.asList(stored.split("%line%")));
+    }
 
 	public void setStringList(final String key, final ArrayList<String> value) {
 		setStringList(key, value, true);
@@ -610,35 +668,88 @@ public class UserData {
 		setValues(user.getPlugin().getStorageType(), values);
 	}
 
-	@SuppressWarnings("deprecation")
 	public void setValues(UserStorage storage, HashMap<String, DataValue> values) {
-		if (storage.equals(UserStorage.MYSQL)) {
-			if (user.getPlugin().getMysql() != null) {
-				ArrayList<Column> cols = new ArrayList<>();
-				for (Entry<String, DataValue> entry : values.entrySet()) {
-					if (!entry.getKey().equals("uuid")) {
-						cols.add(new Column(entry.getKey(), entry.getValue()));
-					}
-				}
-				user.getPlugin().getMysql().update(user.getUUID(), cols, false);
+		HashMap<String, DataValue> candidate = new HashMap<>(values);
+		// SQL identity is never part of the update, as in the legacy bulk API.
+		if (storage == UserStorage.MYSQL || storage == UserStorage.SQLITE) candidate.remove("uuid");
+		if (candidate.isEmpty()) return;
+		for (Entry<String, DataValue> entry : candidate.entrySet()) {
+			java.util.Objects.requireNonNull(entry.getKey(), "key");
+			java.util.Objects.requireNonNull(entry.getValue(), "value");
+		}
+		Runnable storageWrite = () -> {
+			try { setValuesStrict(storage, candidate); }
+			catch (SQLException | IOException failure) { throw new IllegalStateException("Bulk user-data write was not acknowledged", failure); }
+		};
+		user.getPlugin().getUserManager().getDataManager().writeBatch(user, candidate, storageWrite,
+				storage == user.getPlugin().getStorageType());
+	}
+
+	/** Writes one synchronous checked batch; callers retain pending changes on failure. */
+	public void setValuesStrict(Map<String, DataValue> values) throws SQLException, IOException {
+		setValuesStrict(user.getPlugin().getStorageType(), values);
+	}
+
+	/** Checked explicit-storage overload for compatibility setters and converters. */
+	public void setValuesStrict(UserStorage storage, Map<String, DataValue> values) throws SQLException, IOException {
+		if (values.isEmpty()) return;
+		com.bencodez.advancedcore.api.user.usercache.UserDataManager manager = sharedDataManager();
+		if (manager != null && manager.hasSharedSqlBackend()) {
+			HashMap<String, DataValue> selected = new HashMap<>(values);
+			selected.remove("uuid");
+			if (selected.isEmpty()) return;
+			for (Entry<String, DataValue> entry : selected.entrySet()) {
+				if (entry.getKey() == null || entry.getValue() == null) throw new IllegalArgumentException("Invalid user-data batch value");
 			}
-		} else if (storage.equals(UserStorage.SQLITE)) {
-			ArrayList<Column> cols = new ArrayList<>();
-			for (Entry<String, DataValue> entry : values.entrySet()) {
-				if (!entry.getKey().equals("uuid")) {
-					cols.add(new Column(entry.getKey(), entry.getValue()));
-				}
-				user.getPlugin().getSQLiteUserTable().update(new Column("uuid", new DataValueString(user.getUUID())),
-						cols);
+			try {
+				manager.withSharedSqlBackend(java.util.UUID.fromString(user.getUUID()), (actual, target) -> {
+					if (actual != storage) throw new IllegalStateException("Requested user store differs from the active shared owner");
+					target.writeValues(actual, selected);
+					return null;
+				});
+			} catch (IllegalStateException failure) {
+				if (failure.getCause() instanceof SQLException) throw (SQLException) failure.getCause();
+				throw failure;
 			}
-		} else if (storage.equals(UserStorage.FLAT)) {
-			for (Entry<String, DataValue> entry : values.entrySet()) {
-				if (entry.getValue() instanceof DataValueString) {
-					setData(user.getUUID(), entry.getKey(), entry.getValue().getString());
-				} else if (entry.getValue() instanceof DataValueInt) {
-					setData(user.getUUID(), entry.getKey(), entry.getValue().getInt());
-				}
+			return;
+		}
+		try (com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Scope admission = user.getPlugin().getUserStorageOwnership().admit()) {
+		com.bencodez.advancedcore.api.user.usercache.UserStorageOwnership.Slot owner = storageOwner();
+		owner.getLock().lock();
+		try {
+			owner.beginWrite();
+			try {
+				writeValuesStrictOwned(storage, values);
+			} finally { owner.endWrite(); }
+		} finally { owner.getLock().unlock(); }
 			}
+	}
+
+	private void writeValuesStrictOwned(UserStorage storage, Map<String, DataValue> values) throws SQLException, IOException {
+		if (values.isEmpty()) return;
+		if (storage == null) throw new IllegalStateException("User storage is not initialized");
+		if (storage == UserStorage.FLAT) {
+			FileThread.getInstance().setValuesStrict(user.getUUID(), values);
+			return;
+		}
+		ArrayList<Column> columns = new ArrayList<>();
+		for (Entry<String, DataValue> entry : values.entrySet()) {
+			if (!"uuid".equals(entry.getKey())) {
+				if (entry.getKey() == null || entry.getValue() == null) {
+					throw new IllegalArgumentException("Invalid user-data batch value");
+				}
+				columns.add(new Column(entry.getKey(), entry.getValue()));
+			}
+		}
+		if (columns.isEmpty()) return;
+		if (storage == UserStorage.MYSQL) {
+			if (user.getPlugin().getMysql() == null) throw new SQLException("MySQL user storage is unavailable");
+			user.getPlugin().getMysql().updateStrict(user.getUUID(), columns);
+		} else if (storage == UserStorage.SQLITE) {
+			if (user.getPlugin().getSQLiteUserTable() == null) throw new SQLException("SQLite user storage is unavailable");
+			user.getPlugin().getSQLiteUserTable().updateStrict(new Column("uuid", new DataValueString(user.getUUID())), columns);
+		} else {
+			throw new IllegalStateException("Unsupported user storage");
 		}
 	}
 

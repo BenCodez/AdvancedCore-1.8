@@ -1,6 +1,7 @@
 package com.bencodez.advancedcore.data;
 
 import java.io.File;
+import java.io.IOException;
 
 import org.bukkit.plugin.Plugin;
 
@@ -14,6 +15,16 @@ import com.bencodez.simpleapi.file.YMLFile;
 public class ServerData extends YMLFile {
 	public ServerData(AdvancedCorePlugin plugin) {
 		super(plugin, new File(plugin.getDataFolder(), "ServerData.yml"));
+	}
+
+	/** Preserve the legacy save API while making a failed persistence observable. */
+	@Override
+	public void saveData() {
+		try {
+			getData().save(getdFile());
+		} catch (IOException failure) {
+			throw new IllegalStateException("Unable to save server data", failure);
+		}
 	}
 
 	public long getLastUpdated() {
